@@ -12,6 +12,7 @@ from aiortc.contrib.media import MediaRelay
 from picamera2 import Picamera2
 from libcamera import controls, Transform
 from ir_processor import process_ir_image
+import fractions  # Add this import at the top of the file
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("webrtc_server")
@@ -66,7 +67,7 @@ class Picamera2Track(MediaStreamTrack):
             dummy_array = np.zeros((1080, 1920, 3), dtype=np.uint8)
             frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
             frame.pts = self._pts
-            frame.time_base = VideoFrame.guess_time_base()
+            frame.time_base = fractions.Fraction(1, 90000)  # Replace guess_time_base() with explicit 90kHz timebase
             self._pts += int(self.frame_interval * 90000)
             return frame
 
@@ -80,7 +81,7 @@ class Picamera2Track(MediaStreamTrack):
                 frame = VideoFrame.from_ndarray(numpy_frame, format="rgb24")
             
             frame.pts = self._pts
-            frame.time_base = VideoFrame.guess_time_base()
+            frame.time_base = fractions.Fraction(1, 90000)  # Replace guess_time_base() with explicit 90kHz timebase
             self._pts += int(self.frame_interval * 90000)
             return frame
 
@@ -89,7 +90,7 @@ class Picamera2Track(MediaStreamTrack):
             dummy_array = np.zeros((1080, 1920, 3), dtype=np.uint8)
             frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
             frame.pts = self._pts
-            frame.time_base = VideoFrame.guess_time_base()
+            frame.time_base = fractions.Fraction(1, 90000)  # Replace guess_time_base() with explicit 90kHz timebase
             self._pts += int(self.frame_interval * 90000)
             return frame
 

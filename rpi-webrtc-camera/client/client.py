@@ -3,117 +3,152 @@ import json
 import logging
 import cv2
 import numpy as np
-import argparse
-import sys
-import os
-import fractions
 from threading import Thread
 from queue import Queue, Empty
+import argparse
+import time
 
 import aiohttp
-from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
-from aiortc.contrib.media import MediaPlayer
-
-# Import the IR processing functions from the server directory
-sys.path.insert(0, os.path.abspath('../server'))
-from ir_processor import analyze_ir_beacons
+from aiortc import RTCPeerConnection, RTCSessionDescription
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("webrtc_client")
 
 # Queue for passing frames between asyncio and OpenCV threads
 frame_queue = Queue(maxsize=10)
 
-# Global variables for the application state
-remote_track = None
+# Global variables
 pc = None
 running = True
-threshold = 180  # Default IR detection threshold
 
-class FrameProcessor:
-    """Process and display frames with IR beacon detection"""
+def detect_ir_beacons(frame, threshold=200):
+    """
+    Detect IR beacons in a frame
     
-    def __init__(self):
-        self.current_frame = None
-        self.processed_frames = 0
-        self.show_ir_mode = True  # Start with IR detection enabled
-        
-    def process_frame(self, frame):
-        """Process a frame, detecting and highlighting IR beacons"""
-        if frame is None:
-            return None
+    Args:
+        frame: Input image frame
+        threshold: Brightness threshold for IR detection (default: 200)
+    
+    Returns:
+        beacons: List of dictionaries containing beacon information
+        viz_frame: Frame with beacon boundaries highlighted
+    """
+    # Make a copy of the frame to draw on
+    viz_frame = frame.copy()
+    
+    # Convert to grayscale
+    if len(frame.shape) == 3:
+        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    else:
+        gray_frame = frame.copy()
+    
+    # Apply threshold to isolate bright spots (potential IR beacons)
+    _, thresholded = cv2.threshold(gray_frame, threshold, 255, cv2.THRESH_BINARY)
+    
+    # Find contours in the thresholded image
+    contours, _ = cv2.findContours(thresholded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Store beacon information
+    beacons = []
+    
+    # Draw rectangles around detected beacons
+    for contour in contours:
+        # Calculate center of contour
+        M = cv2.moments(contour)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
             
-        # Make a copy to avoid modifying the original
-        display_frame = frame.copy()
-        
-        if self.show_ir_mode:
-            # Detect IR beacons
-            beacons = analyze_ir_beacons(frame, threshold=threshold)
+            # Calculate area
+            area = cv2.contourArea(contour)
             
-            # Draw rectangles around detected beacons
-            for beacon in beacons:
-                center = beacon["center"]
-                area = beacon["area"]
-                radius = max(10, int(np.sqrt(area)))
+            # Filter out small noise
+            if area > 15:  # Minimum area threshold
+                # Get bounding rectangle
+                x, y, w, h = cv2.boundingRect(contour)
                 
-                # Calculate rectangle coordinates
-                x1 = max(0, center[0] - radius)
-                y1 = max(0, center[1] - radius)
-                x2 = min(frame.shape[1], center[0] + radius)
-                y2 = min(frame.shape[0], center[1] + radius)
+                # Draw rectangle around beacon
+                cv2.rectangle(viz_frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
                 
-                # Draw red rectangle around beacon
-                cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                # Draw crosshair at center
+                cv2.line(viz_frame, (cx - 10, cy), (cx + 10, cy), (0, 255, 255), 1)
+                cv2.line(viz_frame, (cx, cy - 10), (cx, cy + 10), (0, 255, 255), 1)
                 
-                # Add text with area information
+                # Add text with area
                 cv2.putText(
-                    display_frame,
+                    viz_frame,
                     f"Area: {area:.0f}",
-                    (x1, y1 - 10),
+                    (x, y - 5),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.5,
                     (0, 255, 255),
                     1
                 )
-        
-            # Add threshold information
-            cv2.putText(
-                display_frame,
-                f"IR Threshold: {threshold} (use +/- to adjust)",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 255),
-                2
-            )
-        
-        self.processed_frames += 1
-        return display_frame
+                
+                # Add to beacons list
+                beacons.append({
+                    "center": (cx, cy),
+                    "area": area,
+                    "bounds": (x, y, w, h)
+                })
+    
+    # Add threshold value to the image
+    cv2.putText(
+        viz_frame,
+        f"IR Threshold: {threshold} (Press +/- to adjust)",
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 255, 255),
+        2
+    )
+    
+    return beacons, viz_frame
 
+# Add a global threshold variable
+ir_threshold = 200
+
+# Modify the process_and_display_frames function to include IR detection
 def process_and_display_frames():
-    """Frame processing loop - runs in a separate thread"""
-    global running, threshold
+    """Display frames from the queue in an OpenCV window"""
+    global running, ir_threshold  # Add ir_threshold to global declaration
     
     cv2.namedWindow("WebRTC IR Camera Feed", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("WebRTC IR Camera Feed", 1280, 720)
     
-    processor = FrameProcessor()
+    # Create a second window for IR visualization
+    cv2.namedWindow("IR Beacon Detection", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("IR Beacon Detection", 640, 480)
+    
+    show_ir = True  # Toggle for IR detection display
     
     while running:
         try:
             # Get frame from queue with timeout
             frame = frame_queue.get(timeout=1.0)
             
-            # Process frame and add IR detection
-            display_frame = processor.process_frame(frame)
-            
-            if display_frame is not None:
-                # Display the processed frame
-                cv2.imshow("WebRTC IR Camera Feed", display_frame)
+            if frame is not None:
+                # Process for IR beacons
+                beacons, processed_frame = detect_ir_beacons(frame, threshold=ir_threshold)
+                
+                # Create a separate hot/cold visualization
+                if len(frame.shape) == 3:
+                    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                else:
+                    gray_frame = frame
+                
+                # Create a black and white visualization where white is "hot"
+                _, hot_cold_viz = cv2.threshold(gray_frame, ir_threshold, 255, cv2.THRESH_BINARY)
+                
+                # Apply some color mapping for better visualization
+                hot_cold_colored = cv2.applyColorMap(hot_cold_viz, cv2.COLORMAP_HOT)
+                
+                # Display the processed frame with beacon boundaries
+                cv2.imshow("WebRTC IR Camera Feed", processed_frame)
+                
+                # Display the hot/cold visualization
+                cv2.imshow("IR Beacon Detection", hot_cold_colored)
                 
                 # Process keyboard input
                 key = cv2.waitKey(1) & 0xFF
@@ -122,130 +157,90 @@ def process_and_display_frames():
                 if key == ord('q'):
                     running = False
                     break
-                    
-                # Toggle IR detection mode with 'i' key
+                
+                # Toggle IR visualization with 'i' key
                 elif key == ord('i'):
-                    processor.show_ir_mode = not processor.show_ir_mode
-                    mode_str = "ON" if processor.show_ir_mode else "OFF"
-                    logger.info(f"IR Detection mode: {mode_str}")
+                    show_ir = not show_ir
+                    logger.info(f"IR visualization: {'ON' if show_ir else 'OFF'}")
                 
                 # Save snapshot with 's' key
                 elif key == ord('s'):
-                    filename = f"snapshot_{processor.processed_frames}.jpg"
-                    cv2.imwrite(filename, display_frame)
-                    logger.info(f"Saved snapshot to {filename}")
+                    timestamp = int(time.time())
+                    filename_main = f"snapshot_{timestamp}.jpg"
+                    filename_ir = f"snapshot_ir_{timestamp}.jpg"
+                    cv2.imwrite(filename_main, processed_frame)
+                    cv2.imwrite(filename_ir, hot_cold_colored)
+                    logger.info(f"Saved snapshots as {filename_main} and {filename_ir}")
                 
-                # Increase threshold with '+' or '=' key
+                # Adjust threshold with + and - keys
                 elif key in [ord('+'), ord('=')]:
-                    threshold = min(255, threshold + 5)
-                    logger.info(f"IR threshold increased to {threshold}")
+                    ir_threshold = min(250, ir_threshold + 5)
+                    logger.info(f"IR threshold increased to {ir_threshold}")
                 
-                # Decrease threshold with '-' key
                 elif key == ord('-'):
-                    threshold = max(10, threshold - 5)
-                    logger.info(f"IR threshold decreased to {threshold}")
+                    ir_threshold = max(10, ir_threshold - 5)
+                    logger.info(f"IR threshold decreased to {ir_threshold}")
                 
         except Empty:
-            # No frames available, continue
+            # No frames available
             pass
         except Exception as e:
             logger.error(f"Error in display loop: {e}")
-            break
     
     cv2.destroyAllWindows()
     logger.info("Display thread stopped")
 
-class VideoTrackReceiver:
-    """Handles receiving and processing WebRTC video tracks"""
+async def receive_track(track):
+    """Process incoming video track frames"""
+    logger.info(f"Receiving video track")
     
-    def __init__(self):
-        self.track = None
-    
-    async def receive_track(self, track):
-        """Process incoming video track"""
-        self.track = track
-        logger.info(f"Receiving track: {track.kind}")
-        
-        while running:
-            try:
-                # Get next frame from track
-                frame = await track.recv()
-                
-                # Convert to numpy array for OpenCV
-                img_array = frame.to_ndarray(format="bgr24")
-                
-                # Put frame in queue for processing thread
-                try:
-                    # Use put_nowait to avoid blocking if queue is full
-                    if not frame_queue.full():
-                        frame_queue.put_nowait(img_array)
-                except Exception as e:
-                    logger.warning(f"Could not queue frame: {e}")
+    while running:
+        try:
+            # Get next frame from track
+            frame = await track.recv()
             
-            except Exception as e:
-                logger.error(f"Error receiving frame: {e}")
-                break
+            # Convert to numpy array for OpenCV
+            img_array = frame.to_ndarray(format="bgr24")
+            
+            # Put frame in queue for processing thread
+            if not frame_queue.full():
+                frame_queue.put_nowait(img_array)
+        except Exception as e:
+            logger.error(f"Error receiving frame: {e}")
+            break
 
 async def connect_to_server(server_url):
-    """Establish WebRTC connection with server"""
+    """Create a minimal WebRTC connection to the server"""
     global pc
     
-    # Create RTCPeerConnection with STUN servers to help with connectivity
-    pc = RTCPeerConnection({
-        "iceServers": [
-            {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}
-        ],
-        "iceTransportPolicy": "all"
-    })
+    # Create a plain RTCPeerConnection - no ICE servers for local network
+    pc = RTCPeerConnection()
     
-    # Set up video receiver
-    receiver = VideoTrackReceiver()
-    
+    # Handle incoming video tracks
     @pc.on("track")
     async def on_track(track):
-        logger.info(f"Track received: {track.kind}")
         if track.kind == "video":
-            asyncio.create_task(receiver.receive_track(track))
+            logger.info("Video track received")
+            asyncio.create_task(receive_track(track))
     
+    # Monitor connection state
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
-        logger.info(f"Connection state: {pc.connectionState}")
+        logger.info(f"Connection state changed to: {pc.connectionState}")
         if pc.connectionState in ["failed", "closed", "disconnected"]:
-            # Signal to stop processing
             global running
             running = False
     
-    # For additional debugging
-    @pc.on("icegatheringstatechange")
-    async def on_icegatheringstatechange():
-        logger.info(f"ICE gathering state: {pc.iceGatheringState}")
-    
-    @pc.on("iceconnectionstatechange")
-    async def on_iceconnectionstatechange():
-        logger.info(f"ICE connection state: {pc.iceConnectionState}")
-    
-    # Add a transceiver to explicitly request video with recvonly direction
-    pc.addTransceiver("video", direction="recvonly")
-    
-    # Create an offer
+    # Add video transceiver to request video
     try:
-        offer = await pc.createOffer()
-        await pc.setLocalDescription(offer)
-    except Exception as e:
-        logger.error(f"Error creating offer: {e}")
-        return False
+        pc.addTransceiver("video", direction="recvonly")
+    except TypeError as e:
+        # Fall back to a simpler method if the API changed
+        logger.warning(f"Transceiver error: {e}, trying with createOffer")
     
-    # Wait for ICE gathering to complete or timeout after 5 seconds
-    try:
-        # Give ICE gathering some time to collect candidates
-        gather_start = asyncio.get_event_loop().time()
-        while pc.iceGatheringState != "complete":
-            if asyncio.get_event_loop().time() - gather_start > 5:
-                logger.warning("ICE gathering timed out, proceeding with available candidates")
-                break
-            await asyncio.sleep(0.1)
-    except Exception as e:
-        logger.warning(f"Exception during ICE gathering: {e}")
+    # Create and set local description
+    offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
     
     # Send the offer to the server via HTTP
     try:
@@ -255,32 +250,25 @@ async def connect_to_server(server_url):
                 json={
                     "sdp": pc.localDescription.sdp,
                     "type": pc.localDescription.type
-                },
-                timeout=aiohttp.ClientTimeout(total=10)
+                }
             ) as response:
                 if response.status == 200:
-                    answer_data = await response.json()
+                    answer = await response.json()
                     await pc.setRemoteDescription(
-                        RTCSessionDescription(sdp=answer_data["sdp"], type=answer_data["type"])
+                        RTCSessionDescription(sdp=answer["sdp"], type=answer["type"])
                     )
-                    logger.info("Successfully set remote description")
+                    logger.info("Connected successfully")
                     return True
                 else:
                     error_text = await response.text()
                     logger.error(f"Server error: {response.status} - {error_text}")
                     return False
-    except aiohttp.ClientError as e:
-        logger.error(f"HTTP connection error: {e}")
-        return False
     except Exception as e:
-        logger.error(f"Unexpected error in server connection: {e}")
+        logger.error(f"Connection error: {e}")
         return False
 
 async def run_client(server_url):
     """Main client coroutine"""
-    global running
-    
-    # Connect to the WebRTC server
     connected = await connect_to_server(server_url)
     
     if not connected:
@@ -289,29 +277,23 @@ async def run_client(server_url):
     
     logger.info(f"Connected to {server_url}")
     
-    # Keep the connection alive while display thread is running
+    # Keep the connection alive
     while running:
         await asyncio.sleep(1)
     
-    # Clean up WebRTC connection
+    # Cleanup
     if pc:
         await pc.close()
         logger.info("WebRTC connection closed")
 
 def main():
-    global running
-    
-    parser = argparse.ArgumentParser(description="WebRTC Client with IR Beacon Detection")
+    parser = argparse.ArgumentParser(description="Simple WebRTC Client")
     parser.add_argument("--server", type=str, default="http://localhost:8080",
-                        help="WebRTC signaling server URL (default: http://localhost:8080)")
-    parser.add_argument("--threshold", type=int, default=180,
-                        help="Initial IR detection threshold (0-255, default: 180)")
+                        help="WebRTC signaling server URL")
     
     args = parser.parse_args()
-    global threshold
-    threshold = args.threshold
     
-    # Start OpenCV display thread
+    # Start display thread
     display_thread = Thread(target=process_and_display_frames, daemon=True)
     display_thread.start()
     
@@ -322,6 +304,7 @@ def main():
         logger.info("Keyboard interrupt received")
     finally:
         # Signal threads to stop
+        global running
         running = False
         
         # Wait for display thread to finish
