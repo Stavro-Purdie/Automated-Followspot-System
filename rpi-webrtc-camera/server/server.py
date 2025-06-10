@@ -55,43 +55,135 @@ class Picamera2Track(MediaStreamTrack):
         self.camera = camera_instance
         self._loop = loop
         self._pts = 0
-        self.frame_interval = 1/30
-        # Make sure to set track settings!
-        self._width = 1920
-        self._height = 1080
+        self._frame_interval = 1/30
+        self._last_frame = None
+        self._consecutive_errors = 0
+        self._max_errors = 10
+        self._recovering = False
+        
+    async def _attempt_recovery(self):
+        """Try to recover the camera if it's not responding"""
+        if self._recovering:
+            return
+            
+        self._recovering = True
+        logger.warning("Attempting to recover camera connection...")
+        
+        try:
+            # Close and reopen camera
+            if self.camera:
+                self.camera.stop()
+                self.camera.close()
+            
+            # Wait a moment
+            await asyncio.sleep(2)
+            
+            # Reinitialize
+            self.camera = Picamera2()
+            config = self.camera.create_video_configuration(
+                main={"size": (1280, 720), "format": "RGB888"},
+                controls={"FrameDurationLimits": (33333, 33333)}  # Force 30fps
+            )
+            self.camera.configure(config)
+            self.camera.start()
+            
+            logger.info("Camera recovered successfully")
+            self._consecutive_errors = 0
+        except Exception as e:
+            logger.error(f"Camera recovery failed: {e}")
+        finally:
+            self._recovering = False
 
     async def recv(self):
-        if not self.camera:
-            logger.warning("Picamera2Track: Camera not available.")
-            await asyncio.sleep(self.frame_interval)
-            dummy_array = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        if not self.camera or self._consecutive_errors >= self._max_errors:
+            # Camera is unavailable or has too many errors
+            if self._consecutive_errors >= self._max_errors and not self._recovering:
+                # Try to recover the camera
+                asyncio.create_task(self._attempt_recovery())
+            
+            # Return a placeholder frame
+            await asyncio.sleep(self._frame_interval)
+            dummy_array = np.zeros((720, 1280, 3), dtype=np.uint8)
+            
+            # Add text to indicate camera is offline
+            cv2.putText(
+                dummy_array,
+                "Camera connection lost - attempting to reconnect...",
+                (40, 360),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 0, 0),
+                2
+            )
+            
             frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
             frame.pts = self._pts
-            frame.time_base = fractions.Fraction(1, 90000)  # Replace guess_time_base() with explicit 90kHz timebase
-            self._pts += int(self.frame_interval * 90000)
+            frame.time_base = fractions.Fraction(1, 90000)
+            self._pts += int(self._frame_interval * 90000)
             return frame
 
         try:
+            # Try to capture a frame
             numpy_frame = await self._loop.run_in_executor(None, self.camera.capture_array, "main")
-            if numpy_frame is None:
-                logger.warning("Captured None frame.")
-                dummy_array = np.zeros((1080, 1920, 3), dtype=np.uint8)
-                frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
-            else:
-                frame = VideoFrame.from_ndarray(numpy_frame, format="rgb24")
             
+            if numpy_frame is None:
+                raise ValueError("Captured None frame")
+                
+            # Process for IR detection if requested
+            processed = False
+            try:
+                # Process IR image (if module exists)
+                ir_processed = process_ir_image(numpy_frame, threshold=200)
+                
+                # Create a combined visualization with original and IR processed side by side
+                if ir_processed is not None:
+                    # Make IR visualization 3-channel
+                    if len(ir_processed.shape) == 2:
+                        ir_color = cv2.cvtColor(ir_processed, cv2.COLOR_GRAY2RGB)
+                    else:
+                        ir_color = ir_processed
+                        
+                    # Add a colored highlight to make hot areas more visible
+                    # numpy_frame = cv2.addWeighted(numpy_frame, 0.7, cv2.cvtColor(ir_processed, cv2.COLOR_GRAY2RGB), 0.3, 0)
+                    processed = True
+            except Exception as e:
+                logger.warning(f"Error in IR processing: {e}")
+                
+            # Save the frame
+            self._last_frame = numpy_frame
+            self._consecutive_errors = 0
+            
+            # Convert to VideoFrame
+            frame = VideoFrame.from_ndarray(numpy_frame, format="rgb24")
             frame.pts = self._pts
-            frame.time_base = fractions.Fraction(1, 90000)  # Replace guess_time_base() with explicit 90kHz timebase
-            self._pts += int(self.frame_interval * 90000)
+            frame.time_base = fractions.Fraction(1, 90000)
+            self._pts += int(self._frame_interval * 90000)
             return frame
-
+            
         except Exception as e:
-            logger.error(f"Error capturing frame from Camera: {e}")
-            dummy_array = np.zeros((1080, 1920, 3), dtype=np.uint8)
-            frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
+            self._consecutive_errors += 1
+            logger.error(f"Error capturing frame ({self._consecutive_errors}/{self._max_errors}): {e}")
+            
+            # Use last good frame if available, otherwise black frame
+            if self._last_frame is not None and self._consecutive_errors < 5:
+                frame_data = self._last_frame
+            else:
+                # Create a black frame with error text
+                frame_data = np.zeros((720, 1280, 3), dtype=np.uint8)
+                cv2.putText(
+                    frame_data,
+                    f"Camera error: {e}",
+                    (40, 360),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 0, 255),
+                    2
+                )
+            
+            frame = VideoFrame.from_ndarray(frame_data, format="rgb24")
             frame.pts = self._pts
-            frame.time_base = fractions.Fraction(1, 90000)  # Replace guess_time_base() with explicit 90kHz timebase
-            self._pts += int(self.frame_interval * 90000)
+            frame.time_base = fractions.Fraction(1, 90000)
+            self._pts += int(self._frame_interval * 90000)
             return frame
 
 async def handle_offer(request):

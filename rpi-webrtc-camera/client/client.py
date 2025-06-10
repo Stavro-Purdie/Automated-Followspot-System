@@ -192,22 +192,72 @@ def process_and_display_frames():
 
 async def receive_track(track):
     """Process incoming video track frames"""
+    global running
+    
     logger.info(f"Receiving video track")
+    consecutive_errors = 0
+    max_errors = 30  # Allow up to 30 errors before giving up
     
     while running:
         try:
-            # Get next frame from track
-            frame = await track.recv()
+            # Get next frame from track with timeout
+            frame = await asyncio.wait_for(track.recv(), timeout=5.0)
             
             # Convert to numpy array for OpenCV
             img_array = frame.to_ndarray(format="bgr24")
             
+            # Reset error counter on success
+            consecutive_errors = 0
+            
             # Put frame in queue for processing thread
             if not frame_queue.full():
                 frame_queue.put_nowait(img_array)
+                
+        except asyncio.TimeoutError:
+            consecutive_errors += 1
+            logger.warning(f"Frame receive timeout ({consecutive_errors}/{max_errors})")
+            
+            if consecutive_errors >= max_errors:
+                logger.error("Too many consecutive timeouts, stopping track reception")
+                break
+                
+            # Add a placeholder frame to show we're having issues
+            error_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.putText(
+                error_frame, 
+                f"Connection timeout ({consecutive_errors}/{max_errors})", 
+                (40, 360),
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                1, 
+                (0, 0, 255), 
+                2
+            )
+            
+            if not frame_queue.full():
+                frame_queue.put_nowait(error_frame)
+                
         except Exception as e:
-            logger.error(f"Error receiving frame: {e}")
-            break
+            consecutive_errors += 1
+            logger.error(f"Error receiving frame ({consecutive_errors}/{max_errors}): {e}")
+            
+            if consecutive_errors >= max_errors:
+                logger.error("Too many consecutive errors, stopping track reception")
+                break
+            
+            # Add an error frame to the queue
+            error_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.putText(
+                error_frame, 
+                f"Frame error: {str(e)[:50]}", 
+                (40, 360),
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                1, 
+                (0, 0, 255), 
+                2
+            )
+            
+            if not frame_queue.full():
+                frame_queue.put_nowait(error_frame)
 
 async def connect_to_server(server_url):
     """Create a minimal WebRTC connection to the server"""
