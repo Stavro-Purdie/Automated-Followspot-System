@@ -210,8 +210,15 @@ async def connect_to_server(server_url):
             global running
             running = False
     
-    # Create an offer
-    await pc.setLocalDescription(await pc.createOffer())
+    # Add a transceiver to explicitly request video with recvonly direction
+    pc.addTransceiver("video", direction="recvonly")
+    
+    # Create an offer with specific constraints
+    offer = await pc.createOffer({
+        "offerToReceiveVideo": True,
+        "offerToReceiveAudio": False
+    })
+    await pc.setLocalDescription(offer)
     
     # Send the offer to the server via HTTP
     async with aiohttp.ClientSession() as session:

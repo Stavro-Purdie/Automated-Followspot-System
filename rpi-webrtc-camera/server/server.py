@@ -121,7 +121,7 @@ async def handle_offer(request):
         logger.error(f"Error setting remote description: {e}")
         return web.Response(status=500, text=str(e))
 
-    # Add camera track
+    # Add camera track with sendonly transceiver
     try:
         if not camera_obj:
             logger.error("Camera not initialized")
@@ -129,19 +129,51 @@ async def handle_offer(request):
             
         loop = asyncio.get_event_loop()
         video_track = Picamera2Track(camera_instance=camera_obj, loop=loop)
-        pc.addTrack(relay.subscribe(video_track))
-        logger.info("Added video track to peer connection")
+        
+        # Use addTransceiver instead of addTrack to explicitly set direction
+        # This should address the "None is not in list" error
+        pc.addTransceiver(relay.subscribe(video_track), direction="sendonly")
+        logger.info("Added video track to peer connection with explicit sendonly direction")
     except Exception as e:
         logger.error(f"Error adding video track: {e}")
         return web.Response(status=500, text=str(e))
 
-    # Create answer
+    # Create answer with explicit constraints
     try:
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
     except Exception as e:
         logger.error(f"Error creating/setting answer: {e}")
         return web.Response(status=500, text=str(e))
+
+    @pc.on("datachannel")
+    def on_datachannel(channel):
+        logger.info(f"Data channel {channel.label} established")
+        
+        @channel.on("message")
+        def on_message(message):
+            try:
+                data = json.loads(message)
+                if "focus" in data:
+                    focus_value = int(data["focus"])
+                    # Adjust focus between 0-255 (0 = auto focus)
+                    if focus_value == 0:
+                        camera_obj.set_controls({"AfMode": controls.AfModeEnum.Continuous})
+                        logger.info("Set to auto focus")
+                    else:
+                        # Convert 0-255 range to 0.0-1.0
+                        lens_position = focus_value / 255.0
+                        camera_obj.set_controls({
+                            "AfMode": controls.AfModeEnum.Manual,
+                            "LensPosition": lens_position
+                        })
+                        logger.info(f"Set focus to {focus_value} ({lens_position:.2f})")
+                    
+                    # Send confirmation back
+                    channel.send(json.dumps({"status": "ok", "focus": focus_value}))
+            except Exception as e:
+                logger.error(f"Error processing message: {e}")
+                channel.send(json.dumps({"status": "error", "message": str(e)}))
 
     return web.Response(
         content_type="application/json",
