@@ -94,8 +94,15 @@ class Picamera2Track(MediaStreamTrack):
             
             # Create a dummy frame on error
             dummy_array = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.putText(dummy_array, f"Camera error", (40, 360),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            
+            # Only add text if cv2 is available
+            try:
+                import cv2
+                cv2.putText(dummy_array, f"Camera error", (40, 360),
+                          cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            except ImportError:
+                # If cv2 is not available, just use the black frame
+                pass
             
             frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
             frame.pts = self._pts
@@ -199,7 +206,14 @@ async def run_server(host, port):
     # Define routes
     app.router.add_post("/offer", handle_offer)
     app.router.add_post("/focus", handle_focus)
-    app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "static"), name="static")
+    
+    # Remove the static file serving since we don't need it
+    # app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "static"), name="static")
+    
+    # Add simple root endpoint for testing
+    async def handle_root(request):
+        return web.Response(text="WebRTC Camera Server Running")
+    app.router.add_get("/", handle_root)
     
     # Start the server
     runner = web.AppRunner(app)
