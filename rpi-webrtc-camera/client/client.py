@@ -190,8 +190,13 @@ async def connect_to_server(server_url):
     """Establish WebRTC connection with server"""
     global pc
     
-    # Create a new RTCPeerConnection
-    pc = RTCPeerConnection()
+    # Create RTCPeerConnection with STUN servers to help with connectivity
+    pc = RTCPeerConnection({
+        "iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}
+        ],
+        "iceTransportPolicy": "all"
+    })
     
     # Set up video receiver
     receiver = VideoTrackReceiver()
@@ -200,7 +205,7 @@ async def connect_to_server(server_url):
     async def on_track(track):
         logger.info(f"Track received: {track.kind}")
         if track.kind == "video":
-            await receiver.receive_track(track)
+            asyncio.create_task(receiver.receive_track(track))
     
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
@@ -210,38 +215,66 @@ async def connect_to_server(server_url):
             global running
             running = False
     
+    # For additional debugging
+    @pc.on("icegatheringstatechange")
+    async def on_icegatheringstatechange():
+        logger.info(f"ICE gathering state: {pc.iceGatheringState}")
+    
+    @pc.on("iceconnectionstatechange")
+    async def on_iceconnectionstatechange():
+        logger.info(f"ICE connection state: {pc.iceConnectionState}")
+    
     # Add a transceiver to explicitly request video with recvonly direction
     pc.addTransceiver("video", direction="recvonly")
     
-    # Create an offer with specific constraints
-    offer = await pc.createOffer({
-        "offerToReceiveVideo": True,
-        "offerToReceiveAudio": False
-    })
-    await pc.setLocalDescription(offer)
+    # Create an offer
+    try:
+        offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+    except Exception as e:
+        logger.error(f"Error creating offer: {e}")
+        return False
+    
+    # Wait for ICE gathering to complete or timeout after 5 seconds
+    try:
+        # Give ICE gathering some time to collect candidates
+        gather_start = asyncio.get_event_loop().time()
+        while pc.iceGatheringState != "complete":
+            if asyncio.get_event_loop().time() - gather_start > 5:
+                logger.warning("ICE gathering timed out, proceeding with available candidates")
+                break
+            await asyncio.sleep(0.1)
+    except Exception as e:
+        logger.warning(f"Exception during ICE gathering: {e}")
     
     # Send the offer to the server via HTTP
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{server_url}/offer",
-            json={
-                "sdp": pc.localDescription.sdp,
-                "type": pc.localDescription.type
-            }
-        ) as response:
-            # Check if the request was successful
-            if response.status == 200:
-                # Parse the server's answer
-                answer = await response.json()
-                await pc.setRemoteDescription(
-                    RTCSessionDescription(sdp=answer["sdp"], type=answer["type"])
-                )
-            else:
-                error_text = await response.text()
-                logger.error(f"Server error: {response.status} - {error_text}")
-                return False
-    
-    return True
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{server_url}/offer",
+                json={
+                    "sdp": pc.localDescription.sdp,
+                    "type": pc.localDescription.type
+                },
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    answer_data = await response.json()
+                    await pc.setRemoteDescription(
+                        RTCSessionDescription(sdp=answer_data["sdp"], type=answer_data["type"])
+                    )
+                    logger.info("Successfully set remote description")
+                    return True
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Server error: {response.status} - {error_text}")
+                    return False
+    except aiohttp.ClientError as e:
+        logger.error(f"HTTP connection error: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error in server connection: {e}")
+        return False
 
 async def run_client(server_url):
     """Main client coroutine"""

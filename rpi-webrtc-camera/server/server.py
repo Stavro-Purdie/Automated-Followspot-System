@@ -100,84 +100,38 @@ async def handle_offer(request):
     pc = RTCPeerConnection()
     pcs.add(pc)
     logger.info(f"Created PeerConnection for client {request.remote}")
-
-    @pc.on("icecandidate")
-    async def on_icecandidate(candidate):
-        if candidate:
-            logger.debug(f"ICE candidate: {candidate.candidate[:30]}...")
-
-    @pc.on("connectionstatechange")
-    async def on_connectionstatechange():
-        logger.info(f"Connection state is {pc.connectionState}")
-        if pc.connectionState in ["failed", "closed", "disconnected"]:
-            await pc.close()
-            pcs.discard(pc)
-            logger.info("PeerConnection closed and removed.")
-
-    # Set remote description first, before adding tracks
-    try:
-        await pc.setRemoteDescription(offer)
-    except Exception as e:
-        logger.error(f"Error setting remote description: {e}")
-        return web.Response(status=500, text=str(e))
-
-    # Add camera track with sendonly transceiver
-    try:
-        if not camera_obj:
-            logger.error("Camera not initialized")
-            return web.Response(status=500, text="Camera not initialized")
-            
-        loop = asyncio.get_event_loop()
-        video_track = Picamera2Track(camera_instance=camera_obj, loop=loop)
+    
+    # Set remote description FIRST - this is the key for proper negotiation
+    await pc.setRemoteDescription(offer)
+    
+    # Handle tracks
+    @pc.on("track")
+    def on_track(track):
+        logger.info(f"Track {track.kind} received")
+    
+    # Setup video track
+    if not camera_obj:
+        logger.error("Camera not initialized")
+        return web.Response(status=500, text="Camera not initialized")
         
-        # Use addTransceiver instead of addTrack to explicitly set direction
-        # This should address the "None is not in list" error
-        pc.addTransceiver(relay.subscribe(video_track), direction="sendonly")
-        logger.info("Added video track to peer connection with explicit sendonly direction")
-    except Exception as e:
-        logger.error(f"Error adding video track: {e}")
-        return web.Response(status=500, text=str(e))
-
-    # Create answer with explicit constraints
-    try:
-        answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-    except Exception as e:
-        logger.error(f"Error creating/setting answer: {e}")
-        return web.Response(status=500, text=str(e))
-
-    @pc.on("datachannel")
-    def on_datachannel(channel):
-        logger.info(f"Data channel {channel.label} established")
-        
-        @channel.on("message")
-        def on_message(message):
-            try:
-                data = json.loads(message)
-                if "focus" in data:
-                    focus_value = int(data["focus"])
-                    # Adjust focus between 0-255 (0 = auto focus)
-                    if focus_value == 0:
-                        camera_obj.set_controls({"AfMode": controls.AfModeEnum.Continuous})
-                        logger.info("Set to auto focus")
-                    else:
-                        # Convert 0-255 range to 0.0-1.0
-                        lens_position = focus_value / 255.0
-                        camera_obj.set_controls({
-                            "AfMode": controls.AfModeEnum.Manual,
-                            "LensPosition": lens_position
-                        })
-                        logger.info(f"Set focus to {focus_value} ({lens_position:.2f})")
-                    
-                    # Send confirmation back
-                    channel.send(json.dumps({"status": "ok", "focus": focus_value}))
-            except Exception as e:
-                logger.error(f"Error processing message: {e}")
-                channel.send(json.dumps({"status": "error", "message": str(e)}))
-
+    loop = asyncio.get_event_loop()
+    video_track = Picamera2Track(camera_instance=camera_obj, loop=loop)
+    
+    # Use standard addTrack instead of addTransceiver 
+    # The transceiver direction is inferred from the remote description
+    sender = pc.addTrack(relay.subscribe(video_track))
+    logger.info(f"Added video track to peer connection")
+    
+    # Create answer
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+    
     return web.Response(
         content_type="application/json",
-        text=json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}),
+        text=json.dumps({
+            "sdp": pc.localDescription.sdp, 
+            "type": pc.localDescription.type
+        })
     )
 
 async def on_server_shutdown(app):
