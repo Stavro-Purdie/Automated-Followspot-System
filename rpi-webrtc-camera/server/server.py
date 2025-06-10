@@ -36,27 +36,54 @@ def get_ip_address():
     return IP
 
 def init_picamera():
-    """Initialize the Raspberry Pi camera"""
+    """Initialize the Raspberry Pi camera with optimized settings for Camera Module 3"""
     global camera_obj
     
     try:
-        logger.info("Initializing Camera for WebRTC...")
+        logger.info("Initializing Camera Module 3 with libcamera...")
         camera_obj = Picamera2()
         
-        # Use a more modest resolution for better performance
+        # Get camera info
+        camera_info = camera_obj.camera_properties
+        logger.info(f"Camera Model: {camera_info.get('Model', 'Unknown')}")
+        
+        # Allow camera to warm up and stabilize
+        time.sleep(1)
+        
+        # Use more conservative settings for better stability
+        # - Lower resolution (1024x576 instead of 1280x720)
+        # - Lower framerate (15 fps instead of 20)
+        # - Use YUV420 format which may be more efficient
         config = camera_obj.create_video_configuration(
-            main={"size": (1280, 720), "format": "RGB888"},
-            controls={"FrameRate": 20.0},
+            main={"size": (1024, 576), "format": "YUV420"},
+            lores={"size": (640, 360)},  # Add a lower resolution stream for processing
+            controls={
+                "FrameRate": 15.0,
+                "AwbEnable": True,  # Enable auto white balance
+                "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # Faster noise reduction
+                "FrameDurationLimits": (66666, 66666)  # Force exactly 15fps (1/15 = 66666μs)
+            },
             transform=Transform(hflip=0, vflip=0)
         )
         
+        # Apply configuration
         camera_obj.configure(config)
         
-        # Start with autofocus enabled
-        camera_obj.set_controls({"AfMode": controls.AfModeEnum.Continuous})
+        # Set more specific controls for the Camera Module 3
+        camera_obj.set_controls({
+            "AfMode": controls.AfModeEnum.Continuous,  # Use continuous autofocus
+            "AnalogueGain": 1.0,  # Start with normal gain
+            "ExposureTime": 20000,  # 20ms exposure time (reasonable default)
+            "ColourGains": (1.0, 1.0)  # Neutral color balance (red, blue)
+        })
         
+        # Start the camera with a longer timeout
         camera_obj.start()
-        logger.info(f"Camera initialized and started (1280x720 @ 20fps, RGB888)")
+        
+        # Allow camera to initialize fully
+        time.sleep(2)
+        
+        logger.info(f"Camera initialized and started (1024x576 @ 15fps, using libcamera)")
         return camera_obj
     except Exception as e:
         logger.error(f"Camera initialization failed: {e}")
@@ -71,7 +98,10 @@ class Picamera2Track(MediaStreamTrack):
         self.camera = camera_instance
         self._loop = loop
         self._pts = 0
-        self._frame_interval = 1/20  # 20fps
+        self._frame_interval = 1/15  # 15fps
+        self._last_frame = None
+        self._consecutive_errors = 0
+        self._max_errors = 5
         
     async def recv(self):
         """Get the next frame from the camera"""
@@ -81,30 +111,55 @@ class Picamera2Track(MediaStreamTrack):
             
             if numpy_frame is None:
                 raise ValueError("Captured None frame")
+            
+            # Save the last good frame
+            self._last_frame = numpy_frame
+            self._consecutive_errors = 0
                 
             # Convert to VideoFrame
-            frame = VideoFrame.from_ndarray(numpy_frame, format="rgb24")
+            frame = VideoFrame.from_ndarray(numpy_frame, format="yuv420p")  # Match the YUV420 format
             frame.pts = self._pts
             frame.time_base = fractions.Fraction(1, 90000)  # Standard timebase for WebRTC
             self._pts += int(self._frame_interval * 90000)
             return frame
             
         except Exception as e:
-            logger.error(f"Error capturing frame: {e}")
+            self._consecutive_errors += 1
+            logger.error(f"Error capturing frame ({self._consecutive_errors}/{self._max_errors}): {e}")
             
-            # Create a dummy frame on error
-            dummy_array = np.zeros((720, 1280, 3), dtype=np.uint8)
+            # Try to recover camera if we have multiple errors
+            if self._consecutive_errors >= self._max_errors:
+                logger.warning("Too many consecutive errors, attempting camera recovery...")
+                try:
+                    # Try to reset the camera
+                    self.camera.stop()
+                    time.sleep(1)
+                    self.camera.start()
+                    time.sleep(1)
+                    self._consecutive_errors = 0
+                    logger.info("Camera recovery attempted")
+                except Exception as recovery_error:
+                    logger.error(f"Camera recovery failed: {recovery_error}")
             
-            # Only add text if cv2 is available
-            try:
-                import cv2
-                cv2.putText(dummy_array, f"Camera error", (40, 360),
-                          cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            except ImportError:
-                # If cv2 is not available, just use the black frame
-                pass
+            # Use last good frame if available
+            if self._last_frame is not None:
+                dummy_array = self._last_frame
+            else:
+                # Create a dummy frame on error
+                dummy_array = np.zeros((576, 1024, 3), dtype=np.uint8)
+                
+                # Add text about camera error if cv2 is available
+                try:
+                    import cv2
+                    cv2.putText(dummy_array, f"Camera error: {str(e)[:30]}", (30, 300),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                    cv2.putText(dummy_array, f"Reconnecting... ({self._consecutive_errors}/{self._max_errors})", 
+                            (30, 340), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                except ImportError:
+                    pass
             
-            frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
+            # Create frame from dummy array
+            frame = VideoFrame.from_ndarray(dummy_array, format="yuv420p")
             frame.pts = self._pts
             frame.time_base = fractions.Fraction(1, 90000)
             self._pts += int(self._frame_interval * 90000)
@@ -118,6 +173,13 @@ async def handle_offer(request):
     pc = RTCPeerConnection()
     pcs.add(pc)
     logger.info(f"Created PeerConnection for client {request.remote}")
+    
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        logger.info(f"Connection state: {pc.connectionState}")
+        if pc.connectionState == "failed":
+            await pc.close()
+            pcs.discard(pc)
     
     # Set remote description first
     await pc.setRemoteDescription(offer)
@@ -180,6 +242,25 @@ async def handle_focus(request):
         logger.error(f"Error setting focus: {e}")
         return web.Response(status=500, text=f"Error setting focus: {e}")
 
+async def handle_camera_info(request):
+    """Endpoint to get camera information"""
+    global camera_obj
+    
+    if not camera_obj:
+        return web.Response(status=500, text="Camera not initialized")
+    
+    try:
+        info = {
+            "status": "running",
+            "properties": camera_obj.camera_properties,
+            "config": str(camera_obj.camera_config),
+            "controls": str(camera_obj.camera_controls),
+        }
+        return web.json_response(info)
+    except Exception as e:
+        logger.error(f"Error getting camera info: {e}")
+        return web.Response(status=500, text=f"Error getting camera info: {e}")
+
 async def on_server_shutdown(app):
     """Cleanup when server shuts down"""
     # Close all peer connections
@@ -191,6 +272,7 @@ async def on_server_shutdown(app):
     if camera_obj:
         camera_obj.stop()
         camera_obj.close()
+        logger.info("Camera stopped and closed")
 
 async def run_server(host, port):
     """Set up and run the web server"""
@@ -206,11 +288,9 @@ async def run_server(host, port):
     # Define routes
     app.router.add_post("/offer", handle_offer)
     app.router.add_post("/focus", handle_focus)
+    app.router.add_get("/camera/info", handle_camera_info)
     
-    # Remove the static file serving since we don't need it
-    # app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "static"), name="static")
-    
-    # Add simple root endpoint for testing
+    # Add simple root endpoint
     async def handle_root(request):
         return web.Response(text="WebRTC Camera Server Running")
     app.router.add_get("/", handle_root)
@@ -234,10 +314,6 @@ async def run_server(host, port):
     
     # Cleanup
     await runner.cleanup()
-    if camera_obj:
-        camera_obj.stop()
-        camera_obj.close()
-    
     logger.info("Server process finished.")
 
 if __name__ == "__main__":
@@ -249,8 +325,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     try:
-        # Need to import cv2 here for the dummy frame creation
-        import cv2
         asyncio.run(run_server(args.host, args.port))
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received, shutting down.")
