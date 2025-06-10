@@ -123,6 +123,9 @@ def process_and_display_frames():
     
     show_ir = True  # Toggle for IR detection display
     
+    # Add a variable to track the current focus distance
+    current_focus = 0.5
+    
     while running:
         try:
             # Get frame from queue with timeout
@@ -180,6 +183,33 @@ def process_and_display_frames():
                 elif key == ord('-'):
                     ir_threshold = max(10, ir_threshold - 5)
                     logger.info(f"IR threshold decreased to {ir_threshold}")
+                
+                # Toggle auto-focus with 'a' key
+                elif key == ord('a'):
+                    asyncio.run_coroutine_threadsafe(
+                        set_camera_focus(server_url, mode="auto"),
+                        asyncio.get_event_loop()
+                    )
+                    logger.info("Auto-focus enabled")
+                
+                # Adjust manual focus with + and - keys
+                elif key in [ord('+'), ord('=')]:
+                    # Increase focus distance (0 = close, 1 = far)
+                    current_focus = min(1.0, current_focus + 0.05)
+                    asyncio.run_coroutine_threadsafe(
+                        set_camera_focus(server_url, mode="manual", position=current_focus),
+                        asyncio.get_event_loop()
+                    )
+                    logger.info(f"Focus distance increased: {current_focus:.2f}")
+                
+                elif key == ord('-'):
+                    # Decrease focus distance
+                    current_focus = max(0.0, current_focus - 0.05)
+                    asyncio.run_coroutine_threadsafe(
+                        set_camera_focus(server_url, mode="manual", position=current_focus),
+                        asyncio.get_event_loop()
+                    )
+                    logger.info(f"Focus distance decreased: {current_focus:.2f}")
                 
         except Empty:
             # No frames available
@@ -335,6 +365,37 @@ async def run_client(server_url):
     if pc:
         await pc.close()
         logger.info("WebRTC connection closed")
+
+# Add this function to your client
+async def set_camera_focus(server_url, mode="auto", position=0.5):
+    """
+    Control the camera focus
+    
+    Args:
+        server_url: Base URL for the server (e.g., "http://192.168.1.100:8080")
+        mode: "auto" for automatic focus, "manual" for manual focus
+        position: Focus position from 0.0 to 1.0 (0 = close focus, 1 = infinity)
+    
+    Returns:
+        success: True if focus was set successfully
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{server_url}/focus",
+                json={"mode": mode, "position": position}
+            ) as response:
+                if response.status == 200:
+                    response_text = await response.text()
+                    logger.info(f"Focus adjustment: {response_text}")
+                    return True
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Server error setting focus: {response.status} - {error_text}")
+                    return False
+    except Exception as e:
+        logger.error(f"Error setting camera focus: {e}")
+        return False
 
 def main():
     parser = argparse.ArgumentParser(description="Simple WebRTC Client")
