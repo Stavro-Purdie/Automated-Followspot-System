@@ -55,20 +55,30 @@ class Picamera2Track(MediaStreamTrack):
         self._loop = loop
         self._pts = 0
         self.frame_interval = 1/30
+        # Make sure to set track settings!
+        self._width = 1920
+        self._height = 1080
 
     async def recv(self):
         if not self.camera:
             logger.warning("Picamera2Track: Camera not available.")
             await asyncio.sleep(self.frame_interval)
-            return None
+            dummy_array = np.zeros((1080, 1920, 3), dtype=np.uint8)
+            frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
+            frame.pts = self._pts
+            frame.time_base = VideoFrame.guess_time_base()
+            self._pts += int(self.frame_interval * 90000)
+            return frame
 
         try:
             numpy_frame = await self._loop.run_in_executor(None, self.camera.capture_array, "main")
             if numpy_frame is None:
                 logger.warning("Captured None frame.")
-                return None
-
-            frame = VideoFrame.from_ndarray(numpy_frame, format="rgb24")
+                dummy_array = np.zeros((1080, 1920, 3), dtype=np.uint8)
+                frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
+            else:
+                frame = VideoFrame.from_ndarray(numpy_frame, format="rgb24")
+            
             frame.pts = self._pts
             frame.time_base = VideoFrame.guess_time_base()
             self._pts += int(self.frame_interval * 90000)
@@ -76,7 +86,12 @@ class Picamera2Track(MediaStreamTrack):
 
         except Exception as e:
             logger.error(f"Error capturing frame from Camera: {e}")
-            return None
+            dummy_array = np.zeros((1080, 1920, 3), dtype=np.uint8)
+            frame = VideoFrame.from_ndarray(dummy_array, format="rgb24")
+            frame.pts = self._pts
+            frame.time_base = VideoFrame.guess_time_base()
+            self._pts += int(self.frame_interval * 90000)
+            return frame
 
 async def handle_offer(request):
     params = await request.json()
@@ -99,13 +114,34 @@ async def handle_offer(request):
             pcs.discard(pc)
             logger.info("PeerConnection closed and removed.")
 
-    loop = asyncio.get_event_loop()
-    video_track = Picamera2Track(camera_instance=camera_obj, loop=loop)
-    pc.addTrack(relay.subscribe(video_track))
+    # Set remote description first, before adding tracks
+    try:
+        await pc.setRemoteDescription(offer)
+    except Exception as e:
+        logger.error(f"Error setting remote description: {e}")
+        return web.Response(status=500, text=str(e))
 
-    await pc.setRemoteDescription(offer)
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
+    # Add camera track
+    try:
+        if not camera_obj:
+            logger.error("Camera not initialized")
+            return web.Response(status=500, text="Camera not initialized")
+            
+        loop = asyncio.get_event_loop()
+        video_track = Picamera2Track(camera_instance=camera_obj, loop=loop)
+        pc.addTrack(relay.subscribe(video_track))
+        logger.info("Added video track to peer connection")
+    except Exception as e:
+        logger.error(f"Error adding video track: {e}")
+        return web.Response(status=500, text=str(e))
+
+    # Create answer
+    try:
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+    except Exception as e:
+        logger.error(f"Error creating/setting answer: {e}")
+        return web.Response(status=500, text=str(e))
 
     return web.Response(
         content_type="application/json",
