@@ -55,13 +55,13 @@ def init_picamera():
         # - Lower framerate (15 fps instead of 20)
         # - Use YUV420 format which may be more efficient
         config = camera_obj.create_video_configuration(
-            main={"size": (1024, 576), "format": "YUV420"},
+            main={"size": (2304, 1296), "format": "YUV420"},        ## Modified Resolution
             lores={"size": (640, 360)},  # Add a lower resolution stream for processing
             controls={
-                "FrameRate": 15.0,
+                "FrameRate": 60,
                 "AwbEnable": True,  # Enable auto white balance
                 "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # Faster noise reduction
-                "FrameDurationLimits": (66666, 66666)  # Force exactly 15fps (1/15 = 66666μs)
+                "FrameDurationLimits": (16667, 16667)  # Force exactly 60fps (1/60 = 16667μs)
             },
             transform=Transform(hflip=0, vflip=0)
         )
