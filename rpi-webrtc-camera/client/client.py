@@ -115,11 +115,11 @@ def process_and_display_frames():
     global running, ir_threshold  # Add ir_threshold to global declaration
     
     cv2.namedWindow("WebRTC IR Camera Feed", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("WebRTC IR Camera Feed", 1280, 720)
+    cv2.resizeWindow("WebRTC IR Camera Feed", 320, 240)
     
     # Create a second window for IR visualization
     cv2.namedWindow("IR Beacon Detection", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("IR Beacon Detection", 640, 480)
+    cv2.resizeWindow("IR Beacon Detection", 320, 240)
     
     show_ir = True  # Toggle for IR detection display
     

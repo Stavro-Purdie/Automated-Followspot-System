@@ -55,13 +55,13 @@ def init_picamera():
         # - Lower framerate (15 fps instead of 20)
         # - Use YUV420 format which may be more efficient
         config = camera_obj.create_video_configuration(
-            main={"size": (2304, 1296), "format": "YUV420"},        ## Modified Resolution
-            lores={"size": (640, 360)},  # Add a lower resolution stream for processing
+            main={"size": (320, 240), "format": "YUV420"},        ## Modified Resolution
+            lores={"size": (320, 240)},  # Add a lower resolution stream for processing
             controls={
-                "FrameRate": 60,
+                "FrameRate": 30,
                 "AwbEnable": True,  # Enable auto white balance
                 "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # Faster noise reduction
-                "FrameDurationLimits": (16667, 16667)  # Force exactly 60fps (1/60 = 16667μs)
+                "FrameDurationLimits": (33333, 33333)  # Force exactly 30fps (1/30 = 33333μs)
             },
             transform=Transform(hflip=0, vflip=0)
         )
@@ -83,7 +83,7 @@ def init_picamera():
         # Allow camera to initialize fully
         time.sleep(2)
         
-        logger.info(f"Camera initialized and started (1024x576 @ 15fps, using libcamera)")
+        logger.info(f"Camera initialized and started (320x240 @ 30fps, using libcamera)")
         return camera_obj
     except Exception as e:
         logger.error(f"Camera initialization failed: {e}")
@@ -98,7 +98,7 @@ class Picamera2Track(MediaStreamTrack):
         self.camera = camera_instance
         self._loop = loop
         self._pts = 0
-        self._frame_interval = 1/15  # 15fps
+        self._frame_interval = 1/30  # 30fps
         self._last_frame = None
         self._consecutive_errors = 0
         self._max_errors = 5
