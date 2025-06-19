@@ -12,6 +12,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from aiortc.contrib.media import MediaRelay
 from picamera2 import Picamera2
 from libcamera import controls, Transform
+from aiortc.mediastreams import MediaStreamError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -21,6 +22,9 @@ logger = logging.getLogger("webrtc_server")
 camera_obj = None
 pcs = set()
 relay = MediaRelay()
+
+active_tracks = set()
+track_lock = asyncio.Lock()
 
 def get_ip_address():
     """Get the server's local IP address"""
@@ -102,9 +106,32 @@ class Picamera2Track(MediaStreamTrack):
         self._last_frame = None
         self._consecutive_errors = 0
         self._max_errors = 5
+        self._active = True
+        self._track_id = f"video-{id(self)}"
+        
+        # Add track to active tracks set
+        active_tracks.add(self)
+        logger.info(f"Created track {self._track_id}, active tracks: {len(active_tracks)}")
+    
+    async def stop(self):
+        """Stop the track and clean up resources"""
+        if not self._active:
+            return
+            
+        self._active = False
+        
+        # Remove from active tracks
+        if self in active_tracks:
+            active_tracks.remove(self)
+            
+        logger.info(f"Stopped track {self._track_id}, remaining tracks: {len(active_tracks)}")
         
     async def recv(self):
         """Get the next frame from the camera"""
+        if not self._active:
+            # Track has been stopped, raise end-of-file
+            raise MediaStreamError("Track ended")
+        
         try:
             # Capture a frame from the camera
             numpy_frame = await self._loop.run_in_executor(None, self.camera.capture_array, "main")
@@ -124,6 +151,9 @@ class Picamera2Track(MediaStreamTrack):
             return frame
             
         except Exception as e:
+            if not self._active:
+                raise MediaStreamError("Track ended")
+                
             self._consecutive_errors += 1
             logger.error(f"Error capturing frame ({self._consecutive_errors}/{self._max_errors}): {e}")
             
@@ -145,16 +175,16 @@ class Picamera2Track(MediaStreamTrack):
             if self._last_frame is not None:
                 dummy_array = self._last_frame
             else:
-                # Create a dummy frame on error
-                dummy_array = np.zeros((576, 1024, 3), dtype=np.uint8)
+                # Create a dummy frame on error - use correct dimensions for your resolution
+                dummy_array = np.zeros((240, 320, 3), dtype=np.uint8)  # Match your 320x240 resolution
                 
                 # Add text about camera error if cv2 is available
                 try:
                     import cv2
-                    cv2.putText(dummy_array, f"Camera error: {str(e)[:30]}", (30, 300),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                    cv2.putText(dummy_array, f"Camera error: {str(e)[:30]}", (10, 120),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
                     cv2.putText(dummy_array, f"Reconnecting... ({self._consecutive_errors}/{self._max_errors})", 
-                            (30, 340), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                            (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
                 except ImportError:
                     pass
             
@@ -171,18 +201,39 @@ async def handle_offer(request):
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
 
     pc = RTCPeerConnection()
-    pcs.add(pc)
-    logger.info(f"Created PeerConnection for client {request.remote}")
+    
+    # Track for cleanup
+    current_track = None
     
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
+        nonlocal current_track
         logger.info(f"Connection state: {pc.connectionState}")
-        if pc.connectionState == "failed":
+        
+        if pc.connectionState == "failed" or pc.connectionState == "closed" or pc.connectionState == "disconnected":
+            # Clean up track when connection ends
+            if current_track:
+                await current_track.stop()
+                current_track = None
+                
+            # Clean up peer connection
             await pc.close()
             pcs.discard(pc)
+            
+            # If no more connections, log stats
+            if not pcs:
+                logger.info(f"No active connections. Active tracks: {len(active_tracks)}")
+                
+                # If there are orphaned tracks, log a warning
+                if active_tracks:
+                    logger.warning(f"Orphaned tracks detected: {len(active_tracks)}")
     
     # Set remote description first
     await pc.setRemoteDescription(offer)
+    
+    # Add to tracked connections
+    pcs.add(pc)
+    logger.info(f"Created PeerConnection for client {request.remote}, active connections: {len(pcs)}")
     
     # Setup video track
     if not camera_obj:
@@ -191,9 +242,10 @@ async def handle_offer(request):
         
     loop = asyncio.get_event_loop()
     video_track = Picamera2Track(camera_instance=camera_obj, loop=loop)
+    current_track = video_track
     
     # Add video track to peer connection
-    sender = pc.addTrack(relay.subscribe(video_track))
+    pc.addTrack(video_track)
     logger.info(f"Added video track to peer connection")
     
     # Create answer
@@ -263,9 +315,19 @@ async def handle_camera_info(request):
 
 async def on_server_shutdown(app):
     """Cleanup when server shuts down"""
+    # Stop all tracks first
+    track_stop_tasks = []
+    for track in list(active_tracks):
+        track_stop_tasks.append(track.stop())
+    
+    if track_stop_tasks:
+        await asyncio.gather(*track_stop_tasks)
+    
     # Close all peer connections
-    coros = [pc.close() for pc in pcs]
-    await asyncio.gather(*coros)
+    pc_close_tasks = [pc.close() for pc in pcs]
+    if pc_close_tasks:
+        await asyncio.gather(*pc_close_tasks)
+    
     pcs.clear()
     
     # Stop the camera
