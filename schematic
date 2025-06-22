@@ -1,0 +1,51 @@
+BATTERY/POWER CIRCUIT
+
+            +-----------------------------+
+            |        Xiao ESP32-C6        |
+            |                             |
+            |  BATTERY_PIN (A0) <---------+--[Voltage Divider]--+       (This effectivly halfs the 4.2V from the battery so that the ESP32 is protected)
+            |                             |                     |
+            |  IR_LED_PIN (D5) ---------->+--[1KΩ]--+           |
+            |                             |         |           |
+            | BRIGHTNESS_BUTTON (D4) <----+--[Button]-- GND     |
+            +-----------------------------+                     |
+                                                      LiPo 3.7V |
+                                                              + |
+            +-------------+                                   | |
+            | TP4056 LiPo |                                   | |
+            | Charger     |--- USB-C IN                       | |
+            +-------------+                                   | |
+                 |                                            | |
+                 +---> BAT + ---------------------------------+-+
+                 |                                            |
+                 +---> BAT - ------------- GND ---------------+
+
+IR LED DRIVER CIRCUIT:
+    (from GPIO D5 → MOSFET gate)
+
+          GPIO D5
+             |
+           [1kΩ]
+             |
+             +----> Gate
+                 |
+               +---+
+               |   | N-MOSFET (e.g. IRLZ44N)
+               |   |
+               +---+
+                 |
+               [IR LED]
+                 |
+              [10Ω Resistor]
+                 |
+                GND
+
+OLED DISPLAY (SSD1306 I2C):
+        +------------------+
+        |    OLED 128x64   |
+        |  SDA --> ESP SDA |
+        |  SCL --> ESP SCL |
+        |  VCC --> 3.3V    |
+        |  GND --> GND     |
+        +------------------+
+
