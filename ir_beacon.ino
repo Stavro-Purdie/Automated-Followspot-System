@@ -1,227 +1,216 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Preferences.h>          // FLASH‑backed key‑value store
 
-// === OLED display constants ===
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define OLED_RESET    -1
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+/********************************************************************
+  IR BEACON DRIVER – V3.0  (EEPROM + Enhanced UI)
+  ------------------------------------------------
+  * Unique beacon ID is stored in onboard flash (Preferences).
+  * Menu allows brightness, power‑off, and ID change – all saved.
+  * Compact 0.96" OLED UI with battery + brightness icons.
+********************************************************************/
 
-// === Beacon frequency configuration ===
-#define BASE_FREQ_HZ   30        // Minimum frequency (Hz)
-#define FREQ_STEP_HZ   5         // Steps between IDs
-#define PULSE_WIDTH_MS 3         // Pulse width in ms
+/* ---------- USER CONSTANTS ---------- */
+#define BASE_FREQ_HZ   30        // Hz for ID 0
+#define FREQ_STEP_HZ   5         // Hz per ID step
+#define PULSE_WIDTH_MS 3         // LED ON time (ms)
 
-// === Pin assignments (XIAO ESP32-C3) ===
-constexpr uint8_t IR_LED_PIN        = 6;  // Output to IR LED driver
-constexpr uint8_t BATTERY_PIN       = 3;  // Analog read from voltage divider
-constexpr uint8_t BUTTON_PIN        = 0;  // Momentary push button
-constexpr uint8_t I2C_SDA_PIN       = 4;  // I2C SDA
-constexpr uint8_t I2C_SCL_PIN       = 5;  // I2C SCL
+/* ---------- DISPLAY ---------- */
+#define OLED_W 128
+#define OLED_H 64
+#define OLED_RESET -1
+Adafruit_SSD1306 display(OLED_W, OLED_H, &Wire, OLED_RESET);
 
-// === Battery voltage configuration ===
-const float MAX_BAT_V = 4.20;             // Full battery voltage
-const float MIN_BAT_V = 3.40;             // 0% display threshold
-const float CUTOFF_V  = 3.35;             // Critical shutdown voltage
+/* ---------- PINS (XIAO ESP32‑C3) ---------- */
+constexpr uint8_t PIN_IRLED   = 6;   // MOSFET gate PWM
+constexpr uint8_t PIN_VBAT    = 3;   // Analog read (divider)
+constexpr uint8_t PIN_BTN     = 0;   // Single push‑button
+constexpr uint8_t PIN_SDA     = 4;
+constexpr uint8_t PIN_SCL     = 5;
 
-// === Brightness levels (PWM values) ===
-uint8_t brightnessLevels[] = { 0, 32, 64, 128, 192, 255 };   // 0% to 100%
-uint8_t brightnessIndex = 5;                   // Start at full brightness
-uint8_t beaconID = 3;                          // Beacon ID (0–15)
+/* ---------- BATTERY ---------- */
+const float VBAT_MAX = 4.20;
+const float VBAT_MIN = 3.40;         // 0 % display
+const float VBAT_CUT = 3.35;         // kill LED + warn
 
-// === Button state ===
-bool btnPrev = HIGH;
-unsigned long btnMillis = 0;
+/* ---------- BRIGHTNESS ---------- */
+uint8_t lvl[] = {0, 32, 64, 128, 192, 255};  // PWM table 0–100 %
+uint8_t lvlIdx = 5;                          // full by default
 
-// === Menu system state ===
-bool inMenu = false;
-uint8_t menuIndex = 0;
-unsigned long menuEntryTime = 0;
+/* ---------- STATE ---------- */
+Preferences prefs;          // flash settings
+uint8_t beaconID   = 0;     // loaded from flash
+bool    ledEnable  = true;
+bool    lowBatt    = false;
 
-// === Battery voltage logging ===
-#define HIST_LEN 120                         // 2 minutes @ 1 Hz
-float batHist[HIST_LEN];
-uint16_t histIdx = 0;
-bool lowBattLatch = false;
+/* ---------- BUTTON ---------- */
+bool btnPrev = HIGH;        // previous physical state
+unsigned long btnStart = 0; // press timer
+bool menuMode = false;
+uint8_t menuIdx = 0;
+unsigned long menuT = 0;
 
-// === Pulse timing ===
+/* ---------- BATTERY HISTORY ---------- */
+#define HIST 120            // 120 s history
+float vHist[HIST];
+uint16_t vPtr = 0;
+
+/* ---------- TIMING ---------- */
 unsigned long lastPulseUs = 0;
 
-void setup() {
-  pinMode(IR_LED_PIN, OUTPUT);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-  analogWrite(IR_LED_PIN, 0);
-  analogReadResolution(12);
-  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+/* ================================================================ */
+void loadSettings() {
+  prefs.begin("beacon", false);
+  beaconID = prefs.getUChar("id", 0);
+  lvlIdx   = prefs.getUChar("bri", 5);
+  prefs.end();
+}
 
-  // Initialize display
+void saveSettings() {
+  prefs.begin("beacon", false);
+  prefs.putUChar("id",  beaconID);
+  prefs.putUChar("bri", lvlIdx);
+  prefs.end();
+}
+
+/* ================================================================ */
+void setup() {
+  pinMode(PIN_IRLED, OUTPUT);
+  pinMode(PIN_BTN, INPUT_PULLUP);
+  analogWrite(PIN_IRLED, 0);
+  analogReadResolution(12);
+  Wire.begin(PIN_SDA, PIN_SCL);
+
+  loadSettings();
+
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.clearDisplay();
   display.setTextSize(2);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 10);
-  display.print("Beacon ");
-  display.println(beaconID);
+  display.setCursor(0, 20);
+  display.print("ID "); display.println(beaconID);
   display.display();
-  delay(1500);
+  delay(1200);
 
-  // Fill battery history with full voltage
-  for (uint16_t i = 0; i < HIST_LEN; ++i) batHist[i] = MAX_BAT_V;
+  for (uint16_t i=0;i<HIST;i++) vHist[i]=VBAT_MAX;
 }
 
+/* ================================================================ */
 void loop() {
-  // Calculate dynamic pulse interval based on ID
-  float freq = BASE_FREQ_HZ + (beaconID * FREQ_STEP_HZ);
-  unsigned long interval = 1e6 / freq;
-  unsigned long nowUs = micros();
-
-  // Pulse IR LED if not in menu and battery is OK
-  if (!lowBattLatch && !inMenu && (nowUs - lastPulseUs) >= interval) {
-    lastPulseUs = nowUs;
-    analogWrite(IR_LED_PIN, brightnessLevels[brightnessIndex]);
+  /* ---- LED Pulse driver ---- */
+  float f = BASE_FREQ_HZ + beaconID*FREQ_STEP_HZ;
+  unsigned long intv = 1e6 / f;
+  unsigned long nowU = micros();
+  if (!menuMode && ledEnable && !lowBatt && (nowU-lastPulseUs)>=intv) {
+    lastPulseUs = nowU;
+    analogWrite(PIN_IRLED, lvl[lvlIdx]);
     delay(PULSE_WIDTH_MS);
-    analogWrite(IR_LED_PIN, 0);
+    analogWrite(PIN_IRLED, 0);
   }
 
-  // Update battery voltage once per second
-  static unsigned long lastBatMs = 0;
-  if (millis() - lastBatMs >= 1000) {
-    lastBatMs = millis();
-    float v = readBattery();
-    batHist[histIdx] = v;
-    histIdx = (histIdx + 1) % HIST_LEN;
-
-    // Shutdown LED if voltage too low
-    if (v <= CUTOFF_V && !lowBattLatch) {
-      lowBattLatch = true;
-      analogWrite(IR_LED_PIN, 0);
-    }
-
-    // Update screen unless menu is active
-    if (!inMenu) updateDisplay(v, freq);
+  /* ---- Battery sample each second ---- */
+  static unsigned long lastBat = 0;
+  if (millis()-lastBat>1000) {
+    lastBat = millis();
+    float v = readVBAT();
+    vHist[vPtr] = v; vPtr=(vPtr+1)%HIST;
+    if (v<=VBAT_CUT && !lowBatt) { lowBatt=true; analogWrite(PIN_IRLED,0); }
+    if (!menuMode) drawMain(v,f);
   }
 
-  // Handle menu and brightness button logic
-  handleButton();
+  /* ---- Button logic ---- */
+  buttonHandler();
 }
 
-// === Reads voltage from divider ===
-float readBattery() {
-  uint16_t raw = analogRead(BATTERY_PIN);
-  float v = (raw / 4095.0f) * 3.3f * 2.0f; // 1:1 divider
-  return v;
+/* ================================================================ */
+float readVBAT(){
+  uint16_t raw = analogRead(PIN_VBAT);
+  return (raw/4095.0f)*3.3f*2.0f;   // 1:1 divider
 }
 
-// === Handles short and long button press ===
-void handleButton() {
-  static unsigned long pressStart = 0;
-  bool reading = digitalRead(BUTTON_PIN);
-
-  // Start hold detection
-  if (btnPrev == HIGH && reading == LOW) {
-    pressStart = millis();
+/* ================================================================ */
+void buttonHandler(){
+  bool cur = digitalRead(PIN_BTN);
+  // rising edge → short tap while in menu cycles item/action
+  if(btnPrev==LOW && cur==HIGH){
+    if(menuMode){ applyMenu(); nextMenu(); }
   }
-
-  // Trigger menu on long press
-  if (btnPrev == LOW && reading == LOW) {
-    if ((millis() - pressStart) > 1500 && !inMenu) {
-      inMenu = true;
-      menuIndex = 0;
-      menuEntryTime = millis();
-      showMenu();
-    }
-  }
-
-  // Short tap: apply action, cycle menu
-  if (btnPrev == LOW && reading == HIGH && inMenu) {
-    applyMenuOption();
-    menuIndex = (menuIndex + 1) % 3;
-    menuEntryTime = millis();
-    showMenu();
-  }
-
-  // Exit menu after 6 seconds idle
-  if (inMenu && millis() - menuEntryTime > 6000) {
-    inMenu = false;
-  }
-
-  btnPrev = reading;
+  // falling edge start timer
+  if(btnPrev==HIGH && cur==LOW){ btnStart=millis(); }
+  // held 1.5 s -> enter menu
+  if(btnPrev==LOW && cur==LOW && !menuMode && millis()-btnStart>1500){
+      menuMode=true; menuIdx=0; menuT=millis(); drawMenu(); }
+  // auto‑exit after 6 s idle
+  if(menuMode && millis()-menuT>6000){ menuMode=false; }
+  btnPrev=cur;
 }
 
-// === Executes selected menu action ===
-void applyMenuOption() {
-  switch(menuIndex) {
-    case 0: // Toggle brightness
-      brightnessIndex = (brightnessIndex + 1) % (sizeof(brightnessLevels) / sizeof(brightnessLevels[0]));
-      break;
-    case 1: // Turn off beacon
-      brightnessIndex = 0;
-      break;
-    case 2: // Increment beacon ID
-      beaconID = (beaconID + 1) % 16;
-      break;
+/* ================================================================ */
+void applyMenu(){
+  switch(menuIdx){
+    case 0: // brightness
+      lvlIdx=(lvlIdx+1)% (sizeof(lvl)/sizeof(lvl[0])); break;
+    case 1: // power toggle
+      ledEnable=!ledEnable; break;
+    case 2: // ID ++
+      beaconID=(beaconID+1)%16; break;
   }
+  saveSettings();           // persist
 }
 
-// === Shows menu selection screen ===
-void showMenu() {
+void nextMenu(){ menuIdx=(menuIdx+1)%3; menuT=millis(); drawMenu(); }
+
+/* ================================================================ */
+void drawBatteryIcon(int x,int y,int pct){
+  display.drawRect(x,y,12,6,SSD1306_WHITE);
+  display.drawLine(x+12,y+2,x+12,y+3,SSD1306_WHITE); // terminal
+  int fill = map(pct,0,100,0,10);
+  display.fillRect(x+1,y+1,fill,4,SSD1306_WHITE);
+}
+
+void drawBrightnessIcon(int x,int y,int idx){
+  int h = map(idx,0,5,0,6);
+  display.drawRect(x,y,4,6,SSD1306_WHITE);
+  display.fillRect(x+1,y+6-h,2,h,SSD1306_WHITE);
+}
+
+/* ================================================================ */
+void drawMain(float v,float f){
   display.clearDisplay();
+  // row 0: ID + freq + icons
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.println("-- MENU --");
-  display.setCursor(0, 10);
-  display.print((menuIndex == 0) ? "> " : "  "); display.println("Brightness");
-  display.print((menuIndex == 1) ? "> " : "  "); display.println("Power Off");
-  display.print((menuIndex == 2) ? "> " : "  "); display.print("ID: "); display.println(beaconID);
+  display.print("ID:"); display.print(beaconID);
+  display.print(" "); display.print((int)f); display.print("Hz");
+  int pct = constrain(map(v*100,VBAT_MIN*100,VBAT_MAX*100,0,100),0,100);
+  drawBatteryIcon(108,0,pct);
+  drawBrightnessIcon(100,0,lvlIdx);
+
+  // row 1/2: voltage + status
+  display.setCursor(0,12);
+  display.print("Vbat: "); display.print(v,2); display.println("V");
+  display.setCursor(0,22);
+  display.print("LED: "); display.println(ledEnable?"ON":"OFF");
+
+  // row 3: runtime estimate
+  float oldest=vHist[(vPtr+1)%HIST];
+  float d=oldest-v; float minLeft=(d>0.005f)?((v-VBAT_CUT)/d)*(HIST/60.0f):999.0f;
+  display.setCursor(0,32);
+  display.print("Time: ");
+  if(minLeft<998){ display.print(minLeft,0); display.print("m"); }
+  else display.println("--");
   display.display();
 }
 
-// === Updates standard screen with voltage and status ===
-void updateDisplay(float v, float freq) {
-  if (lowBattLatch) {
-    // Flashing low battery warning
-    static bool invert = false;
-    invert = !invert;
-    display.clearDisplay();
-    display.setTextColor(invert ? SSD1306_BLACK : SSD1306_WHITE, invert ? SSD1306_WHITE : SSD1306_BLACK);
-    display.setTextSize(2);
-    display.setCursor(0, 18);
-    display.println("LOW BATT!");
-    display.display();
-    delay(300);
-    return;
-  }
-
-  // Battery percentage
-  int pct = constrain(map(v * 100, MIN_BAT_V * 100, MAX_BAT_V * 100, 0, 100), 0, 100);
-
-  // Runtime estimate
-  float oldest = batHist[(histIdx + 1) % HIST_LEN];
-  float delta = oldest - v;
-  float estMin = (delta > 0.005f) ? ((v - CUTOFF_V) / delta) * (HIST_LEN / 60.0f) : 999.0f;
-
+/* ================================================================ */
+void drawMenu(){
   display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.print("ID:" ); display.print(beaconID);
-  display.print("  ");
-  display.print(freq, 0); display.println("Hz");
-
-  display.setCursor(0,10);
-  display.print("Batt: "); display.print(pct); display.println("%");
-  display.setCursor(0,20);
-  display.print("Volt: "); display.print(v,2); display.println("V");
-  display.setCursor(0,30);
-  display.print("Time: ");
-  if (estMin < 998) { display.print(estMin,0); display.print("m"); }
-  else { display.println("--"); }
-
-  // Battery bar
-  display.drawRect(0, 54, 128, 10, SSD1306_WHITE);
-  int bar = map(pct, 0,100, 0,126);
-  display.fillRect(1, 55, bar, 8, SSD1306_WHITE);
-
+  display.println("-- MENU -- (tap)");
+  display.setCursor(0,12);
+  display.print(menuIdx==0?"> ":"  "); display.println("Brightness");
+  display.print(menuIdx==1?"> ":"  "); display.println(ledEnable?"LED Off":"LED On");
+  display.print(menuIdx==2?"> ":"  "); display.print("ID: "); display.println(beaconID);
   display.display();
 }
