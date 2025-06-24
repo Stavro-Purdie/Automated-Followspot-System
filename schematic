@@ -49,3 +49,26 @@ OLED DISPLAY (SSD1306 I2C):
         |  GND --> GND     |
         +------------------+
 
+    100 Ω to 220 Ω
+
+    Purpose: limit inrush current from GPIO to the gate
+
+    Power draw is negligible (few mW)
+    ✔️ 0.25 W is absolutely fine.
+
+Color bands for 100 Ω (±5%):
+Brown – Black – Brown – Gold
+
+✅ 2. Gate Pull-down Resistor
+
+Recommended:
+
+    10 kΩ from gate to GND
+
+    Ensures MOSFET stays off when GPIO is floating
+
+    Power draw: near zero
+    ✔️ 0.25 W is perfect here.
+
+Color bands for 10 kΩ (±5%):
+Brown – Black – Orange – Gold
