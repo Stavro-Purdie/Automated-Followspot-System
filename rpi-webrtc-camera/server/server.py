@@ -55,8 +55,8 @@ def init_picamera():
         time.sleep(1)
         
         # Use more conservative settings for better stability
-        # - Lower resolution (1024x576 instead of 1280x720)
-        # - Lower framerate (15 fps instead of 20)
+        # - Lower resolution (320x240 instead of 640x480)
+        # - Lower framerate (30 fps instead of 60 fps)
         # - Use YUV420 format which may be more efficient
         config = camera_obj.create_video_configuration(
             main={"size": (320, 240), "format": "YUV420"},        ## Modified Resolution
