@@ -20,8 +20,39 @@ def main():
                         help="Run in demo mode with simulated cameras")
     parser.add_argument("--configure", action="store_true",
                         help="Launch configuration GUI")
+    parser.add_argument("--no-dialog", action="store_true",
+                        help="Skip the connection dialog and use command line arguments")
     
     args = parser.parse_args()
+    
+    # If no specific mode is requested and no-dialog is not set, show the connection dialog
+    if not args.demo and not args.configure and not args.no_dialog:
+        try:
+            from connection_dialog import show_connection_dialog
+            logger.info("Showing connection dialog...")
+            result = show_connection_dialog(args.config)
+            
+            if not result:
+                logger.info("Dialog cancelled, exiting...")
+                return
+            
+            # Update args based on dialog result
+            if result["mode"] == "demo":
+                args.demo = True
+            elif result["mode"] == "config":
+                args.configure = True
+            elif result["mode"] == "live":
+                args.demo = False
+                args.configure = False
+            
+            args.config = result["config"]
+            
+        except ImportError as e:
+            logger.warning(f"Could not import connection dialog: {e}")
+            logger.info("Continuing with command line arguments...")
+        except Exception as e:
+            logger.warning(f"Error showing connection dialog: {e}")
+            logger.info("Continuing with command line arguments...")
     
     # Launch configuration GUI if requested
     if args.configure:
@@ -41,7 +72,7 @@ def main():
     
     try:
         # Import required modules
-        from multi_camera_client import MultiCameraManager
+        from camera_aggregator import MultiCameraManager
         from video_display_gui import VideoDisplayGUI
         
         # Create camera manager
@@ -54,7 +85,8 @@ def main():
                 return
         
         # Create and run GUI
-        logger.info("Starting Multi-Camera IR Beacon Tracker GUI...")
+        mode_text = "Demo Mode" if args.demo else "Live Mode"
+        logger.info(f"Starting Multi-Camera IR Beacon Tracker GUI in {mode_text}...")
         gui = VideoDisplayGUI(manager)
         gui.run()
         

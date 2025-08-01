@@ -1,0 +1,79 @@
+{
+  "grid_config": {
+    "cameras_per_row": 3,
+    "total_cameras": 4,
+    "cell_width": 320,
+    "cell_height": 240,
+    "auto_arrange": true
+  },
+  "cameras": [
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        304,
+        240
+      ],
+      "position": [
+        0,
+        0
+      ],
+      "camera_id": "1",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        16,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        1,
+        0
+      ],
+      "camera_id": "2",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        16,
+        304,
+        224
+      ],
+      "position": [
+        0,
+        1
+      ],
+      "camera_id": "3",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        16,
+        16,
+        320,
+        224
+      ],
+      "position": [
+        1,
+        1
+      ],
+      "camera_id": "4",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    }
+  ]
+}
