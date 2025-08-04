@@ -254,17 +254,6 @@ class MultiCameraManager:
                         "camera_id": camera_id
                     })
         
-        # Add threshold value to the image
-        cv2.putText(
-            viz_frame,
-            f"IR Threshold: {self.ir_threshold} (Press +/- to adjust)",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 255, 255),
-            2
-        )
-        
         return beacons, viz_frame
         
     def get_camera_for_position(self, x: int, y: int) -> str:
