@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Multi-Camera System Launcher
-Simple launcher for the multi-camera configuration and client.
+laucncher program. will check dependencies, configuration file, see what software is installed and then provide options to launch either the node stack or the control stack. this is will be the main entry point for the multi-camera system.
+it will use a launcher config file to determine what stack is intalled and what options are available.
 """
 
 import os
