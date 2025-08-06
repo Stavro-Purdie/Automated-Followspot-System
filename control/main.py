@@ -14,8 +14,8 @@ logger = logging.getLogger("main")
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-Camera IR Beacon Tracker")
-    parser.add_argument("--config", type=str, default="camera_config.json",
-                        help="Configuration file path (default: camera_config.json)")
+    parser.add_argument("--config", type=str, default="../config/camera_config.json",
+                        help="Configuration file path (default: ../config/camera_config.json)")
     parser.add_argument("--demo", action="store_true",
                         help="Run in demo mode with simulated cameras")
     parser.add_argument("--configure", action="store_true",

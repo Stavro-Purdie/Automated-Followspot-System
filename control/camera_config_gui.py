@@ -49,7 +49,7 @@ class CameraConfigGUI:
         self.root.geometry("1400x900")
         
         # Configuration
-        self.config_file = "camera_config.json"
+        self.config_file = "../config/camera_config.json"
         self.cameras: Dict[str, CameraConfig] = {}
         self.grid_config = GridConfig(2, 4, 320, 240, True)
         self.preview_frames: Dict[str, np.ndarray] = {}

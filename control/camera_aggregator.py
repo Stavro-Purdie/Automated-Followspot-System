@@ -54,7 +54,7 @@ class GridConfig:
     auto_arrange: bool = True
 
 class MultiCameraManager:
-    def __init__(self, config_file: str = "camera_config.json", demo_mode: bool = False):
+    def __init__(self, config_file: str = "../config/camera_config.json", demo_mode: bool = False):
         self.config_file = config_file
         self.demo_mode = demo_mode
         self.cameras: Dict[str, CameraConfig] = {}
@@ -681,8 +681,8 @@ async def cleanup_connections(manager):
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-Camera WebRTC Client")
-    parser.add_argument("--config", type=str, default="camera_config.json",
-                        help="Configuration file path (default: camera_config.json)")
+    parser.add_argument("--config", type=str, default="../config/camera_config.json",
+                        help="Configuration file path (default: ../config/camera_config.json)")
     parser.add_argument("--configure", action="store_true",
                         help="Launch configuration GUI")
     parser.add_argument("--dry-run", action="store_true",

@@ -1,0 +1,31 @@
+{
+  "system_info": {
+    "version": "1.0.0",
+    "last_updated": "2025-08-06",
+    "os_info": null,
+    "installation_path": null
+  },
+  "installations": {
+    "control_stack": {
+      "installed": false,
+      "version": null,
+      "install_date": null,
+      "dependencies_verified": false,
+      "last_dependency_check": null
+    },
+    "node_stack": {
+      "installed": false,
+      "version": null,
+      "install_date": null,
+      "dependencies_verified": false,
+      "last_dependency_check": null,
+      "cron_enabled": false
+    }
+  },
+  "settings": {
+    "auto_dependency_check": true,
+    "check_interval_days": 7,
+    "allow_concurrent_stacks": false,
+    "debug_mode": false
+  }
+}

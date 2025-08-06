@@ -47,30 +47,6 @@ This project sets up a WebRTC server using a Raspberry Pi connected to a Pi Came
 4. **View HOT/COLD representation:**
    The server processes the camera feed to display temperature variations based on IR beacon signals.
 
-## File Structure
-
-```
-rpi-webrtc-camera
-├── server
-│   ├── server.py          # Main entry point for the WebRTC server
-│   ├── ir_processor.py     # Logic for processing IR beacon signals
-│   ├── requirements.txt    # Python dependencies for the server
-│   └── README.md           # Documentation for the server
-├── client
-│   ├── index.html          # Main HTML file for the client application
-│   ├── js
-│   │   ├── client.js       # JavaScript for client functionality
-│   │   └── webrtc.js       # WebRTC-specific JavaScript code
-│   ├── css
-│   │   └── style.css       # CSS styles for the client application
-│   └── README.md           # Documentation for the client application
-├── static
-│   └── icons
-│       └── favicon.ico     # Favicon for the client application
-├── .gitignore              # Files and directories to ignore by Git
-└── README.md               # Overview of the entire project
-```
-
 ## Dependencies
 
 - `aiortc`: For WebRTC signaling and media streaming.

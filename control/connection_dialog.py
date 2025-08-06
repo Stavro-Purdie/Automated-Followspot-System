@@ -14,7 +14,7 @@ logger = logging.getLogger("connection_dialog")
 class ConnectionDialog:
     """Dialog for selecting application mode"""
     
-    def __init__(self, config_file="camera_config.json"):
+    def __init__(self, config_file="../config/camera_config.json"):
         self.config_file = config_file
         self.result = None
         self.root = None
@@ -166,7 +166,7 @@ class ConnectionDialog:
             self.root.destroy()
 
 
-def show_connection_dialog(config_file="camera_config.json"):
+def show_connection_dialog(config_file="../config/camera_config.json"):
     """
     Show the connection dialog and return the user's choice.
     

@@ -1,84 +1,159 @@
-# Multi-Camera IR Beacon Tracker
+# Automated Followspot System
 
-A streamlined GUI application for tracking IR beacons across multiple camera feeds using WebRTC streaming.
+A comprehensive multi-camera IR beacon tracking system with automated followspot capabilities, designed for live performance applications.
 
 ## Features
 
-- **Connection Dialog**: User-friendly interface to choose between Live Mode, Demo Mode, or Configuration
-- **Real-time Video Display**: Shows composite video feed from multiple cameras via WebRTC
-- **IR Beacon Detection**: Automatically detects and highlights IR beacons with overlay
-- **Coordinate System**: Interactive coordinate grid and position tracking
-- **Demo Mode**: Simulated cameras with moving beacons for testing without hardware
-- **Interactive Controls**: Adjustable IR threshold, display options, and more
-- **WebRTC Streaming**: Low-latency camera feeds using modern web standards
+- **Dual Stack Architecture**: Separate Control and Node stacks for flexible deployment
+- **GUI Launcher**: Comprehensive graphical interface for installation, configuration, and management
+- **Real-time Video Processing**: WebRTC streaming with low-latency IR beacon detection
+- **Multi-Camera Support**: Composite video feeds from multiple camera sources
+- **Demo Mode**: Full simulation mode for testing without hardware
+- **Automated Installation**: Guided installation process with dependency management
+- **System Diagnostics**: Built-in health checks and maintenance tools
 
 ## Quick Start
 
-1. **Navigate to Client Directory**:
-   ```bash
-   cd rpi-webrtc-camera/client
-   ```
+### 1. Launch the System (GUI by Default)
 
-2. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+python launcher.py
+# OR
+./followspot
+```
 
-3. **Run Application** (shows connection dialog):
-   ```bash
-   python3 main.py
-   ```
+The system launches with a graphical interface by default, providing:
+- Installing Control and Node stacks
+- Managing dependencies  
+- Configuration management
+- System diagnostics
+- Running applications
 
-   Or use specific modes:
-   - **Configure Cameras**: `python3 main.py --configure`
-   - **Demo Mode**: `python3 main.py --demo`
-   - **Skip Dialog**: `python3 main.py --no-dialog`
+### 2. Command Line Installation (Optional)
 
-## GUI Controls
+For control stack (camera management and tracking):
+```bash
+python setup.py  # Choose option 1
+# OR
+python launcher.py --install-deps control
+```
 
-### Mouse Controls
-- **Click on video**: Show pixel coordinates at clicked position
+For node stack (camera server):
+```bash
+python setup.py  # Choose option 2
+# OR
+python launcher.py --install-deps node
+```
 
-### Keyboard Shortcuts
-- **Q**: Quit application
-- **+/-**: Adjust IR threshold
-- **S**: Save screenshot
-- **R**: Reset view to defaults
-- **Space**: Start/Stop video display
-- **O**: Toggle raw overlay
-- **G**: Toggle coordinate grid
-- **C**: Toggle coordinate info
-- **B**: Toggle IR beacon overlay
+### 3. Quick Launch Options
 
-### GUI Elements
-- **IR Threshold Slider**: Adjust sensitivity for IR beacon detection
-- **Display Options**: Toggle coordinate grid, beacon overlay, and coordinate info
-- **Statistics**: Real-time FPS, beacon count, and frame size
-- **Control Buttons**: Start/Stop, Save Screenshot, Reset View
+```bash
+# Launch GUI interface (default behavior)
+python launcher.py
+./followspot
 
-## File Structure
+# Use command-line interface
+python launcher.py --cli
+./followspot --cli
 
-### Main Application
-- `main.py` - Main application launcher with connection dialog integration
-- `connection_dialog.py` - GUI dialog for selecting application mode (Live/Demo/Config)
-- `video_display_gui.py` - GUI for video display and controls
-- `camera_aggregator.py` - Core camera management and WebRTC processing
-- `demo_mode.py` - Simulated camera feeds for testing
+# Launch camera configuration
+python launcher.py --configure
+./followspot --configure
 
-### Configuration & Setup
-- `camera_config_gui.py` - Configuration interface for camera setup
-- `camera_config.json` - Camera configuration file
-- `launcher.py` - Alternative launcher with additional options
+# Run in demo mode (no hardware required)
+python launcher.py --demo
+./followspot --demo
 
-### Support Files
-- `client.py` - Basic WebRTC client implementation
-- `requirements.txt` - Python dependencies
-- `setup.py` - Package setup configuration
+# Run live mode
+python launcher.py --run
+./followspot --run
+
+# Check system status
+python launcher.py --status
+./followspot --status
+
+# Start node server
+python launcher.py --node
+./followspot --node
+```
+
+## System Architecture
+
+### Control Stack
+The control stack manages camera feeds, performs IR beacon detection, and provides the user interface:
+
+- **Camera Aggregator**: Manages multiple camera connections via WebRTC
+- **IR Beacon Detection**: Real-time detection and tracking algorithms
+- **Configuration GUI**: Camera setup and calibration interface
+- **Video Display**: Composite video output with overlay information
+- **Demo Mode**: Simulated cameras with moving beacons for testing
+
+**Key Files:**
+- `control/main.py` - Main application entry point
+- `control/camera_aggregator.py` - Multi-camera management
+- `control/camera_config_gui.py` - Configuration interface
+- `control/video_display_gui.py` - Video display GUI
+- `control/demo_mode.py` - Demo/simulation mode
+
+### Node Stack
+The node stack runs on camera devices (typically Raspberry Pi) to stream video:
+
+- **Camera Server**: WebRTC streaming server for camera feeds
+- **Hardware Integration**: Raspberry Pi camera module support
+- **Network Streaming**: Low-latency video transmission
+- **Remote Management**: Command-line interface for headless operation
+
+**Key Files:**
+- `node/server.py` - Camera streaming server
+- `node/README.md` - Node-specific documentation
+
+### Launcher System
+Unified management interface for both stacks:
+
+- **GUI Launcher** (`launcher_gui.py`): Full graphical management interface
+- **CLI Launcher** (`launcher.py`): Command-line interface and interactive menus
+- **Setup Script** (`setup.py`): Dependency installation utility
+- **Configuration** (`launcher_config.json`): System state tracking
+
+## Installation Modes
+
+### Control Stack Installation
+When you install the Control Stack, the launcher provides these options:
+
+1. **Launch Configuration**: Set up camera connections and layout
+2. **Offline Mode**: Run with demo cameras (no hardware required)
+3. **Live Mode**: Connect to real cameras for operation
+
+Additional maintenance options:
+- Repair installation (reinstall dependencies)
+- Uninstall stack
+
+### Node Stack Installation
+When you install the Node Stack, the launcher provides these options:
+
+1. **Start/Stop Node Server**: Manual server control
+2. **Add to Cron**: Automatic startup at boot (Linux/Pi)
+3. **Diagnostics**: System health checks
+4. **Repair**: Reinstall dependencies
+5. **Reinstall**: Complete reinstallation
+6. **Uninstall**: Remove stack
 
 ## Configuration
 
-The application uses `camera_config.json` for camera settings:
+### Camera Configuration
+Use the configuration GUI to set up cameras:
 
+```bash
+python launcher.py --configure
+```
+
+Configuration includes:
+- Camera server URLs (WebRTC endpoints)
+- Crop rectangles for each camera
+- Grid layout and positioning
+- IR detection parameters
+
+### Example Configuration File (`camera_config.json`):
 ```json
 {
   "cameras": [
@@ -99,57 +174,163 @@ The application uses `camera_config.json` for camera settings:
 }
 ```
 
-### Connection Dialog
+## Usage Modes
 
-When you run `python3 main.py`, a connection dialog appears with three options:
+### Demo Mode
+Perfect for testing and development without hardware:
+- Simulated moving IR beacons
+- Multiple virtual cameras
+- All detection and tracking features work
+- No network or hardware requirements
 
-1. **Live Mode**: Connect to real cameras (requires configuration file)
-2. **Demo Mode**: Run with simulated cameras and moving beacons
-3. **Configuration**: Launch the camera setup interface
+```bash
+python launcher.py --demo
+```
 
-The dialog will automatically disable Live Mode if no configuration file is found.
+### Live Mode
+Connect to real cameras for production use:
+- WebRTC streaming from camera nodes
+- Real-time IR beacon detection
+- Composite video from multiple cameras
+- Interactive controls and overlays
 
-## Demo Mode
+```bash
+python launcher.py --run
+```
 
-Demo mode provides a fully functional simulation with:
-- Multiple moving IR beacons with realistic physics
-- Simulated camera feeds from different virtual positions
-- All detection and tracking features working
-- No hardware or network requirements
-- Perfect for testing and development
+### Node Server Mode
+Run camera server on Pi or other devices:
+- Streams video via WebRTC
+- Handles camera hardware
+- Can run headless
+- Supports auto-start via cron
 
-## Command Line Options
+```bash
+python launcher.py --node
+```
 
-- `python3 main.py` - Show connection dialog (default)
-- `python3 main.py --demo` - Run directly in demo mode
-- `python3 main.py --configure` - Launch configuration GUI
-- `python3 main.py --no-dialog` - Skip dialog, use command line args
-- `python3 main.py --config path/to/config.json` - Use custom config file
+## Controls and Keyboard Shortcuts
+
+### Video Display Controls
+- **Q**: Quit application
+- **+/-**: Adjust IR threshold
+- **S**: Save screenshot
+- **R**: Reset view/reload configuration
+- **Space**: Start/Stop video display
+- **O**: Toggle raw overlay
+- **G**: Toggle coordinate grid
+- **C**: Toggle coordinate info
+- **B**: Toggle IR beacon overlay
+
+### Mouse Controls
+- **Click**: Show coordinates at clicked position
+- **Drag**: Pan view (when implemented)
+
+## System Requirements
+
+### Control Stack
+- Python 3.7+
+- OpenCV (opencv-python)
+- NumPy
+- aiohttp
+- aiortc
+- Pillow (PIL)
+- Tkinter (usually included with Python)
+
+### Node Stack
+- Python 3.7+
+- Flask
+- OpenCV (opencv-python)
+- NumPy
+- aiohttp
+- aiortc
+- picamera2 (Raspberry Pi only)
+- scikit-image
+- requests
+
+### Platform Support
+- **Control Stack**: Windows, macOS, Linux
+- **Node Stack**: Linux (optimized for Raspberry Pi)
+- **Launcher**: Cross-platform GUI and CLI
 
 ## Troubleshooting
 
-1. **Connection Dialog Issues**: If the dialog doesn't appear, use `--no-dialog` flag
-2. **No video display**: Check camera connections and configuration file
-3. **GUI not responding**: Ensure all dependencies are installed
-4. **Import errors**: Run `pip install -r requirements.txt` in the client directory
-5. **WebRTC connection fails**: Verify camera server URLs and network connectivity
-6. **Display issues**: Try demo mode first to verify GUI functionality
+### Common Issues
+
+1. **Dependencies Missing**
+   ```bash
+   python launcher.py --check-deps all
+   python setup.py  # Reinstall dependencies
+   ```
+
+2. **Camera Connection Failed**
+   - Check network connectivity
+   - Verify camera server URLs
+   - Try demo mode first: `python launcher.py --demo`
+
+3. **GUI Won't Start**
+   ```bash
+   python launcher.py  # Use CLI interface
+   ```
+
+4. **No Video Display**
+   - Check if running in headless environment
+   - Use `--dry-run` flag for headless operation
+   - Verify camera configuration
+
+### Diagnostics
+Use built-in diagnostics to check system health:
+
+```bash
+python launcher.py --status          # Overall system status
+python launcher.py --check           # Quick dependency check
+python launcher.py --gui             # GUI diagnostics tools
+```
+
+### Log Files
+Terminal output can be saved from the GUI launcher for debugging.
 
 ## Development
 
-The application uses:
-- **OpenCV** for video processing and IR beacon detection
-- **Tkinter** for GUI interface and connection dialog
-- **PIL/Pillow** for image handling and display
-- **aiohttp/aiortc** for WebRTC camera communication
-- **numpy** for image processing and mathematical operations
+### Project Structure
+```
+Automated-Followspot-System/
+├── launcher.py              # CLI launcher
+├── launcher_gui.py          # GUI launcher
+├── setup.py                # Dependency installer
+├── launcher_config.json    # System configuration
+├── camera_config.json      # Camera configuration
+├── control/                # Control stack
+│   ├── main.py
+│   ├── camera_aggregator.py
+│   ├── camera_config_gui.py
+│   ├── video_display_gui.py
+│   ├── demo_mode.py
+│   └── requirements.txt
+├── node/                   # Node stack
+│   ├── server.py
+│   ├── requirements.txt
+│   └── README.md
+└── README.md
+```
 
-### Architecture
-- **WebRTC**: Low-latency streaming from camera servers
-- **Asyncio**: Non-blocking camera communication
-- **Threading**: Separate threads for GUI and video processing
-- **Queue-based**: Frame processing pipeline with thread-safe queues
+### Contributing
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test with both stacks
+5. Submit a pull request
 
 ## License
 
-This project is part of the Automated Followspot System.
+This project is licensed under the GNU Affero General Public License v3.0. See the `LICENSE` file for details.
+
+## Support
+
+- **Documentation**: This README and inline help
+- **Issues**: [GitHub Issues](https://github.com/Stavro-Purdie/Automated-Followspot-System/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Stavro-Purdie/Automated-Followspot-System/discussions)
+
+## Acknowledgments
+
+Built for live performance applications requiring precise automated lighting control and tracking.

@@ -186,7 +186,7 @@ def install_dependencies():
 
 def create_default_config():
     """Create a default configuration file if it doesn't exist"""
-    config_file = Path(__file__).parent / "camera_config.json"
+    config_file = Path(__file__).parent.parent / "config" / "camera_config.json"
     
     if config_file.exists():
         print(f"✅ Configuration file already exists: {config_file}")
@@ -271,7 +271,7 @@ def print_usage_instructions():
     print("   # OR")
     print("   python camera_config_gui.py")
     
-    print("\n2. Edit camera_config.json to match your network setup:")
+    print("\n2. Edit config/camera_config.json to match your network setup:")
     print("   - Update server URLs to match your camera IP addresses")
     print("   - Adjust camera IDs to meaningful names")
     print("   - Configure grid layout as needed")
@@ -293,7 +293,7 @@ def print_usage_instructions():
     print("   r     - Reload configuration")
     
     print("\n📁 Important Files:")
-    print("   camera_config.json     - Camera configuration")
+    print("   config/camera_config.json     - Camera configuration")
     print("   launcher.py           - Easy launcher script")
     print("   camera_config_gui.py  - Configuration GUI")
     print("   multi_camera_client.py - Main client")
