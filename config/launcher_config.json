@@ -7,11 +7,11 @@
   },
   "installations": {
     "control_stack": {
-      "installed": false,
-      "version": null,
-      "install_date": null,
-      "dependencies_verified": false,
-      "last_dependency_check": null
+      "installed": true,
+      "version": "1.0.0",
+      "install_date": "2025-08-06T12:45:00.450802",
+      "dependencies_verified": true,
+      "last_dependency_check": "2025-08-06 12:49:40"
     },
     "node_stack": {
       "installed": false,

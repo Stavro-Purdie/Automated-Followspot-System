@@ -266,7 +266,7 @@ def launch_config_gui():
         return False
 
 def launch_client(config_file="config/camera_config.json"):
-    """Launch the multi-camera client"""
+    """Launch the multi-camera client directly in live mode"""
     script_path = Path(__file__).parent / "control" / "main.py"
     
     if not script_path.exists():
@@ -278,12 +278,12 @@ def launch_client(config_file="config/camera_config.json"):
         print("   Run configuration GUI first or create a configuration file")
         return False
     
-    print(f"🚀 Launching multi-camera client with config: {config_file}")
+    print(f"🚀 Launching live mode with config: {config_file}")
     try:
-        subprocess.run([sys.executable, str(script_path), "--config", config_file])
+        subprocess.run([sys.executable, str(script_path), "--config", config_file, "--no-dialog"])
         return True
     except Exception as e:
-        print(f"❌ Error launching client: {e}")
+        print(f"❌ Error launching live mode: {e}")
         return False
 
 def launch_demo_mode():
@@ -399,7 +399,7 @@ def main():
     parser.add_argument("--configure", action="store_true", 
                         help="Launch camera configuration GUI")
     parser.add_argument("--run", action="store_true", 
-                        help="Launch multi-camera client")
+                        help="Launch live camera tracking mode")
     parser.add_argument("--demo", action="store_true",
                         help="Launch in demo mode")
     parser.add_argument("--node", action="store_true",
@@ -553,8 +553,8 @@ def main():
         # Control stack installed
         print("📋 Control Stack Options:")
         print("1. Launch Configuration")
-        print("2. Launch Offline Mode (Demo)")
-        print("3. Launch Live Mode")
+        print("2. Launch Demo Mode")
+        print("3. Launch Live Camera Tracking")
         print("4. Install Node Stack")
         print("5. Launch GUI")
         print("6. Exit")
@@ -634,8 +634,8 @@ def main():
         # Both stacks installed
         print("📋 What would you like to do?")
         print("1. Launch Configuration (Control)")
-        print("2. Launch Offline Mode (Control)")
-        print("3. Launch Live Mode (Control)")
+        print("2. Launch Demo Mode (Control)")
+        print("3. Launch Live Camera Tracking (Control)")
         print("4. Start Node Server")
         print("5. Launch GUI")
         print("6. System Status")

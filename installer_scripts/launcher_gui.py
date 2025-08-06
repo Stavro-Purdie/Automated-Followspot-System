@@ -206,7 +206,7 @@ class LauncherGUI:
         ttk.Button(self.control_frame, text="Offline Mode", 
                   command=self.launch_offline_mode).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         
-        ttk.Button(self.control_frame, text="Live Mode", 
+        ttk.Button(self.control_frame, text="Live Camera Tracking", 
                   command=self.launch_live_mode).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         
         # Maintenance options
@@ -519,7 +519,9 @@ class LauncherGUI:
                 return
         
         script_path = Path(__file__).parent.parent / "control" / "main.py"
-        self.run_script(script_path, "Live Mode")
+        # Launch directly into live mode without showing the connection dialog
+        args = ["--config", str(config_path), "--no-dialog"]
+        self.run_script(script_path, "Live Camera Tracking", args=args)
     
     def repair_control(self):
         """Repair control stack installation"""
