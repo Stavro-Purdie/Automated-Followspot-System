@@ -1,0 +1,473 @@
+{
+  "test_info": {
+    "total_frames": 10,
+    "test_duration_s": 0.06909489631652832,
+    "target_fps": 15,
+    "achieved_fps": 146.2020886490707
+  },
+  "performance": {
+    "avg_frame_time_ms": 6.839847564697266,
+    "max_frame_time_ms": 8.55708122253418,
+    "target_frame_time_ms": 66.66666666666667,
+    "performance_ratio": 9.746805909938047
+  },
+  "detection_stats": {
+    "total_persons_detected": 19,
+    "avg_detections_per_frame": 1.9
+  },
+  "tracking_stats": {
+    "avg_processing_time_ms": 0.17650127410888672,
+    "max_processing_time_ms": 0.35309791564941406,
+    "frames_processed": 10,
+    "tracking_stats": {
+      "total_tracks_created": 19,
+      "total_tracks_lost": 7,
+      "average_track_length": 1.0,
+      "active_tracks": 12
+    }
+  },
+  "fusion_stats": {
+    "total_fusions": 18,
+    "reid_only_persons": 16,
+    "ir_only_persons": 2,
+    "fused_persons": 0,
+    "position_matches": 0,
+    "position_mismatches": 0
+  },
+  "component_performance": {
+    "reid_processor": {
+      "estimated_fps": 62.2
+    },
+    "person_tracker": {
+      "avg_time_ms": 0.17650127410888672,
+      "active_tracks": 12
+    },
+    "data_fusion": {
+      "fused_persons": 0,
+      "reid_only": 16,
+      "ir_only": 2
+    }
+  },
+  "frame_results": [
+    {
+      "frame_id": 1,
+      "processing_time_ms": 8.55708122253418,
+      "detections_count": 1,
+      "active_tracks_count": 1,
+      "ir_beacons_count": 2,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 2,
+          "x": 2.059833501070864,
+          "y": -1.7511180485720277,
+          "z": 1.75,
+          "confidence": 0.7166175537326351,
+          "velocity": [
+            2.059833501070864,
+            -1.7511180485720277,
+            1.75
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 1.0
+        },
+        {
+          "id": 3,
+          "x": 1.539388368239325,
+          "y": -0.5577601531614378,
+          "z": 1.75,
+          "confidence": 0.7020032094405667,
+          "velocity": [
+            1.539388368239325,
+            -0.5577601531614378,
+            1.75
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 1.0
+        }
+      ]
+    },
+    {
+      "frame_id": 2,
+      "processing_time_ms": 7.045745849609375,
+      "detections_count": 2,
+      "active_tracks_count": 3,
+      "ir_beacons_count": 2,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 2,
+          "x": 1.2205967135745817,
+          "y": -1.2625666169175753,
+          "z": 1.75,
+          "confidence": 0.6712422156637655,
+          "velocity": [
+            -0.8392367874962825,
+            0.48855143165445236,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 2.0
+        },
+        {
+          "id": 3,
+          "x": -0.6526808821803693,
+          "y": -0.6026420159037698,
+          "z": 1.75,
+          "confidence": 0.66091459439187,
+          "velocity": [
+            -2.1920692504196944,
+            -0.04488186274233197,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 2.0
+        }
+      ]
+    },
+    {
+      "frame_id": 3,
+      "processing_time_ms": 6.334781646728516,
+      "detections_count": 1,
+      "active_tracks_count": 4,
+      "ir_beacons_count": 1,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 2,
+          "x": -1.8541876488400109,
+          "y": -1.3712388448724186,
+          "z": 1.75,
+          "confidence": 0.6906771514884769,
+          "velocity": [
+            -3.0747843624145927,
+            -0.10867222795484333,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 3.0
+        },
+        {
+          "id": 3,
+          "x": -0.6526808821803693,
+          "y": -0.6026420159037698,
+          "z": 1.75,
+          "confidence": 0.66091459439187,
+          "velocity": [
+            -2.1920692504196944,
+            -0.04488186274233197,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 2.0
+        }
+      ]
+    },
+    {
+      "frame_id": 4,
+      "processing_time_ms": 6.150245666503906,
+      "detections_count": 2,
+      "active_tracks_count": 6,
+      "ir_beacons_count": 2,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 2,
+          "x": 1.2833664041743225,
+          "y": -1.6961525681289533,
+          "z": 1.75,
+          "confidence": 0.7193217566421577,
+          "velocity": [
+            3.137554053014333,
+            -0.32491372325653467,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 4.0
+        },
+        {
+          "id": 3,
+          "x": 0.5659480430677384,
+          "y": -0.33829005564399495,
+          "z": 1.75,
+          "confidence": 0.6935516775836201,
+          "velocity": [
+            0.6093144626240539,
+            0.1321759801298874,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 4.0
+        }
+      ]
+    },
+    {
+      "frame_id": 5,
+      "processing_time_ms": 7.044076919555664,
+      "detections_count": 1,
+      "active_tracks_count": 7,
+      "ir_beacons_count": 2,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 3,
+          "x": -2.3883775836266086,
+          "y": 0.04664628212491628,
+          "z": 1.75,
+          "confidence": 0.7308958811815092,
+          "velocity": [
+            -2.954325626694347,
+            0.38493633776891123,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 5.0
+        },
+        {
+          "id": 2,
+          "x": -1.7122928760585359,
+          "y": -1.2151002247887859,
+          "z": 1.75,
+          "confidence": 0.6968104014078378,
+          "velocity": [
+            -2.995659280232858,
+            0.48105234334016744,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 5.0
+        }
+      ]
+    },
+    {
+      "frame_id": 6,
+      "processing_time_ms": 6.661176681518555,
+      "detections_count": 1,
+      "active_tracks_count": 7,
+      "ir_beacons_count": 1,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 3,
+          "x": -2.3883775836266086,
+          "y": 0.04664628212491628,
+          "z": 1.75,
+          "confidence": 0.7308958811815092,
+          "velocity": [
+            -2.954325626694347,
+            0.38493633776891123,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 5.0
+        },
+        {
+          "id": 2,
+          "x": 1.9252411247843924,
+          "y": -0.6309703568622136,
+          "z": 1.75,
+          "confidence": 0.7074098782740763,
+          "velocity": [
+            3.637534000842928,
+            0.5841298679265723,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 6.0
+        }
+      ]
+    },
+    {
+      "frame_id": 7,
+      "processing_time_ms": 6.972074508666992,
+      "detections_count": 3,
+      "active_tracks_count": 8,
+      "ir_beacons_count": 2,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 2,
+          "x": 1.1660194445415084,
+          "y": 1.1074032424268268,
+          "z": 1.75,
+          "confidence": 0.6989172269784785,
+          "velocity": [
+            -0.759221680242884,
+            1.7383735992890403,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 7.0
+        },
+        {
+          "id": 3,
+          "x": -0.8264495331350445,
+          "y": -0.7766936244354214,
+          "z": 1.75,
+          "confidence": 0.6484440643207146,
+          "velocity": [
+            0.780964025245782,
+            -0.41166995328016887,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 7.0
+        }
+      ]
+    },
+    {
+      "frame_id": 8,
+      "processing_time_ms": 5.946159362792969,
+      "detections_count": 2,
+      "active_tracks_count": 9,
+      "ir_beacons_count": 2,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 2,
+          "x": 0.7243697566369522,
+          "y": 1.4449869213953805,
+          "z": 1.75,
+          "confidence": 0.6701481709170556,
+          "velocity": [
+            -0.44164968790455617,
+            0.3375836789685538,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 8.0
+        },
+        {
+          "id": 3,
+          "x": -0.25563257504428516,
+          "y": 0.8734470408545998,
+          "z": 1.75,
+          "confidence": 0.6536290062856565,
+          "velocity": [
+            0.5708169580907594,
+            1.6501406652900212,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 8.0
+        }
+      ]
+    },
+    {
+      "frame_id": 9,
+      "processing_time_ms": 6.699085235595703,
+      "detections_count": 3,
+      "active_tracks_count": 10,
+      "ir_beacons_count": 1,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 2,
+          "x": 1.468816834490122,
+          "y": 1.9321028669527491,
+          "z": 1.75,
+          "confidence": 0.7282919633517042,
+          "velocity": [
+            0.7444470778531698,
+            0.4871159455573686,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 9.0
+        },
+        {
+          "id": 3,
+          "x": -0.25563257504428516,
+          "y": 0.8734470408545998,
+          "z": 1.75,
+          "confidence": 0.6536290062856565,
+          "velocity": [
+            0.5708169580907594,
+            1.6501406652900212,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 8.0
+        }
+      ]
+    },
+    {
+      "frame_id": 10,
+      "processing_time_ms": 6.988048553466797,
+      "detections_count": 3,
+      "active_tracks_count": 12,
+      "ir_beacons_count": 2,
+      "fused_persons_count": 2,
+      "final_positions": [
+        {
+          "id": 3,
+          "x": -1.3140717132609394,
+          "y": 0.3269870146242959,
+          "z": 1.75,
+          "confidence": 0.7493635223608955,
+          "velocity": [
+            -0.5292195691083271,
+            -0.27323001311515194,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 2,
+          "source": "ir_beacon",
+          "timestamp": 10.0
+        },
+        {
+          "id": 2,
+          "x": -1.0754373122263354,
+          "y": -0.5703283686682914,
+          "z": 1.75,
+          "confidence": 0.6450342366906245,
+          "velocity": [
+            -2.544254146716457,
+            -2.5024312356210405,
+            0.0
+          ],
+          "reid_id": null,
+          "ir_id": 1,
+          "source": "ir_beacon",
+          "timestamp": 10.0
+        }
+      ]
+    }
+  ]
+}

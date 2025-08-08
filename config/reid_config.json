@@ -1,0 +1,77 @@
+{
+  "performance": {
+    "target_fps": 15,
+    "input_resolution": [1920, 1080],
+    "detection_resolution": [1280, 720],
+    "max_persons": 10,
+    "confidence_threshold": 0.6,
+    "nms_threshold": 0.4
+  },
+  "models": {
+    "detector": {
+      "name": "yolov8n",
+      "device": "auto",
+      "batch_size": 1,
+      "model_path": "reid/models/yolov8n.pt"
+    },
+    "reid": {
+      "name": "osnet_x0_5",
+      "feature_dim": 512,
+      "device": "auto",
+      "model_path": "reid/models/osnet_x0_5_market1501.pth"
+    }
+  },
+  "optimization": {
+    "use_half_precision": true,
+    "tensorrt_optimization": false,
+    "detection_interval": 1,
+    "reid_interval": 1,
+    "max_tracking_age": 30
+  },
+  "camera": {
+    "front_camera": {
+      "position": [0, 0, 2.5],
+      "angle": 0,
+      "fov": 60,
+      "focal_length": 1000,
+      "resolution": [1920, 1080],
+      "calibration_matrix": [
+        [1000, 0, 960],
+        [0, 1000, 540], 
+        [0, 0, 1]
+      ],
+      "distortion_coeffs": [0, 0, 0, 0, 0]
+    }
+  },
+  "stage_geometry": {
+    "width": 10,
+    "depth": 8,
+    "height": 3,
+    "origin": [0, 0, 0]
+  },
+  "tracking": {
+    "max_disappeared": 10,
+    "max_distance": 100,
+    "reid_threshold": 0.7,
+    "depth_estimation_method": "geometric",
+    "feature_similarity_threshold": 0.6,
+    "max_tracking_distance": 2.0,
+    "track_memory_frames": 30,
+    "new_track_confidence_threshold": 0.5
+  },
+  "fusion": {
+    "ir_reid_max_distance": 0.5,
+    "temporal_window": 5,
+    "confidence_weights": {
+      "ir_tracking": 0.7,
+      "reid_matching": 0.3
+    }
+  },
+  "data_fusion": {
+    "position_match_threshold": 1.0,
+    "time_sync_tolerance": 0.1,
+    "reid_weight": 0.4,
+    "ir_weight": 0.6,
+    "fusion_memory_time": 3.0
+  }
+}
