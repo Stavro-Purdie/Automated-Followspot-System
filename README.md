@@ -11,6 +11,7 @@ A comprehensive multi-camera IR beacon tracking system with automated followspot
 - **Demo Mode**: Full simulation mode for testing without hardware
 - **Automated Installation**: Guided installation process with dependency management
 - **System Diagnostics**: Built-in health checks and maintenance tools
+- **Built-in Help System**: Independent help window with keyboard shortcuts and operator guidelines
 
 ## Quick Start
 
@@ -87,6 +88,7 @@ The control stack manages camera feeds, performs IR beacon detection, and provid
 - **Configuration GUI**: Camera setup and calibration interface
 - **Video Display**: Composite video output with overlay information
 - **Demo Mode**: Simulated cameras with moving beacons for testing
+- **Help System**: Independent help window accessible via Help menu or 'H' key with complete keyboard shortcuts reference
 
 **Key Files:**
 - `control/main.py` - Main application entry point

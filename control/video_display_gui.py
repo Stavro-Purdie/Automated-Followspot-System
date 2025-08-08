@@ -43,8 +43,24 @@ class VideoDisplayGUI:
         self.beacon_count_var = tk.StringVar(value="Beacons: 0")
         self.frame_size_var = tk.StringVar(value="Frame: 0x0")
         
+        # Help window reference
+        self.help_window = None
+        
+        self.setup_menu()
         self.setup_ui()
         self.setup_bindings()
+        
+    def setup_menu(self):
+        """Setup the menu bar"""
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+        
+        # Help menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="Keyboard Shortcuts", command=self.show_help_window)
+        help_menu.add_separator()
+        help_menu.add_command(label="About", command=self.show_about)
         
     def setup_ui(self):
         """Setup the user interface"""
@@ -167,6 +183,8 @@ class VideoDisplayGUI:
         
         if key == 'q':
             self.on_closing()
+        elif key == 'h':
+            self.show_help_window()
         elif key == 'plus' or key == 'equal':
             self.ir_threshold.set(min(255, self.ir_threshold.get() + 5))
         elif key == 'minus':
@@ -428,6 +446,170 @@ class VideoDisplayGUI:
         self.show_beacons.set(True)
         self.show_raw_overlay.set(False)
         self.status_var.set("View reset to defaults")
+    
+    def show_help_window(self):
+        """Show the help/keybinds window as an independent window"""
+        # Close existing help window if open
+        if self.help_window and self.help_window.winfo_exists():
+            self.help_window.lift()
+            self.help_window.focus_set()
+            return
+            
+        # Create new help window
+        self.help_window = tk.Toplevel(self.root)
+        self.help_window.title("Keyboard Shortcuts & Controls")
+        self.help_window.geometry("500x600")
+        self.help_window.resizable(True, True)
+        
+        # Make window independent (can be moved to another screen)
+        self.help_window.transient()  # Remove parent dependency for multi-screen
+        
+        # Main frame with padding
+        main_frame = ttk.Frame(self.help_window, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Configure grid weights for resizing
+        self.help_window.columnconfigure(0, weight=1)
+        self.help_window.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=1)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="Keyboard Shortcuts & Controls", 
+                               font=("Arial", 16, "bold"))
+        title_label.grid(row=0, column=0, pady=(0, 20), sticky=tk.W)
+        
+        # Create scrollable text area
+        text_frame = ttk.Frame(main_frame)
+        text_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+        
+        # Text widget with scrollbar
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, padx=10, pady=10, 
+                             font=("Courier New", 11), state=tk.DISABLED)
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        text_widget.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Help content
+        help_content = """KEYBOARD SHORTCUTS
+
+Navigation & Control:
+  H                    Show this help window
+  Q                    Quit application
+  Space                Start/Stop video display
+  R                    Reset view to defaults
+  S                    Save screenshot
+  
+Threshold Adjustment:
+  +  or  =             Increase IR threshold (+5)
+  -                    Decrease IR threshold (-5)
+  
+Display Toggles:
+  G                    Toggle grid overlay
+  C                    Toggle coordinate display
+  B                    Toggle IR beacon markers
+  O                    Toggle raw overlay view
+
+MOUSE CONTROLS
+
+Video Display:
+  Left Click           Show coordinates at click position
+  
+CONTROL PANEL
+
+IR Threshold:
+  • Adjust sensitivity for IR beacon detection
+  • Range: 0-255 (higher = less sensitive)
+  • Use slider or enter value directly
+
+Display Options:
+  ☑ Show Coordinates   Display coordinate overlay
+  ☑ Show Grid          Display reference grid
+  ☑ Show IR Beacons    Highlight detected IR beacons
+  ☑ Show Raw Overlay   Show raw detection overlay
+
+BUTTONS
+
+Start/Stop:           Toggle video feed on/off
+Save Screenshot:      Capture current frame to file
+Reset View:           Return all settings to defaults
+
+STATISTICS PANEL
+
+• FPS: Current frames per second
+• Beacons: Number of IR beacons detected
+• Frame: Current video resolution
+
+STATUS BAR
+
+• Shows current operation status
+• Displays mode: LIVE MODE or DEMO MODE
+• LIVE: Connected to physical cameras
+• DEMO: Using simulated camera feeds
+
+TIPS FOR OPERATORS
+
+Multi-Screen Setup:
+• This help window can be moved to a secondary monitor
+• Keep it open for quick reference during operation
+• Main video feed remains on primary screen
+
+Optimal Settings:
+• Adjust IR threshold based on lighting conditions
+• Use grid overlay for precise positioning
+• Enable all overlays for maximum information
+• Save screenshots for documentation
+
+Performance:
+• Higher thresholds improve performance
+• Disable unnecessary overlays if needed
+• Monitor FPS for real-time feedback"""
+
+        # Insert content
+        text_widget.config(state=tk.NORMAL)
+        text_widget.insert(1.0, help_content)
+        text_widget.config(state=tk.DISABLED)
+        
+        # Close button
+        close_button = ttk.Button(main_frame, text="Close", 
+                                 command=self.help_window.destroy)
+        close_button.grid(row=2, column=0, pady=(20, 0), sticky=tk.E)
+        
+        # Center window on screen initially
+        self.help_window.update_idletasks()
+        x = (self.help_window.winfo_screenwidth() // 2) - (500 // 2)
+        y = (self.help_window.winfo_screenheight() // 2) - (600 // 2)
+        self.help_window.geometry(f"500x600+{x}+{y}")
+        
+        # Focus on help window
+        self.help_window.focus_set()
+    
+    def show_about(self):
+        """Show about dialog"""
+        mode_text = "Demo Mode" if self.camera_manager.demo_mode else "Live Mode"
+        about_text = f"""Multi-Camera IR Beacon Tracker
+
+Current Mode: {mode_text}
+Version: 1.0.0
+
+This application provides real-time tracking of IR beacons
+using multiple camera feeds for followspot automation.
+
+Features:
+• Real-time IR beacon detection
+• Multi-camera composite display
+• Adjustable sensitivity controls
+• Coordinate tracking and overlay
+• Screenshot capture capability
+
+For more information and documentation:
+https://github.com/Stavro-Purdie/Automated-Followspot-System"""
+        
+        messagebox.showinfo("About Multi-Camera IR Beacon Tracker", about_text)
         
     def on_closing(self):
         """Handle window closing"""
