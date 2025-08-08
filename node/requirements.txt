@@ -1,0 +1,8 @@
+Flask
+aiohttp
+opencv-python
+numpy
+aiortc
+picamera2
+scikit-image
+requests
