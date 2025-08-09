@@ -10,8 +10,8 @@
       "installed": true,
       "version": "1.0.0",
       "install_date": "2025-08-06T12:45:00.450802",
-      "dependencies_verified": true,
-      "last_dependency_check": "2025-08-08 16:53:19"
+      "dependencies_verified": false,
+      "last_dependency_check": "2025-08-08 21:59:10"
     },
     "node_stack": {
       "installed": false,

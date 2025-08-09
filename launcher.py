@@ -265,6 +265,22 @@ def launch_config_gui():
         print(f"❌ Error launching configuration GUI: {e}")
         return False
 
+def launch_reid_configurator():
+    """Launch the ReID camera configurator"""
+    script_path = Path(__file__).parent / "control" / "reid_configurator.py"
+    
+    if not script_path.exists():
+        print(f"❌ ReID configurator script not found: {script_path}")
+        return False
+    
+    print("🚀 Launching ReID camera configurator...")
+    try:
+        subprocess.run([sys.executable, str(script_path)])
+        return True
+    except Exception as e:
+        print(f"❌ Error launching ReID configurator: {e}")
+        return False
+
 def launch_client(config_file="config/camera_config.json"):
     """Launch the multi-camera client directly in live mode"""
     script_path = Path(__file__).parent / "control" / "main.py"
@@ -398,6 +414,8 @@ def main():
                         help="Use command-line interface instead of GUI")
     parser.add_argument("--configure", action="store_true", 
                         help="Launch camera configuration GUI")
+    parser.add_argument("--reid-config", action="store_true",
+                        help="Launch ReID camera configurator")
     parser.add_argument("--run", action="store_true", 
                         help="Launch live camera tracking mode")
     parser.add_argument("--demo", action="store_true",
@@ -418,7 +436,7 @@ def main():
     args = parser.parse_args()
     
     # Check if any CLI-specific arguments are provided
-    cli_args = [args.configure, args.run, args.demo, args.node, args.check, 
+    cli_args = [args.configure, args.reid_config, args.run, args.demo, args.node, args.check, 
                 args.install_deps, args.check_deps]
     
     # Add explicit CLI flag for status
@@ -477,6 +495,10 @@ def main():
     
     if args.configure:
         launch_config_gui()
+        return
+    
+    if args.reid_config:
+        launch_reid_configurator()
         return
     
     if args.run:
@@ -553,28 +575,32 @@ def main():
         # Control stack installed
         print("📋 Control Stack Options:")
         print("1. Launch Configuration")
-        print("2. Launch Demo Mode")
-        print("3. Launch Live Camera Tracking")
-        print("4. Install Node Stack")
-        print("5. Launch GUI")
-        print("6. Exit")
+        print("2. Launch ReID Camera Configurator") 
+        print("3. Launch Demo Mode")
+        print("4. Launch Live Camera Tracking")
+        print("5. Install Node Stack")
+        print("6. Launch GUI")
+        print("7. Exit")
         
         while True:
-            choice = input("\nEnter your choice (1-6): ").strip()
+            choice = input("\nEnter your choice (1-7): ").strip()
             
             if choice == "1":
                 launch_config_gui()
                 break
             elif choice == "2":
-                launch_demo_mode()
+                launch_reid_configurator()
                 break
             elif choice == "3":
+                launch_demo_mode()
+                break
+            elif choice == "4":
                 if check_config_file():
                     launch_client(args.config)
                 else:
                     print("❌ No configuration found. Please configure cameras first (option 1).")
                 break
-            elif choice == "4":
+            elif choice == "5":
                 install_dependencies("node")
                 if check_dependencies("node"):
                     config['installations']['node_stack']['installed'] = True
@@ -583,14 +609,14 @@ def main():
                     save_launcher_config(config)
                     print("✅ Node stack installed")
                 break
-            elif choice == "5":
+            elif choice == "6":
                 launch_gui()
                 break
-            elif choice == "6":
+            elif choice == "7":
                 print("👋 Goodbye!")
                 break
             else:
-                print("❌ Invalid choice. Please enter 1-6.")
+                print("❌ Invalid choice. Please enter 1-7.")
     
     elif node_installed and not control_installed:
         # Node stack installed
@@ -634,41 +660,45 @@ def main():
         # Both stacks installed
         print("📋 What would you like to do?")
         print("1. Launch Configuration (Control)")
-        print("2. Launch Demo Mode (Control)")
-        print("3. Launch Live Camera Tracking (Control)")
-        print("4. Start Node Server")
-        print("5. Launch GUI")
-        print("6. System Status")
-        print("7. Exit")
+        print("2. Launch ReID Camera Configurator (Control)")
+        print("3. Launch Demo Mode (Control)")
+        print("4. Launch Live Camera Tracking (Control)")
+        print("5. Start Node Server")
+        print("6. Launch GUI")
+        print("7. System Status")
+        print("8. Exit")
         
         while True:
-            choice = input("\nEnter your choice (1-7): ").strip()
+            choice = input("\nEnter your choice (1-8): ").strip()
             
             if choice == "1":
                 launch_config_gui()
                 break
             elif choice == "2":
-                launch_demo_mode()
+                launch_reid_configurator()
                 break
             elif choice == "3":
+                launch_demo_mode()
+                break
+            elif choice == "4":
                 if check_config_file():
                     launch_client(args.config)
                 else:
                     print("❌ No configuration found. Please configure cameras first (option 1).")
                 break
-            elif choice == "4":
+            elif choice == "5":
                 launch_node_server()
                 break
-            elif choice == "5":
+            elif choice == "6":
                 launch_gui()
                 break
-            elif choice == "6":
-                show_system_status()
             elif choice == "7":
+                show_system_status()
+            elif choice == "8":
                 print("👋 Goodbye!")
                 break
             else:
-                print("❌ Invalid choice. Please enter 1-7.")
+                print("❌ Invalid choice. Please enter 1-8.")
 
 if __name__ == "__main__":
     main()

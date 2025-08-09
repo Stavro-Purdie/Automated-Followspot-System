@@ -201,20 +201,23 @@ class LauncherGUI:
         ttk.Button(self.control_frame, text="Launch Configuration", 
                   command=self.launch_configuration).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         
+        ttk.Button(self.control_frame, text="ReID Camera Configurator", 
+                  command=self.launch_reid_configurator).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        
         ttk.Button(self.control_frame, text="Offline Mode", 
-                  command=self.launch_offline_mode).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+                  command=self.launch_offline_mode).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         
         ttk.Button(self.control_frame, text="Live Mode", 
-                  command=self.launch_live_mode).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+                  command=self.launch_live_mode).grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         
         # Maintenance options
-        ttk.Separator(self.control_frame, orient='horizontal').grid(row=3, column=0, sticky=(tk.W, tk.E), pady=10)
+        ttk.Separator(self.control_frame, orient='horizontal').grid(row=4, column=0, sticky=(tk.W, tk.E), pady=10)
         
         ttk.Button(self.control_frame, text="Repair Installation", 
-                  command=self.repair_control).grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+                  command=self.repair_control).grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         
         ttk.Button(self.control_frame, text="Uninstall", 
-                  command=self.uninstall_control).grid(row=5, column=0, sticky=(tk.W, tk.E))
+                  command=self.uninstall_control).grid(row=6, column=0, sticky=(tk.W, tk.E))
         
         self.control_frame.columnconfigure(0, weight=1)
     
@@ -500,6 +503,11 @@ class LauncherGUI:
         """Launch camera configuration GUI"""
         script_path = Path(__file__).parent / "control" / "camera_config_gui.py"
         self.run_script(script_path, "Camera Configuration")
+    
+    def launch_reid_configurator(self):
+        """Launch ReID camera configurator"""
+        script_path = Path(__file__).parent / "control" / "reid_configurator.py"
+        self.run_script(script_path, "ReID Camera Configurator")
     
     def launch_offline_mode(self):
         """Launch control stack in offline/demo mode"""
