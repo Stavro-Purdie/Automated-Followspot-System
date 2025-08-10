@@ -25,6 +25,9 @@ class LauncherGUI:
         self.root.geometry("900x700")
         self.root.resizable(True, True)
         
+        # Set up window close protocol
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
         # Initialize configuration
         self.config_file = Path(__file__).parent.parent / "config" / "launcher_config.json"
         self.config = self.load_config()
@@ -278,7 +281,7 @@ class LauncherGUI:
         ttk.Separator(general_frame, orient='horizontal').grid(row=4, column=0, sticky=(tk.W, tk.E), pady=10)
         
         ttk.Button(general_frame, text="Exit", 
-                  command=self.root.quit).grid(row=5, column=0, sticky=(tk.W, tk.E))
+                  command=self.on_closing).grid(row=5, column=0, sticky=(tk.W, tk.E))
         
         general_frame.columnconfigure(0, weight=1)
     
@@ -492,9 +495,9 @@ class LauncherGUI:
         """Install node stack with GUI installer"""
         self.run_installer("node")
     
-    def run_installer(self, stack_type):
+    def run_installer(self, stack_type, repair_mode=False, reinstall_mode=False):
         """Run installer for specified stack type"""
-        installer_window = InstallerWindow(self, stack_type)
+        installer_window = InstallerWindow(self, stack_type, repair_mode=repair_mode, reinstall_mode=reinstall_mode)
         installer_window.show()
     
     # Control stack methods
@@ -654,6 +657,13 @@ class LauncherGUI:
                 
         except Exception as e:
             self.log_to_terminal(f"Error starting {description}: {e}")
+    
+    def on_closing(self):
+        """Handle window close event"""
+        # Terminate any running background processes if needed
+        # For now, just quit the application cleanly
+        self.root.quit()
+        self.root.destroy()
     
     def run(self):
         """Start the GUI application"""
