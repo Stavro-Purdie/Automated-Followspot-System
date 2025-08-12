@@ -27,3 +27,16 @@ fusion/__pycache__/data_fusion.cpython-313.pyc
 reid/__pycache__/depth_estimator.cpython-313.pyc
 reid/__pycache__/person_tracker.cpython-313.pyc
 reid/__pycache__/reid_processor.cpython-313.pyc
+reid/__pycache__/person_tracker.cpython-313.pyc
+reid/__pycache__/reid_processor.cpython-313.pyc
+reid/__pycache__/depth_estimator.cpython-313.pyc
+installer_scripts/__pycache__/launcher_gui.cpython-313.pyc
+installer_scripts/__pycache__/installer_wizard.cpython-313.pyc
+fusion/__pycache__/data_fusion.cpython-313.pyc
+control/__pycache__/video_display_gui.cpython-313.pyc
+control/__pycache__/demo_mode.cpython-313.pyc
+control/__pycache__/connection_dialog.cpython-313.pyc
+control/__pycache__/camera_aggregator.cpython-313.pyc
+__pycache__/launcher.cpython-313.pyc
+__pycache__/launcher_gui.cpython-313.pyc
+__pycache__/installer_wizard.cpython-313.pyc
