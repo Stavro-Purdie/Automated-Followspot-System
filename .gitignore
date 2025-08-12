@@ -23,3 +23,7 @@ go.work.sum
 
 # env file
 .env
+fusion/__pycache__/data_fusion.cpython-313.pyc
+reid/__pycache__/depth_estimator.cpython-313.pyc
+reid/__pycache__/person_tracker.cpython-313.pyc
+reid/__pycache__/reid_processor.cpython-313.pyc
