@@ -123,8 +123,8 @@ Tracks installation state and system settings:
 }
 ```
 
-### Camera Configuration (`camera_config.json`)
-Stores camera setup and layout information (created by configuration GUI).
+### Camera Configuration (`roof_array_config.json`)
+Stores roof array camera setup and layout information (created by configuration GUI). A separate `front_array_config.json` may be used for front array cameras.
 
 ## GUI Launcher Features
 

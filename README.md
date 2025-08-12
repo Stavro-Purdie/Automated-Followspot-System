@@ -155,7 +155,7 @@ Configuration includes:
 - Grid layout and positioning
 - IR detection parameters
 
-### Example Configuration File (`camera_config.json`):
+### Example Configuration File (`roof_array_config.json`):
 ```json
 {
   "cameras": [
@@ -301,7 +301,9 @@ Automated-Followspot-System/
 ├── launcher_gui.py          # GUI launcher
 ├── setup.py                # Dependency installer
 ├── launcher_config.json    # System configuration
-├── camera_config.json      # Camera configuration
+├── config/
+│   ├── roof_array_config.json   # Roof array camera configuration (primary)
+│   └── front_array_config.json  # Front array camera configuration (placeholder)
 ├── control/                # Control stack
 │   ├── main.py
 │   ├── camera_aggregator.py

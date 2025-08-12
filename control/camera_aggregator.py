@@ -54,7 +54,7 @@ class GridConfig:
     auto_arrange: bool = True
 
 class MultiCameraManager:
-    def __init__(self, config_file: str = "../config/camera_config.json", demo_mode: bool = False):
+    def __init__(self, config_file: str = "../config/roof_array_config.json", demo_mode: bool = False):
         self.config_file = config_file
         self.demo_mode = demo_mode
         self.cameras: Dict[str, CameraConfig] = {}
@@ -65,6 +65,13 @@ class MultiCameraManager:
         self.running = True
         self.ir_threshold = 200
         self.demo_manager = None
+        
+        # Legacy fallback support
+        if not os.path.exists(self.config_file) and "roof_array_config.json" in self.config_file:
+            legacy = self.config_file.replace("roof_array_config.json", "camera_config.json")
+            if os.path.exists(legacy):
+                logger.warning("Legacy configuration file 'camera_config.json' detected. Please rename to 'roof_array_config.json'. Using legacy file for now.")
+                self.config_file = legacy
         
         # Load configuration
         self.load_config()
@@ -681,8 +688,8 @@ async def cleanup_connections(manager):
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-Camera WebRTC Client")
-    parser.add_argument("--config", type=str, default="../config/camera_config.json",
-                        help="Configuration file path (default: ../config/camera_config.json)")
+    parser.add_argument("--config", type=str, default="../config/roof_array_config.json",
+                        help="Configuration file path (default: ../config/roof_array_config.json)")
     parser.add_argument("--configure", action="store_true",
                         help="Launch configuration GUI")
     parser.add_argument("--dry-run", action="store_true",
@@ -691,6 +698,13 @@ def main():
                         help="Start directly in demo mode")
     
     args = parser.parse_args()
+    
+    # Legacy fallback if new file not present
+    if (not os.path.exists(args.config) and "roof_array_config.json" in args.config):
+        legacy = args.config.replace("roof_array_config.json", "camera_config.json")
+        if os.path.exists(legacy):
+            logger.warning("Using legacy configuration file: %s", legacy)
+            args.config = legacy
     
     if args.configure:
         # Launch configuration GUI

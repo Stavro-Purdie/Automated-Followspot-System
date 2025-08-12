@@ -189,12 +189,17 @@ def is_raspberry_pi():
 
 def check_config_file():
     """Check if camera configuration file exists"""
-    config_file = "config/camera_config.json"
-    if os.path.exists(config_file):
-        print(f"✅ Camera configuration file found: {config_file}")
+    primary = "config/roof_array_config.json"
+    legacy = "config/camera_config.json"
+    if os.path.exists(primary):
+        print(f"✅ Camera configuration file found: {primary}")
+        return True
+    elif os.path.exists(legacy):
+        print(f"⚠️  Legacy configuration file found: {legacy}")
+        print("   Please rename to roof_array_config.json when convenient")
         return True
     else:
-        print(f"⚠️  Camera configuration file not found: {config_file}")
+        print(f"⚠️  Camera configuration file not found: {primary}")
         return False
 
 def launch_gui():
@@ -281,13 +286,20 @@ def launch_reid_configurator():
         print(f"❌ Error launching ReID configurator: {e}")
         return False
 
-def launch_client(config_file="config/camera_config.json"):
+def launch_client(config_file="config/roof_array_config.json"):
     """Launch the multi-camera client directly in live mode"""
     script_path = Path(__file__).parent / "control" / "main.py"
     
     if not script_path.exists():
         print(f"❌ Multi-camera client script not found: {script_path}")
         return False
+    
+    # Legacy fallback
+    if not os.path.exists(config_file) and "roof_array_config.json" in config_file:
+        legacy = config_file.replace("roof_array_config.json", "camera_config.json")
+        if os.path.exists(legacy):
+            print(f"⚠️  Using legacy configuration file: {legacy}")
+            config_file = legacy
     
     if not os.path.exists(config_file):
         print(f"❌ Configuration file not found: {config_file}")
@@ -422,8 +434,8 @@ def main():
                         help="Launch in demo mode")
     parser.add_argument("--node", action="store_true",
                         help="Launch node server")
-    parser.add_argument("--config", type=str, default="config/camera_config.json",
-                        help="Configuration file to use (default: config/camera_config.json)")
+    parser.add_argument("--config", type=str, default="config/roof_array_config.json",
+                        help="Configuration file to use (default: config/roof_array_config.json)")
     parser.add_argument("--check", action="store_true",
                         help="Check system requirements and configuration")
     parser.add_argument("--status", action="store_true",
@@ -434,7 +446,12 @@ def main():
                         help="Check dependencies for specified stack")
     
     args = parser.parse_args()
-    
+    # Legacy fallback
+    if (not os.path.exists(args.config) and "roof_array_config.json" in args.config):
+        legacy = args.config.replace("roof_array_config.json", "camera_config.json")
+        if os.path.exists(legacy):
+            print(f"⚠️  Using legacy configuration file: {legacy}")
+            args.config = legacy
     # Check if any CLI-specific arguments are provided
     cli_args = [args.configure, args.reid_config, args.run, args.demo, args.node, args.check, 
                 args.install_deps, args.check_deps]
@@ -699,6 +716,3 @@ def main():
                 break
             else:
                 print("❌ Invalid choice. Please enter 1-8.")
-
-if __name__ == "__main__":
-    main()

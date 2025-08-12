@@ -11,7 +11,8 @@ Automated-Followspot-System/
 │
 ├── config/                       # Configuration files
 │   ├── launcher_config.json      # System installation and settings
-│   └── camera_config.json        # Camera configuration
+│   ├── roof_array_config.json    # Roof array camera configuration (primary)
+│   └── front_array_config.json   # Front array camera configuration (future use)
 │
 ├── installer_scripts/            # Installation and GUI components
 │   ├── README.md                 # Installer components documentation

@@ -186,13 +186,24 @@ def install_dependencies():
 
 def create_default_config():
     """Create a default configuration file if it doesn't exist"""
-    config_file = Path(__file__).parent.parent / "config" / "camera_config.json"
+    config_dir = Path(__file__).parent.parent / "config"
+    config_file = config_dir / "roof_array_config.json"
+    legacy_file = config_dir / "camera_config.json"
     
     if config_file.exists():
         print(f"✅ Configuration file already exists: {config_file}")
         return True
     
-    print("📝 Creating default configuration file...")
+    if legacy_file.exists() and not config_file.exists():
+        try:
+            legacy_content = legacy_file.read_text()
+            config_file.write_text(legacy_content)
+            print(f"🔄 Migrated legacy configuration {legacy_file.name} -> {config_file.name}")
+            return True
+        except Exception as e:
+            print(f"⚠️  Failed to migrate legacy configuration: {e}")
+    
+    print("📝 Creating default roof array configuration file...")
     
     default_config = {
         "grid_config": {
@@ -207,7 +218,7 @@ def create_default_config():
                 "server_url": "http://192.168.1.100:8080",
                 "crop_rect": [0, 0, 320, 240],
                 "position": [0, 0],
-                "camera_id": "camera_1",
+                "camera_id": "roof_cam_1",
                 "enabled": True,
                 "auto_crop": True,
                 "overlap_threshold": 0.1
@@ -216,7 +227,7 @@ def create_default_config():
                 "server_url": "http://192.168.1.101:8080",
                 "crop_rect": [0, 0, 320, 240],
                 "position": [1, 0],
-                "camera_id": "camera_2",
+                "camera_id": "roof_cam_2",
                 "enabled": True,
                 "auto_crop": True,
                 "overlap_threshold": 0.1
@@ -228,7 +239,7 @@ def create_default_config():
         with open(config_file, 'w') as f:
             json.dump(default_config, f, indent=2)
         print(f"✅ Default configuration created: {config_file}")
-        print("   Edit this file or use the configuration GUI to customize")
+        print("   Edit this file or use the configuration GUI to customize roof array cameras")
         return True
     except Exception as e:
         print(f"❌ Failed to create configuration file: {e}")
@@ -271,7 +282,7 @@ def print_usage_instructions():
     print("   # OR")
     print("   python camera_config_gui.py")
     
-    print("\n2. Edit config/camera_config.json to match your network setup:")
+    print("\n2. Edit config/roof_array_config.json to match your network setup:")
     print("   - Update server URLs to match your camera IP addresses")
     print("   - Adjust camera IDs to meaningful names")
     print("   - Configure grid layout as needed")
@@ -293,7 +304,7 @@ def print_usage_instructions():
     print("   r     - Reload configuration")
     
     print("\n📁 Important Files:")
-    print("   config/camera_config.json     - Camera configuration")
+    print("   config/roof_array_config.json     - Roof array camera configuration")
     print("   launcher.py           - Easy launcher script")
     print("   camera_config_gui.py  - Configuration GUI")
     print("   multi_camera_client.py - Main client")

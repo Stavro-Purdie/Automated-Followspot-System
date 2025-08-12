@@ -514,12 +514,16 @@ class LauncherGUI:
     def launch_live_mode(self):
         """Launch control stack in live mode"""
         # Check if configuration exists
-        config_path = Path(__file__).parent.parent / "config" / "camera_config.json"
+        primary = Path(__file__).parent.parent / "config" / "roof_array_config.json"
+        legacy = Path(__file__).parent.parent / "config" / "camera_config.json"
+        config_path = primary if primary.exists() else legacy
         if not config_path.exists():
             if messagebox.askyesno("Configuration Missing", 
                                  "No camera configuration found. Would you like to configure cameras first?"):
                 self.launch_configuration()
                 return
+        elif config_path == legacy:
+            self.log_to_terminal("Using legacy configuration file camera_config.json. Consider renaming to roof_array_config.json")
         
         script_path = Path(__file__).parent.parent / "control" / "main.py"
         # Launch directly into live mode without showing the connection dialog
