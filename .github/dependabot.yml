@@ -5,7 +5,7 @@ updates:
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "hourly"
+      interval: "daily"
     groups:
       python-packages:
         patterns:
