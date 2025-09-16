@@ -1,8 +1,14 @@
 {
   "performance": {
     "target_fps": 15,
-    "input_resolution": [1920, 1080],
-    "detection_resolution": [1280, 720],
+    "input_resolution": [
+      1920,
+      1080
+    ],
+    "detection_resolution": [
+      1280,
+      720
+    ],
     "max_persons": 10,
     "confidence_threshold": 0.6,
     "nms_threshold": 0.4
@@ -30,24 +36,53 @@
   },
   "camera": {
     "front_camera": {
-      "position": [0, 0, 2.5],
+      "position": [
+        0,
+        0,
+        2.5
+      ],
       "angle": 0,
       "fov": 60,
       "focal_length": 1000,
-      "resolution": [1920, 1080],
-      "calibration_matrix": [
-        [1000, 0, 960],
-        [0, 1000, 540], 
-        [0, 0, 1]
+      "resolution": [
+        1920,
+        1080
       ],
-      "distortion_coeffs": [0, 0, 0, 0, 0]
+      "calibration_matrix": [
+        [
+          1000,
+          0,
+          960
+        ],
+        [
+          0,
+          1000,
+          540
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "distortion_coeffs": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     }
   },
   "stage_geometry": {
     "width": 10,
     "depth": 8,
     "height": 3,
-    "origin": [0, 0, 0]
+    "origin": [
+      0,
+      0,
+      0
+    ]
   },
   "tracking": {
     "max_disappeared": 10,
@@ -73,5 +108,6 @@
     "reid_weight": 0.4,
     "ir_weight": 0.6,
     "fusion_memory_time": 3.0
-  }
+  },
+  "last_updated": "2025-08-12T19:59:41.178009"
 }

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""
-Demo Mode for Multi-Camera System
-Generates simulated video feeds with IR beacons for demonstration purposes.
-"""
+
+# Demo Mode for Multi-Camera System
+# Generates simulated video feeds with IR beacons for demonstration purposes.
 
 import cv2
 import numpy as np

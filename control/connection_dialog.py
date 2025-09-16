@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""
-Connection Dialog for Multi-Camera IR Beacon Tracker
-Allows users to choose between live mode, demo mode, and configuration program.
-"""
+
+# Connection Dialog for Multi-Camera IR Beacon Tracker
+# Allows users to choose between live mode, demo mode, and configuration program.
 
 import tkinter as tk
 from tkinter import ttk, messagebox

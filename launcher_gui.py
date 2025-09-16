@@ -198,10 +198,10 @@ class LauncherGUI:
         self.control_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
         
         # Operation buttons
-        ttk.Button(self.control_frame, text="Launch Configuration", 
+        ttk.Button(self.control_frame, text="Roof Array Configuration (IR Beacon Tracking)", 
                   command=self.launch_configuration).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         
-        ttk.Button(self.control_frame, text="ReID Camera Configurator", 
+        ttk.Button(self.control_frame, text="Front Array Configuration (ReID Tracking)", 
                   command=self.launch_reid_configurator).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         
         ttk.Button(self.control_frame, text="Offline Mode", 

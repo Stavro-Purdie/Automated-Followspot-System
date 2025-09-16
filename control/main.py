@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""
-Main launcher for the Multi-Camera IR Beacon Tracker GUI
-"""
+
+# Main launcher for the Multi-Camera IR Beacon Tracker GUI
+
 
 import sys
 import os

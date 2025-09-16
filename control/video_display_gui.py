@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""
-Video Display GUI for Multi-Camera System
-Displays composite video feed with IR beacon overlay and coordinate system
-"""
+
+# Video Display GUI for Multi-Camera System
+# Displays composite video feed with IR beacon overlay and coordinate system
 
 import tkinter as tk
 from tkinter import ttk, messagebox

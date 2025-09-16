@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""
-Multi-Camera WebRTC Client
-Processes multiple camera feeds and combines them into a single stream for IR beacon detection.
-"""
+
+# Multi-Camera WebRTC Client
+# Processes multiple camera feeds and combines them into a single stream for IR beacon detection.
 
 import asyncio
 import json

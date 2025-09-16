@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""
-Multi-Camera Configuration GUI
-Configures multiple cameras for the automated followspot system.
-"""
+
+# Multi-Camera Configuration GUI
+# Configures multiple cameras for the automated followspot system.
 
 import sys
 import json
