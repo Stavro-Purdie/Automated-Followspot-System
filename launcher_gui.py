@@ -17,6 +17,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import queue
 import webbrowser
+from urllib.parse import urlparse
 
 class LauncherGUI:
     def __init__(self):
@@ -64,6 +65,13 @@ class LauncherGUI:
                     "dependencies_verified": False,
                     "last_dependency_check": None,
                     "cron_enabled": False
+                },
+                "front_node_stack": {
+                    "installed": False,
+                    "version": None,
+                    "install_date": None,
+                    "dependencies_verified": False,
+                    "last_dependency_check": None
                 }
             },
             "settings": {
@@ -124,190 +132,301 @@ class LauncherGUI:
     
     def create_widgets(self):
         """Create the main GUI widgets"""
-        # Main container
         main_frame = ttk.Frame(self.root, padding="20")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Configure grid weights
+        main_frame.grid(row=0, column=0, sticky="nsew")
+
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
-        
-        # Title
+        for col in range(3):
+            main_frame.columnconfigure(col, weight=1)
+
         title_label = ttk.Label(main_frame, text="Automated Followspot System", style='Title.TLabel')
         title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
-        
-        # System status frame
+
         self.create_status_frame(main_frame)
-        
-        # Installation options frame
         self.create_installation_frame(main_frame)
-        
-        # Control options frame (shown when control stack is installed)
         self.create_control_frame(main_frame)
-        
-        # Node options frame (shown when node stack is installed)
         self.create_node_frame(main_frame)
-        
-        # General options frame
         self.create_general_frame(main_frame)
-        
-        # Terminal output frame
         self.create_terminal_frame(main_frame)
     
     def create_status_frame(self, parent):
         """Create system status display"""
         status_frame = ttk.LabelFrame(parent, text="System Status", padding="10")
-        status_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        
-        # Control stack status
-        self.control_status_label = ttk.Label(status_frame, text="Control Stack: Not Installed", style='Status.TLabel')
-        self.control_status_label.grid(row=0, column=0, sticky=(tk.W), padx=(0, 20))
-        
-        # Node stack status
-        self.node_status_label = ttk.Label(status_frame, text="Node Stack: Not Installed", style='Status.TLabel')
-        self.node_status_label.grid(row=0, column=1, sticky=(tk.W), padx=(0, 20))
-        
-        # Dependencies status
-        self.deps_status_label = ttk.Label(status_frame, text="Dependencies: Checking...", style='Status.TLabel')
-        self.deps_status_label.grid(row=1, column=0, sticky=(tk.W), padx=(0, 20))
-        
-        # Last check time
+        status_frame.grid(row=1, column=0, columnspan=3, sticky="we", pady=(0, 10))
+
+        self.control_status_label = ttk.Label(
+            status_frame,
+            text="Control Stack: Not Installed",
+            style='Status.TLabel',
+        )
+        self.control_status_label.grid(row=0, column=0, sticky="w", padx=(0, 20))
+
+        self.node_status_label = ttk.Label(
+            status_frame,
+            text="Node Stack: Not Installed",
+            style='Status.TLabel',
+        )
+        self.node_status_label.grid(row=0, column=1, sticky="w", padx=(0, 20))
+
+        self.front_node_status_label = ttk.Label(
+            status_frame,
+            text="Front Node (ReID): Not Installed",
+            style='Status.TLabel',
+        )
+        self.front_node_status_label.grid(row=0, column=2, sticky="w", padx=(0, 20))
+
+        self.deps_status_label = ttk.Label(
+            status_frame,
+            text="Dependencies: Checking...",
+            style='Status.TLabel',
+        )
+        self.deps_status_label.grid(row=1, column=0, sticky="w", padx=(0, 20))
+
         self.check_time_label = ttk.Label(status_frame, text="Last Check: Never", style='Status.TLabel')
-        self.check_time_label.grid(row=1, column=1, sticky=(tk.W))
+        self.check_time_label.grid(row=1, column=1, sticky="w")
     
     def create_installation_frame(self, parent):
         """Create installation options (shown when no stacks are installed)"""
         self.install_frame = ttk.LabelFrame(parent, text="Installation Options", padding="10")
-        self.install_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        
-        # Installation buttons
-        ttk.Button(self.install_frame, text="Install Control Stack", 
-                  command=self.install_control_stack, style='Primary.TButton').grid(row=0, column=0, padx=(0, 10))
-        
-        ttk.Button(self.install_frame, text="Install Node Stack", 
-                  command=self.install_node_stack, style='Primary.TButton').grid(row=0, column=1, padx=(0, 10))
-        
-        # Info labels
-        ttk.Label(self.install_frame, text="Control Stack: Camera management and tracking interface").grid(row=1, column=0, sticky=(tk.W), pady=(5, 0))
-        ttk.Label(self.install_frame, text="Node Stack: Camera server for streaming and capture").grid(row=1, column=1, sticky=(tk.W), pady=(5, 0))
+        self.install_frame.grid(row=2, column=0, columnspan=3, sticky="we", pady=(0, 10))
+
+        self.install_frame.columnconfigure(0, weight=1)
+        self.install_frame.columnconfigure(1, weight=1)
+        self.install_frame.columnconfigure(2, weight=1)
+
+        ttk.Button(
+            self.install_frame,
+            text="Install Control Stack",
+            command=self.install_control_stack,
+            style='Primary.TButton',
+        ).grid(row=0, column=0, padx=(0, 10), sticky="ew")
+
+        ttk.Button(
+            self.install_frame,
+            text="Install Node Stack",
+            command=self.install_node_stack,
+            style='Primary.TButton',
+        ).grid(row=0, column=1, padx=(0, 10), sticky="ew")
+
+        ttk.Button(
+            self.install_frame,
+            text="Install Front Node (ReID)",
+            command=self.install_front_node_stack,
+            style='Primary.TButton',
+        ).grid(row=0, column=2, padx=(0, 10), sticky="ew")
+
+        ttk.Label(
+            self.install_frame,
+            text="Control Stack: Roof array fusion UI and operators' console",
+        ).grid(row=1, column=0, sticky="w", pady=(5, 0))
+        ttk.Label(
+            self.install_frame,
+            text="Node Stack: Roof camera streaming server",
+        ).grid(row=1, column=1, sticky="w", pady=(5, 0))
+        ttk.Label(
+            self.install_frame,
+            text="Front Node: ReID camera streaming server",
+        ).grid(row=1, column=2, sticky="w", pady=(5, 0))
     
     def create_control_frame(self, parent):
         """Create control stack options"""
         self.control_frame = ttk.LabelFrame(parent, text="Control Stack", padding="10")
-        self.control_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
-        
-        # Operation buttons
-        ttk.Button(self.control_frame, text="Roof Array Configuration (IR Beacon Tracking)", 
-                  command=self.launch_configuration).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.control_frame, text="Front Array Configuration (ReID Tracking)", 
-                  command=self.launch_reid_configurator).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.control_frame, text="Offline Mode", 
-                  command=self.launch_offline_mode).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.control_frame, text="Live Mode", 
-                  command=self.launch_live_mode).grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        # Maintenance options
-        ttk.Separator(self.control_frame, orient='horizontal').grid(row=4, column=0, sticky=(tk.W, tk.E), pady=10)
-        
-        ttk.Button(self.control_frame, text="Repair Installation", 
-                  command=self.repair_control).grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.control_frame, text="Uninstall", 
-                  command=self.uninstall_control).grid(row=6, column=0, sticky=(tk.W, tk.E))
-        
+        self.control_frame.grid(row=3, column=0, sticky="nsew", padx=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Roof Array Configuration (IR Beacon Tracking)",
+            command=self.launch_configuration,
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Front Array Configuration (ReID Tracking)",
+            command=self.launch_reid_configurator,
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Offline Mode",
+            command=self.launch_offline_mode,
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Live Mode",
+            command=self.launch_live_mode,
+        ).grid(row=3, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Separator(self.control_frame, orient='horizontal').grid(row=4, column=0, sticky="ew", pady=10)
+
+        ttk.Button(
+            self.control_frame,
+            text="Repair Installation",
+            command=self.repair_control,
+        ).grid(row=5, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Uninstall",
+            command=self.uninstall_control,
+        ).grid(row=6, column=0, sticky="ew")
+
         self.control_frame.columnconfigure(0, weight=1)
     
     def create_node_frame(self, parent):
         """Create node stack options"""
-        self.node_frame = ttk.LabelFrame(parent, text="Node Stack", padding="10")
-        self.node_frame.grid(row=3, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0))
-        
-        # Status and control
-        self.node_running_label = ttk.Label(self.node_frame, text="Status: Stopped")
-        self.node_running_label.grid(row=0, column=0, sticky=(tk.W), pady=(0, 10))
-        
-        ttk.Button(self.node_frame, text="Start Node Server", 
-                  command=self.start_node_server).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.node_frame, text="Stop Node Server", 
-                  command=self.stop_node_server).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        # Cron job management
-        ttk.Separator(self.node_frame, orient='horizontal').grid(row=3, column=0, sticky=(tk.W, tk.E), pady=10)
-        
-        self.cron_var = tk.BooleanVar()
-        self.cron_checkbox = ttk.Checkbutton(self.node_frame, text="Start at Boot (Cron)", 
-                                           variable=self.cron_var, command=self.toggle_cron)
-        self.cron_checkbox.grid(row=4, column=0, sticky=(tk.W), pady=(0, 5))
-        
-        # Maintenance options
-        ttk.Button(self.node_frame, text="Diagnostics", 
-                  command=self.node_diagnostics).grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.node_frame, text="Repair Installation", 
-                  command=self.repair_node).grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.node_frame, text="Reinstall", 
-                  command=self.reinstall_node).grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.node_frame, text="Uninstall", 
-                  command=self.uninstall_node).grid(row=8, column=0, sticky=(tk.W, tk.E))
-        
+        self.node_frame = ttk.LabelFrame(parent, text="Camera Servers", padding="10")
+        self.node_frame.grid(row=3, column=1, sticky="nsew", padx=(5, 0))
         self.node_frame.columnconfigure(0, weight=1)
+
+        self.roof_frame = ttk.LabelFrame(self.node_frame, text="Roof Node (IR)", padding="10")
+        self.roof_frame.grid(row=0, column=0, sticky="ew")
+        self.roof_frame.columnconfigure(0, weight=1)
+
+        self.node_running_label = ttk.Label(self.roof_frame, text="Status: Stopped")
+        self.node_running_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        ttk.Button(
+            self.roof_frame,
+            text="Start Node Server",
+            command=self.start_node_server,
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.roof_frame,
+            text="Stop Node Server",
+            command=self.stop_node_server,
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Separator(self.roof_frame, orient='horizontal').grid(row=3, column=0, sticky="ew", pady=10)
+
+        self.cron_var = tk.BooleanVar()
+        self.cron_checkbox = ttk.Checkbutton(
+            self.roof_frame,
+            text="Start at Boot (Cron)",
+            variable=self.cron_var,
+            command=self.toggle_cron,
+        )
+        self.cron_checkbox.grid(row=4, column=0, sticky="w", pady=(0, 5))
+
+        ttk.Button(self.roof_frame, text="Diagnostics", command=self.node_diagnostics).grid(
+            row=5,
+            column=0,
+            sticky="ew",
+            pady=(0, 5),
+        )
+        ttk.Button(self.roof_frame, text="Repair Installation", command=self.repair_node).grid(
+            row=6,
+            column=0,
+            sticky="ew",
+            pady=(0, 5),
+        )
+        ttk.Button(self.roof_frame, text="Reinstall", command=self.reinstall_node).grid(
+            row=7,
+            column=0,
+            sticky="ew",
+            pady=(0, 5),
+        )
+        ttk.Button(self.roof_frame, text="Uninstall", command=self.uninstall_node).grid(row=8, column=0, sticky="ew")
+
+        self.front_node_frame = ttk.LabelFrame(self.node_frame, text="Front Node (ReID)", padding="10")
+        self.front_node_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        self.front_node_frame.columnconfigure(0, weight=1)
+
+        self.front_node_status_label = ttk.Label(self.front_node_frame, text="Status: Stopped")
+        self.front_node_status_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="Start Front Node",
+            command=self.start_front_node_stack,
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="Stop Front Node",
+            command=self.stop_front_node_stack,
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="View Front Node Log",
+            command=lambda: self.show_log("front_node"),
+        ).grid(row=3, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="Reinstall Front Node",
+            command=lambda: self.run_installer("front_node", reinstall_mode=True),
+        ).grid(row=4, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="Uninstall Front Node",
+            command=self.uninstall_front_node,
+        ).grid(row=5, column=0, sticky="ew")
+
+        # Hide frames until stacks are detected as installed
+        self.node_frame.grid_remove()
+        self.front_node_frame.grid_remove()
     
     def create_general_frame(self, parent):
         """Create general options"""
         general_frame = ttk.LabelFrame(parent, text="General", padding="10")
-        general_frame.grid(row=3, column=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0))
-        
-        ttk.Button(general_frame, text="About", 
-                  command=self.show_about).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(general_frame, text="Report Bug", 
-                  command=self.report_bug).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(general_frame, text="Check Updates", 
-                  command=self.check_updates).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(general_frame, text="Settings", 
-                  command=self.show_settings).grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Separator(general_frame, orient='horizontal').grid(row=4, column=0, sticky=(tk.W, tk.E), pady=10)
-        
-        ttk.Button(general_frame, text="Exit", 
-                  command=self.root.quit).grid(row=5, column=0, sticky=(tk.W, tk.E))
-        
+        general_frame.grid(row=3, column=2, sticky="nsew", padx=(5, 0))
+
+        ttk.Button(general_frame, text="About", command=self.show_about).grid(
+            row=0, column=0, sticky="ew", pady=(0, 5)
+        )
+        ttk.Button(general_frame, text="Report Bug", command=self.report_bug).grid(
+            row=1, column=0, sticky="ew", pady=(0, 5)
+        )
+        ttk.Button(general_frame, text="Check Updates", command=self.check_updates).grid(
+            row=2, column=0, sticky="ew", pady=(0, 5)
+        )
+        ttk.Button(general_frame, text="Settings", command=self.show_settings).grid(
+            row=3, column=0, sticky="ew", pady=(0, 5)
+        )
+
+        ttk.Separator(general_frame, orient='horizontal').grid(row=4, column=0, sticky="ew", pady=10)
+
+        ttk.Button(general_frame, text="Exit", command=self.root.quit).grid(row=5, column=0, sticky="ew")
+
         general_frame.columnconfigure(0, weight=1)
     
     def create_terminal_frame(self, parent):
         """Create terminal output display"""
         terminal_frame = ttk.LabelFrame(parent, text="Terminal Output", padding="10")
-        terminal_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(10, 0))
-        
-        # Terminal text widget
-        self.terminal_text = scrolledtext.ScrolledText(terminal_frame, height=15, width=80, 
-                                                       font=('Consolas', 9), bg='black', fg='white')
-        self.terminal_text.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Terminal controls
-        ttk.Button(terminal_frame, text="Clear", 
-                  command=self.clear_terminal).grid(row=1, column=0, sticky=(tk.W), pady=(5, 0))
-        
-        ttk.Button(terminal_frame, text="Save Log", 
-                  command=self.save_terminal_log).grid(row=1, column=1, sticky=(tk.E), pady=(5, 0))
-        
+        terminal_frame.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
+
+        self.terminal_text = scrolledtext.ScrolledText(
+            terminal_frame,
+            height=15,
+            width=80,
+            font=('Consolas', 9),
+            bg='black',
+            fg='white',
+        )
+        self.terminal_text.grid(row=0, column=0, columnspan=2, sticky="nsew")
+
+        ttk.Button(terminal_frame, text="Clear", command=self.clear_terminal).grid(
+            row=1, column=0, sticky="w", pady=(5, 0)
+        )
+        ttk.Button(terminal_frame, text="Save Log", command=self.save_terminal_log).grid(
+            row=1, column=1, sticky="e", pady=(5, 0)
+        )
+
         terminal_frame.columnconfigure(0, weight=1)
         terminal_frame.rowconfigure(0, weight=1)
         parent.rowconfigure(4, weight=1)
     
     def update_ui_state(self):
         """Update UI state based on current configuration"""
-        control_installed = self.config['installations']['control_stack']['installed']
-        node_installed = self.config['installations']['node_stack']['installed']
+        installations = self.config.get('installations', {})
+        control_installed = installations.get('control_stack', {}).get('installed', False)
+        node_installed = installations.get('node_stack', {}).get('installed', False)
+        front_node_installed = installations.get('front_node_stack', {}).get('installed', False)
         
         # Update status labels
         if control_installed:
@@ -317,28 +436,48 @@ class LauncherGUI:
             self.control_status_label.config(text="Control Stack: Not Installed")
         
         if node_installed:
-            version = self.config['installations']['node_stack'].get('version', 'Unknown')
+            version = installations.get('node_stack', {}).get('version', 'Unknown')
             self.node_status_label.config(text=f"Node Stack: Installed (v{version})")
         else:
             self.node_status_label.config(text="Node Stack: Not Installed")
+
+        if front_node_installed:
+            version = installations.get('front_node_stack', {}).get('version', 'Unknown')
+            self.front_node_status_label.config(text=f"Front Node (ReID): Installed (v{version})")
+        else:
+            self.front_node_status_label.config(text="Front Node (ReID): Not Installed")
         
         # Show/hide appropriate frames
-        if not control_installed and not node_installed:
+        if not control_installed and not node_installed and not front_node_installed:
             self.install_frame.grid()
             self.control_frame.grid_remove()
             self.node_frame.grid_remove()
+            self.front_node_frame.grid_remove()
         else:
             self.install_frame.grid_remove()
             if control_installed:
                 self.control_frame.grid()
             else:
                 self.control_frame.grid_remove()
-            if node_installed:
+            if node_installed or front_node_installed:
                 self.node_frame.grid()
-                # Update cron checkbox
-                self.cron_var.set(self.config['installations']['node_stack'].get('cron_enabled', False))
             else:
                 self.node_frame.grid_remove()
+
+            if node_installed:
+                self.roof_frame.grid()
+                self.cron_var.set(installations.get('node_stack', {}).get('cron_enabled', False))
+                self.node_running_label.config(text="Status: Ready")
+            else:
+                self.roof_frame.grid_remove()
+                self.node_running_label.config(text="Status: Not Installed")
+
+            if front_node_installed:
+                self.front_node_frame.grid()
+                self.front_node_status_label.config(text="Status: Ready")
+            else:
+                self.front_node_frame.grid_remove()
+                self.front_node_status_label.config(text="Status: Not Installed")
         
         # Update dependencies status
         self.check_dependencies_async()
@@ -358,9 +497,15 @@ class LauncherGUI:
                     node_deps = self.check_dependencies('node')
                 else:
                     node_deps = True
+
+                # Check front node dependencies
+                if self.config['installations'].get('front_node_stack', {}).get('installed'):
+                    front_deps = self.check_dependencies('front_node')
+                else:
+                    front_deps = True
                 
                 # Update UI
-                self.root.after(0, self.update_deps_status, control_deps and node_deps)
+                self.root.after(0, self.update_deps_status, control_deps and node_deps and front_deps)
                 
             except Exception as e:
                 self.log_to_terminal(f"Error checking dependencies: {e}")
@@ -371,10 +516,14 @@ class LauncherGUI:
     def check_dependencies(self, stack_type):
         """Check if dependencies are installed for given stack"""
         try:
+            base_path = Path(__file__).parent
             if stack_type == 'control':
-                requirements_file = Path(__file__).parent / "control" / "requirements.txt"
+                requirements_file = base_path / "control" / "requirements.txt"
+            elif stack_type == 'front_node':
+                # Front node currently shares dependencies with node stack
+                requirements_file = base_path / "node" / "requirements.txt"
             else:
-                requirements_file = Path(__file__).parent / "node" / "requirements.txt"
+                requirements_file = base_path / "node" / "requirements.txt"
             
             if not requirements_file.exists():
                 return False
@@ -397,7 +546,7 @@ class LauncherGUI:
                         # Skip picamera2 on non-Pi systems
                         if not self.is_raspberry_pi():
                             continue
-                        import picamera2
+                        import picamera2  # type: ignore[import]
                     else:
                         __import__(package_name.replace('-', '_'))
                 except ImportError:
@@ -430,10 +579,11 @@ class LauncherGUI:
         self.check_time_label.config(text=f"Last Check: {now}")
         
         # Update config
-        for stack in ['control_stack', 'node_stack']:
-            if self.config['installations'][stack]['installed']:
-                self.config['installations'][stack]['dependencies_verified'] = deps_ok
-                self.config['installations'][stack]['last_dependency_check'] = now
+        for stack in ['control_stack', 'node_stack', 'front_node_stack']:
+            stack_info = self.config['installations'].get(stack)
+            if stack_info and stack_info.get('installed'):
+                stack_info['dependencies_verified'] = deps_ok
+                stack_info['last_dependency_check'] = now
         
         self.save_config()
     
@@ -441,7 +591,7 @@ class LauncherGUI:
         """Perform periodic system checks"""
         if self.config['settings']['auto_dependency_check']:
             last_check = None
-            for stack in ['control_stack', 'node_stack']:
+            for stack in ['control_stack', 'node_stack', 'front_node_stack']:
                 if self.config['installations'][stack]['installed']:
                     check_date = self.config['installations'][stack].get('last_dependency_check')
                     if check_date:
@@ -483,6 +633,28 @@ class LauncherGUI:
                 messagebox.showinfo("Success", f"Log saved to {filename}")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save log: {e}")
+
+    def show_log(self, log_type: str):
+        """Display a saved log file in a simple viewer"""
+        logs_dir = Path(__file__).parent / "logs"
+        log_file = logs_dir / f"{log_type}.log"
+        display_name = log_type.replace('_', ' ').title()
+
+        if not log_file.exists():
+            messagebox.showinfo("Log Viewer", f"No log file found for {display_name}.")
+            return
+
+        viewer = tk.Toplevel(self.root)
+        viewer.title(f"{display_name} Log")
+        viewer.geometry("700x500")
+
+        text_widget = scrolledtext.ScrolledText(viewer, wrap=tk.WORD, font=('Consolas', 10))
+        text_widget.pack(fill=tk.BOTH, expand=True)
+        try:
+            text_widget.insert(tk.END, log_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            text_widget.insert(tk.END, f"Failed to read log file: {exc}")
+        text_widget.config(state=tk.DISABLED)
     
     # Installation methods
     def install_control_stack(self):
@@ -492,10 +664,19 @@ class LauncherGUI:
     def install_node_stack(self):
         """Install node stack with GUI installer"""
         self.run_installer("node")
+
+    def install_front_node_stack(self):
+        """Install front node stack with GUI installer"""
+        self.run_installer("front_node")
     
-    def run_installer(self, stack_type):
+    def run_installer(self, stack_type, repair_mode=False, reinstall_mode=False):
         """Run installer for specified stack type"""
-        installer_window = InstallerWindow(self, stack_type)
+        installer_window = InstallerWindow(
+            self,
+            stack_type,
+            repair_mode=repair_mode,
+            reinstall_mode=reinstall_mode,
+        )
         installer_window.show()
     
     # Control stack methods
@@ -516,20 +697,33 @@ class LauncherGUI:
     
     def launch_live_mode(self):
         """Launch control stack in live mode"""
-        # Check if configuration exists
-        primary = Path(__file__).parent / "roof_array_config.json"
-        legacy = Path(__file__).parent / "camera_config.json"
-        config_path = primary if primary.exists() else legacy
-        if not config_path.exists():
-            if messagebox.askyesno("Configuration Missing", 
-                                 "No camera configuration found. Would you like to configure cameras first?"):
+        configs_dir = Path(__file__).parent / "config"
+        roof_config = configs_dir / "roof_array_config.json"
+        front_config = configs_dir / "front_array_config.json"
+
+        if not roof_config.exists():
+            if messagebox.askyesno(
+                "Roof Configuration Missing",
+                "No roof array configuration found. Configure now?",
+            ):
                 self.launch_configuration()
-                return
-        elif config_path == legacy:
-            self.log_to_terminal("Using legacy configuration file camera_config.json. Consider renaming to roof_array_config.json")
-        
-        script_path = Path(__file__).parent / "control" / "main.py"
-        self.run_script(script_path, "Live Mode", ["--config", str(config_path), "--no-dialog"])
+            return
+
+        if not front_config.exists():
+            if messagebox.askyesno(
+                "Front Configuration Missing",
+                "No front array configuration found. Configure now?",
+            ):
+                self.launch_reid_configurator()
+            return
+
+        script_path = Path(__file__).parent / "control" / "fused_main.py"
+        if not script_path.exists():
+            messagebox.showerror("Error", "Fused controller script not found")
+            return
+
+        self.log_to_terminal("Launching fused live mode (IR + ReID)...")
+        self.run_script(script_path, "Fused Live Mode")
     
     def repair_control(self):
         """Repair control stack installation"""
@@ -559,6 +753,40 @@ class LauncherGUI:
         # This would need process management to track and stop the server
         self.log_to_terminal("Stop node server functionality not yet implemented")
     
+    def start_front_node_stack(self):
+        """Start front (ReID) node server"""
+        script_path = Path(__file__).parent / "node" / "server.py"
+        if not script_path.exists():
+            messagebox.showerror("Error", "Front node server script not found")
+            return
+
+        port = 8000
+        config_path = Path(__file__).parent / "config" / "front_array_config.json"
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            server_url = cfg.get("camera", {}).get("front_camera", {}).get("server_url")
+            if server_url:
+                parsed = urlparse(server_url)
+                if parsed.port:
+                    port = parsed.port
+        except Exception as exc:
+            self.log_to_terminal(f"Using default front node port ({port}) due to config error: {exc}")
+
+        self.front_node_status_label.config(text=f"Status: Starting on port {port}...")
+        self.run_script(
+            script_path,
+            "Front Node Server",
+            args=["--port", str(port)],
+            background=True,
+        )
+        self.front_node_status_label.config(text=f"Status: Running on port {port}")
+
+    def stop_front_node_stack(self):
+        """Stop front node server"""
+        self.log_to_terminal("Stop front node server functionality not yet implemented")
+        self.front_node_status_label.config(text="Status: Stop requested")
+
     def toggle_cron(self):
         """Toggle cron job for node server"""
         enabled = self.cron_var.get()
@@ -597,6 +825,23 @@ class LauncherGUI:
             self.save_config()
             self.update_ui_state()
             self.log_to_terminal("Node stack uninstalled")
+
+    def uninstall_front_node(self):
+        """Uninstall front node stack"""
+        if messagebox.askyesno(
+            "Uninstall Front Node",
+            "This will remove the front node installation metadata. Continue?",
+        ):
+            front_cfg = self.config['installations'].setdefault('front_node_stack', {})
+            front_cfg['installed'] = False
+            front_cfg['version'] = None
+            front_cfg['install_date'] = None
+            front_cfg['dependencies_verified'] = False
+            front_cfg['last_dependency_check'] = None
+            self.save_config()
+            self.update_ui_state()
+            self.front_node_status_label.config(text="Status: Not Installed")
+            self.log_to_terminal("Front node stack uninstalled")
     
     # General methods
     def show_about(self):
@@ -649,8 +894,9 @@ class LauncherGUI:
                             universal_newlines=True
                         )
                         
-                        for line in process.stdout:
-                            self.root.after(0, self.log_to_terminal, line.strip())
+                        if process.stdout:
+                            for line in process.stdout:
+                                self.root.after(0, self.log_to_terminal, line.strip())
                         
                         process.wait()
                         self.root.after(0, self.log_to_terminal, f"{description} completed with exit code {process.returncode}")
@@ -676,9 +922,10 @@ class InstallerWindow:
         self.stack_type = stack_type
         self.repair_mode = repair_mode
         self.reinstall_mode = reinstall_mode
+        self.stack_display = stack_type.replace('_', ' ').title()
         
         self.window = tk.Toplevel(parent.root)
-        self.window.title(f"Install {stack_type.title()} Stack")
+        self.window.title(f"Install {self.stack_display} Stack")
         self.window.geometry("700x500")
         self.window.transient(parent.root)
         self.window.grab_set()
@@ -691,7 +938,8 @@ class InstallerWindow:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Title
-        title = f"{'Repair' if self.repair_mode else 'Reinstall' if self.reinstall_mode else 'Install'} {self.stack_type.title()} Stack"
+        action = "Repair" if self.repair_mode else "Reinstall" if self.reinstall_mode else "Install"
+        title = f"{action} {self.stack_display} Stack"
         ttk.Label(main_frame, text=title, font=('Arial', 14, 'bold')).pack(pady=(0, 20))
         
         # Progress bar
@@ -734,6 +982,8 @@ class InstallerWindow:
                 # Install dependencies
                 if self.stack_type == "control":
                     requirements_file = Path(__file__).parent / "control" / "requirements.txt"
+                elif self.stack_type == "front_node":
+                    requirements_file = Path(__file__).parent / "node" / "requirements.txt"
                 else:
                     requirements_file = Path(__file__).parent / "node" / "requirements.txt"
                 
@@ -750,8 +1000,9 @@ class InstallerWindow:
                         universal_newlines=True
                     )
                     
-                    for line in process.stdout:
-                        self.window.after(0, self.log, line.strip())
+                    if process.stdout:
+                        for line in process.stdout:
+                            self.window.after(0, self.log, line.strip())
                     
                     process.wait()
                     
@@ -888,10 +1139,12 @@ class StatusWindow:
         status_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Overall health indicator
-        control_installed = config.get("installations", {}).get("control_stack", {}).get("installed", False)
-        node_installed = config.get("installations", {}).get("node_stack", {}).get("installed", False)
+        installations = config.get("installations", {})
+        control_installed = installations.get("control_stack", {}).get("installed", False)
+        node_installed = installations.get("node_stack", {}).get("installed", False)
+        front_installed = installations.get("front_node_stack", {}).get("installed", False)
         
-        if control_installed or node_installed:
+        if control_installed or node_installed or front_installed:
             status_color = "green"
             status_text = "System Ready"
             status_icon = "✅"
@@ -911,7 +1164,7 @@ class StatusWindow:
         if control_installed:
             ttk.Label(install_frame, text="✅ Control Stack: Installed", 
                      font=('Arial', 10)).pack(anchor=tk.W)
-            install_date = config.get("installations", {}).get("control_stack", {}).get("install_date")
+            install_date = installations.get("control_stack", {}).get("install_date")
             if install_date:
                 ttk.Label(install_frame, text=f"   Installed: {install_date[:10]}", 
                          font=('Arial', 9), foreground="gray").pack(anchor=tk.W)
@@ -922,12 +1175,23 @@ class StatusWindow:
         if node_installed:
             ttk.Label(install_frame, text="✅ Node Stack: Installed", 
                      font=('Arial', 10)).pack(anchor=tk.W)
-            install_date = config.get("installations", {}).get("node_stack", {}).get("install_date")
+            install_date = installations.get("node_stack", {}).get("install_date")
             if install_date:
                 ttk.Label(install_frame, text=f"   Installed: {install_date[:10]}", 
                          font=('Arial', 9), foreground="gray").pack(anchor=tk.W)
         else:
             ttk.Label(install_frame, text="❌ Node Stack: Not Installed", 
+                     font=('Arial', 10)).pack(anchor=tk.W)
+
+        if front_installed:
+            ttk.Label(install_frame, text="✅ Front Node (ReID): Installed", 
+                     font=('Arial', 10)).pack(anchor=tk.W)
+            install_date = installations.get("front_node_stack", {}).get("install_date")
+            if install_date:
+                ttk.Label(install_frame, text=f"   Installed: {install_date[:10]}", 
+                         font=('Arial', 9), foreground="gray").pack(anchor=tk.W)
+        else:
+            ttk.Label(install_frame, text="❌ Front Node (ReID): Not Installed", 
                      font=('Arial', 10)).pack(anchor=tk.W)
         
         # Quick Actions
@@ -946,8 +1210,14 @@ class StatusWindow:
         if node_installed:
             ttk.Button(action_buttons_frame, text="Launch Node Stack",
                       command=lambda: self.launch_stack('node')).pack(side=tk.LEFT, padx=(0, 10))
+        if front_installed:
+            ttk.Button(
+                action_buttons_frame,
+                text="Front Node Log",
+                command=lambda: self.parent.show_log("front_node"),
+            ).pack(side=tk.LEFT, padx=(0, 10))
         
-        if not (control_installed or node_installed):
+        if not (control_installed or node_installed or front_installed):
             ttk.Button(action_buttons_frame, text="Run Installation Wizard",
                       command=self.launch_installer_wizard).pack(side=tk.LEFT, padx=(0, 10))
         
@@ -1180,7 +1450,8 @@ class StatusWindow:
             import sys
             launcher_script = Path(__file__).parent / "launcher.py"
             subprocess.Popen([sys.executable, str(launcher_script), stack_type])
-            messagebox.showinfo("Launch", f"{stack_type.title()} stack launched successfully!")
+            display_name = stack_type.replace('_', ' ').title()
+            messagebox.showinfo("Launch", f"{display_name} stack launched successfully!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to launch {stack_type} stack: {e}")
     
@@ -1210,9 +1481,10 @@ class DiagnosticsWindow:
     def __init__(self, parent, stack_type):
         self.parent = parent
         self.stack_type = stack_type
+        self.stack_display = stack_type.replace('_', ' ').title()
         
         self.window = tk.Toplevel(parent.root)
-        self.window.title(f"{stack_type.title()} Stack Diagnostics")
+        self.window.title(f"{self.stack_display} Stack Diagnostics")
         self.window.geometry("600x400")
         self.window.transient(parent.root)
         
@@ -1223,8 +1495,11 @@ class DiagnosticsWindow:
         main_frame = ttk.Frame(self.window, padding="20")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        ttk.Label(main_frame, text=f"{self.stack_type.title()} Stack Diagnostics", 
-                 font=('Arial', 14, 'bold')).pack(pady=(0, 20))
+        ttk.Label(
+            main_frame,
+            text=f"{self.stack_display} Stack Diagnostics",
+            font=('Arial', 14, 'bold'),
+        ).pack(pady=(0, 20))
         
         # Results area
         self.results_text = scrolledtext.ScrolledText(main_frame, height=20, font=('Consolas', 9))
@@ -1249,7 +1524,7 @@ class DiagnosticsWindow:
     def run_diagnostics(self):
         """Run diagnostic tests"""
         self.results_text.delete(1.0, tk.END)
-        self.log(f"Running {self.stack_type} stack diagnostics...\n")
+        self.log(f"Running {self.stack_display} stack diagnostics...\n")
         
         # Check if stack is installed
         if not self.parent.config['installations'][f'{self.stack_type}_stack']['installed']:

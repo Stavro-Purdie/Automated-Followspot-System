@@ -2,7 +2,7 @@
   "camera": {
     "front_camera": {
       "camera_id": "front",
-      "server_url": "http://192.168.0.50:8000/offer",
+      "server_url": "http://192.168.0.50:8000",
       "protocol": "webrtc",
       "position": [0, 0, 2.5],
       "angle": 0,
