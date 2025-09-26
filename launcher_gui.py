@@ -1663,8 +1663,18 @@ class SettingsWindow:
         
         self.window = tk.Toplevel(parent.root)
         self.window.title("Settings")
-        self.window.geometry("400x300")
+        self.window.geometry("640x720")
+        self.window.minsize(600, 680)
         self.window.transient(parent.root)
+        self.project_root = Path(__file__).resolve().parent
+        self.reid_config_path = self.project_root / "config" / "reid_config.json"
+        self.reid_config = self.load_reid_config()
+        self.coreml_unit_choices = [
+            ("Automatic (CPU + GPU + ANE)", "ALL"),
+            ("Neural Engine (ANE)", "CPU_AND_NE"),
+            ("GPU (Metal)", "CPU_AND_GPU"),
+            ("CPU Only", "CPU_ONLY"),
+        ]
         
         self.setup_ui()
     
@@ -1689,6 +1699,59 @@ class SettingsWindow:
         self.debug_var = tk.BooleanVar(value=self.parent.config['settings']['debug_mode'])
         ttk.Checkbutton(main_frame, text="Debug mode", 
                        variable=self.debug_var).pack(anchor=tk.W, pady=(0, 20))
+
+        ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=(10, 15))
+
+        accel_frame = ttk.LabelFrame(main_frame, text="ReID Acceleration (Apple Silicon)", padding="12")
+        accel_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        accel_frame.columnconfigure(1, weight=1)
+
+        optimization_cfg = self.reid_config.setdefault("optimization", {})
+
+        self.coreml_enabled_var = tk.BooleanVar(value=bool(optimization_cfg.get("coreml_reid_enabled", False)))
+        ttk.Checkbutton(
+            accel_frame,
+            text="Enable Core ML ReID (Neural Engine)",
+            variable=self.coreml_enabled_var
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        ttk.Label(accel_frame, text="Core ML model (.mlpackage):").grid(row=1, column=0, sticky="w")
+        self.coreml_path_var = tk.StringVar(value=str(optimization_cfg.get("coreml_model_path", "")))
+        path_entry = ttk.Entry(accel_frame, textvariable=self.coreml_path_var, width=40)
+        path_entry.grid(row=2, column=0, columnspan=2, sticky="we", pady=(0, 5))
+        ttk.Button(accel_frame, text="Browse", command=self.browse_coreml_model).grid(row=3, column=0, sticky="w")
+
+        ttk.Label(accel_frame, text="Accelerator preference:").grid(row=4, column=0, sticky="w", pady=(10, 0))
+        current_unit_value = str(optimization_cfg.get("coreml_compute_unit", "ALL"))
+        default_unit_label = self._unit_value_to_label(current_unit_value)
+        self.coreml_unit_var = tk.StringVar(value=default_unit_label)
+        ttk.Combobox(
+            accel_frame,
+            textvariable=self.coreml_unit_var,
+            values=[label for label, _ in self.coreml_unit_choices],
+            state="readonly"
+        ).grid(row=5, column=0, columnspan=2, sticky="we", pady=(0, 10))
+
+        self.skip_torch_var = tk.BooleanVar(value=bool(optimization_cfg.get("coreml_skip_torch", True)))
+        ttk.Checkbutton(
+            accel_frame,
+            text="Skip Torch ReID when Core ML is enabled",
+            variable=self.skip_torch_var
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 5))
+
+        self.half_precision_var = tk.BooleanVar(value=bool(optimization_cfg.get("use_half_precision", False)))
+        ttk.Checkbutton(
+            accel_frame,
+            text="Use half precision (FP16) on CUDA GPUs",
+            variable=self.half_precision_var
+        ).grid(row=7, column=0, columnspan=2, sticky="w")
+
+        ttk.Label(
+            accel_frame,
+            text="Core ML acceleration requires a converted ReID model. Choose whether to favour\nNeural Engine, GPU, CPU, or let Core ML use everything available.",
+            wraplength=420,
+            foreground="#555555"
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(10, 0))
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
@@ -1702,7 +1765,40 @@ class SettingsWindow:
         self.parent.config['settings']['auto_dependency_check'] = self.auto_check_var.get()
         self.parent.config['settings']['check_interval_days'] = self.interval_var.get()
         self.parent.config['settings']['debug_mode'] = self.debug_var.get()
+
+        optimization_cfg = self.reid_config.setdefault("optimization", {})
+        coreml_enabled = self.coreml_enabled_var.get()
+        coreml_path = self.coreml_path_var.get().strip()
+
+        if coreml_enabled and not coreml_path:
+            messagebox.showerror(
+                "Settings",
+                "Please specify a Core ML model path (.mlpackage) or disable Core ML ReID."
+            )
+            return
+
+        if coreml_path:
+            path_obj = Path(coreml_path)
+            if not path_obj.is_absolute():
+                # allow relative paths as-is
+                normalized_path = str(path_obj)
+            else:
+                try:
+                    normalized_path = str(path_obj.relative_to(self.project_root))
+                except ValueError:
+                    normalized_path = str(path_obj)
+            optimization_cfg["coreml_model_path"] = normalized_path
+        else:
+            optimization_cfg["coreml_model_path"] = ""
+
+        optimization_cfg["coreml_reid_enabled"] = coreml_enabled
+        optimization_cfg["coreml_compute_unit"] = self._unit_label_to_value(self.coreml_unit_var.get())
+        optimization_cfg["coreml_skip_torch"] = self.skip_torch_var.get()
+        optimization_cfg["use_half_precision"] = self.half_precision_var.get()
         
+        if not self.save_reid_config():
+            return
+
         self.parent.save_config()
         self.parent.log_to_terminal("Settings saved")
         self.window.destroy()
@@ -1710,6 +1806,69 @@ class SettingsWindow:
     def show(self):
         """Show the settings window"""
         self.window.deiconify()
+
+    def _unit_label_to_value(self, label: str) -> str:
+        for display, value in self.coreml_unit_choices:
+            if display == label:
+                return value
+        return self.coreml_unit_choices[0][1]
+
+    def _unit_value_to_label(self, value: str) -> str:
+        normalized = (value or "ALL").upper()
+        for display, stored_value in self.coreml_unit_choices:
+            if stored_value == normalized:
+                return display
+        return self.coreml_unit_choices[0][0]
+
+    def load_reid_config(self) -> dict:
+        try:
+            with open(self.reid_config_path, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except FileNotFoundError:
+            messagebox.showwarning(
+                "ReID Configuration Missing",
+                f"Could not find reid_config.json at {self.reid_config_path}. Default settings will be used."
+            )
+            return {}
+        except json.JSONDecodeError as exc:
+            messagebox.showerror(
+                "ReID Configuration Error",
+                f"Failed to parse reid_config.json: {exc}"
+            )
+            return {}
+        except Exception as exc:
+            messagebox.showerror(
+                "ReID Configuration Error",
+                f"Unexpected error loading reid_config.json: {exc}"
+            )
+            return {}
+
+    def save_reid_config(self) -> bool:
+        try:
+            with open(self.reid_config_path, "w", encoding="utf-8") as handle:
+                json.dump(self.reid_config, handle, indent=2)
+            return True
+        except Exception as exc:
+            messagebox.showerror(
+                "Settings",
+                f"Failed to save ReID configuration: {exc}"
+            )
+            return False
+
+    def browse_coreml_model(self):
+        file_path = filedialog.askopenfilename(
+            title="Select Core ML model",
+            filetypes=[("Core ML Packages", "*.mlpackage"), ("All Files", "*.*")]
+        )
+        if not file_path:
+            return
+
+        path_obj = Path(file_path)
+        try:
+            relative_path = path_obj.relative_to(self.project_root)
+            self.coreml_path_var.set(str(relative_path))
+        except ValueError:
+            self.coreml_path_var.set(str(path_obj))
 
 
 def main():

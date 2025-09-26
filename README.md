@@ -257,16 +257,22 @@ python launcher.py --node
 
 ## Apple Silicon Acceleration
 
-The control stack now detects Apple Silicon hardware automatically:
+The control stack now detects Apple Silicon hardware automatically, and the launcher's **Settings → ReID Acceleration** panel lets you toggle these options without editing JSON files:
 
 - **Metal (MPS)**: When PyTorch is installed with MPS support, all detector and ReID models run on the GPU without any configuration changes.
 - **Neural Engine (Core ML)**: For the lowest power draw, you can supply a Core ML version of the ReID embedding model and enable it in `config/reid_config.json`:
+
+  Available accelerator modes:
+  - **Neural Engine (ANE)** → `CPU_AND_NE`
+  - **GPU (Metal)** → `CPU_AND_GPU`
+  - **CPU only** → `CPU_ONLY`
+  - **Automatic (All accelerators)** → `ALL`
 
   ```json
   "optimization": {
     "coreml_reid_enabled": true,
     "coreml_model_path": "reid/models/osnet_x0_5.mlpackage",
-    "coreml_compute_unit": "ANE_ONLY",
+    "coreml_compute_unit": "CPU_AND_NE",
     "coreml_skip_torch": true
   }
   ```
@@ -279,7 +285,7 @@ The control stack now detects Apple Silicon hardware automatically:
 
   2. Convert your ReID PyTorch checkpoint to Core ML (for example, with `coremltools.convert` or a custom script) and place the produced `.mlpackage` in `reid/models/`.
 
-  3. Toggle `coreml_reid_enabled` to `true`. The loader will verify the model on startup and fall back to the Torch backend if anything goes wrong.
+  3. Toggle `coreml_reid_enabled` to `true`. You can do this visually from the launcher or by editing the JSON directly. The loader will verify the model on startup and fall back to the Torch backend if anything goes wrong.
 
 When Core ML is active, Torch-based ReID inference can be skipped entirely (`coreml_skip_torch: true`) so the pipeline uses only the Neural Engine for embeddings while the detector continues to run on MPS.
 

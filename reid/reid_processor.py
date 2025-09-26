@@ -269,9 +269,15 @@ class OptimizedReIDProcessor:
 
         compute_map = {
             "ALL": ct.ComputeUnit.ALL,
+            "AUTO": ct.ComputeUnit.ALL,
             "CPU_ONLY": ct.ComputeUnit.CPU_ONLY,
+            "CPU": ct.ComputeUnit.CPU_ONLY,
             "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,
+            "GPU": ct.ComputeUnit.CPU_AND_GPU,
+            "GPU_ONLY": ct.ComputeUnit.CPU_AND_GPU,
             "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
+            "NEURAL_ENGINE": ct.ComputeUnit.CPU_AND_NE,
+            "ANE": ct.ComputeUnit.CPU_AND_NE,
             "ANE_ONLY": ct.ComputeUnit.CPU_AND_NE,
         }
         compute_unit = compute_map.get(self.coreml_compute_unit, ct.ComputeUnit.ALL)

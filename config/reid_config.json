@@ -39,9 +39,9 @@
     "detection_interval": 1,
     "reid_interval": 1,
     "max_tracking_age": 30,
-    "coreml_reid_enabled": false,
+    "coreml_reid_enabled": true,
     "coreml_model_path": "reid/models/osnet_x0_5.mlpackage",
-    "coreml_compute_unit": "ANE_ONLY",
+    "coreml_compute_unit": "ALL",
     "coreml_skip_torch": true
   },
   "camera": {
