@@ -5,7 +5,7 @@ Provides graphical interface for installation, configuration, and management of 
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
+from tkinter import ttk, messagebox, scrolledtext, filedialog
 import json
 import os
 import sys
@@ -14,11 +14,10 @@ import threading
 import time
 import platform
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import queue
 import webbrowser
 import shutil
-import uuid
 from urllib.parse import urlparse
 
 class LauncherGUI:
@@ -32,16 +31,6 @@ class LauncherGUI:
         self.config_file = "launcher_config.json"
         self.config = self.load_config()
 
-        # Identity gallery storage
-        self.identity_root = Path(__file__).parent / "identity_gallery"
-        self.identity_root.mkdir(exist_ok=True)
-        self.identity_manifest_path = self.identity_root / "manifest.json"
-        self.identity_data = self.load_identity_manifest()
-        self.identity_order = []
-        self.identity_listbox = None
-        self.identity_details_var = None
-        self.identity_status_var = None
-        
         # Terminal output queue for installations
         self.terminal_queue = queue.Queue()
         
@@ -113,252 +102,6 @@ class LauncherGUI:
         else:
             return default_config
     
-    def load_identity_manifest(self):
-        """Load identity manifest from disk or return empty structure."""
-        manifest = {"identities": []}
-        if self.identity_manifest_path.exists():
-            try:
-                with open(self.identity_manifest_path, "r", encoding="utf-8") as manifest_file:
-                    data = json.load(manifest_file)
-                if isinstance(data, dict):
-                    identities = data.get("identities", [])
-                    if isinstance(identities, list):
-                        for identity in identities:
-                            identity.setdefault("images", [])
-                            identity.setdefault("created_at", datetime.now().isoformat())
-                            identity.setdefault("updated_at", identity["created_at"])
-                        manifest["identities"] = identities
-            except Exception as exc:
-                print(f"Warning: failed to load identity manifest: {exc}")
-        return manifest
-
-    def save_identity_manifest(self):
-        """Persist identity manifest to disk."""
-        try:
-            with open(self.identity_manifest_path, "w", encoding="utf-8") as manifest_file:
-                json.dump(self.identity_data, manifest_file, indent=2)
-        except Exception as exc:
-            if hasattr(self, "terminal_text"):
-                self.log_to_terminal(f"Failed to save identity manifest: {exc}")
-            messagebox.showerror("Save Error", f"Unable to save identity manifest:\n{exc}")
-
-    def refresh_identity_list(self, selected_id=None):
-        """Refresh identity list UI."""
-        if self.identity_listbox is None or self.identity_details_var is None:
-            return
-
-        selected_id = selected_id or self.get_selected_identity_id()
-        identities = self.identity_data.get("identities", [])
-        identities = sorted(identities, key=lambda item: item.get("name", "").lower())
-        self.identity_order = [identity["id"] for identity in identities]
-
-        self.identity_listbox.delete(0, tk.END)
-        for identity in identities:
-            image_count = len(identity.get("images", []))
-            display_name = identity.get("name", "Unnamed Identity")
-            self.identity_listbox.insert(tk.END, f"{display_name} ({image_count})")
-
-        if self.identity_order:
-            if selected_id and selected_id in self.identity_order:
-                self.select_identity(selected_id)
-            else:
-                self.identity_listbox.selection_set(0)
-                self.identity_listbox.event_generate("<<ListboxSelect>>")
-        else:
-            self.identity_details_var.set("No identities imported yet. Add one to begin.")
-            if self.identity_status_var is not None:
-                self.identity_status_var.set("Add a new identity to begin.")
-
-    def get_selected_identity_id(self):
-        if self.identity_listbox is None:
-            return None
-        selection = self.identity_listbox.curselection()
-        if not selection:
-            return None
-        index = selection[0]
-        if 0 <= index < len(self.identity_order):
-            return self.identity_order[index]
-        return None
-
-    def select_identity(self, identity_id: str):
-        if self.identity_listbox is None:
-            return
-        for idx, current_id in enumerate(self.identity_order):
-            if current_id == identity_id:
-                self.identity_listbox.selection_clear(0, tk.END)
-                self.identity_listbox.selection_set(idx)
-                self.identity_listbox.event_generate("<<ListboxSelect>>")
-                break
-
-    def get_selected_identity(self):
-        identity_id = self.get_selected_identity_id()
-        if identity_id is None:
-            return None
-        for identity in self.identity_data.get("identities", []):
-            if identity.get("id") == identity_id:
-                return identity
-        return None
-
-    def prompt_new_identity(self):
-        name = simpledialog.askstring("New Identity", "Enter performer or identity name:", parent=self.root)
-        if name is None:
-            return
-        name = name.strip()
-        if not name:
-            messagebox.showinfo("Name Required", "Please enter a non-empty name for the identity.")
-            return
-
-        new_id = uuid.uuid4().hex[:8]
-        existing_ids = {identity.get("id") for identity in self.identity_data.get("identities", [])}
-        while new_id in existing_ids:
-            new_id = uuid.uuid4().hex[:8]
-
-        timestamp = datetime.now().isoformat()
-        identity_entry = {
-            "id": new_id,
-            "name": name,
-            "images": [],
-            "created_at": timestamp,
-            "updated_at": timestamp,
-        }
-
-        self.identity_data.setdefault("identities", []).append(identity_entry)
-        (self.identity_root / new_id).mkdir(exist_ok=True)
-        self.save_identity_manifest()
-        self.refresh_identity_list(selected_id=new_id)
-        if self.identity_status_var is not None:
-            self.identity_status_var.set(f'Added identity "{name}".')
-        if hasattr(self, "terminal_text"):
-            self.log_to_terminal(f'Identity created: {name} ({new_id})')
-
-    def import_identity_images(self):
-        identity = self.get_selected_identity()
-        if identity is None:
-            messagebox.showinfo("Select Identity", "Choose an identity before importing photos.")
-            return
-
-        filepaths = filedialog.askopenfilenames(
-            parent=self.root,
-            title="Select photos",
-            filetypes=[
-                ("Image files", "*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp"),
-                ("All files", "*.*"),
-            ],
-        )
-        if not filepaths:
-            return
-
-        allowed = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
-        dest_dir = self.identity_root / identity["id"]
-        dest_dir.mkdir(exist_ok=True)
-
-        added = 0
-        skipped = []
-        for filepath in filepaths:
-            src_path = Path(filepath)
-            ext = src_path.suffix.lower()
-            if ext not in allowed:
-                skipped.append(f"Unsupported format: {src_path.name}")
-                continue
-
-            dest_name = f"{uuid.uuid4().hex}{ext}"
-            dest_path = dest_dir / dest_name
-            try:
-                shutil.copy2(src_path, dest_path)
-                rel_path = str(dest_path.relative_to(self.identity_root))
-                if rel_path not in identity.setdefault("images", []):
-                    identity["images"].append(rel_path)
-                added += 1
-            except Exception as exc:
-                skipped.append(f"{src_path.name}: {exc}")
-
-        identity["updated_at"] = datetime.now().isoformat()
-        self.save_identity_manifest()
-        self.refresh_identity_list(selected_id=identity["id"])
-
-        if added:
-            message = f"Imported {added} image{'s' if added != 1 else ''}."
-        else:
-            message = "No new images were imported."
-
-        if skipped:
-            message += f" Skipped {len(skipped)} file{'s' if len(skipped) != 1 else ''}."
-            messagebox.showwarning("Some files skipped", "\n".join(skipped))
-
-        if self.identity_status_var is not None:
-            self.identity_status_var.set(message)
-        if hasattr(self, "terminal_text"):
-            self.log_to_terminal(f"Identity {identity['name']} updated: {message}")
-
-    def remove_identity(self):
-        identity = self.get_selected_identity()
-        if identity is None:
-            messagebox.showinfo("Select Identity", "Choose an identity to remove.")
-            return
-
-        if not messagebox.askyesno(
-            "Remove Identity",
-            f"Delete identity '{identity['name']}' and all associated images?",
-            parent=self.root,
-        ):
-            return
-
-        folder = self.identity_root / identity["id"]
-        try:
-            if folder.exists():
-                shutil.rmtree(folder)
-        except Exception as exc:
-            messagebox.showerror("Remove Failed", f"Could not delete identity folder:\n{exc}")
-            return
-
-        self.identity_data["identities"] = [i for i in self.identity_data.get("identities", []) if i.get("id") != identity["id"]]
-        self.save_identity_manifest()
-        self.refresh_identity_list()
-        name = identity.get("name", "Unnamed")
-        if self.identity_status_var is not None:
-            self.identity_status_var.set(f'Removed identity "{name}".')
-        if hasattr(self, "terminal_text"):
-            self.log_to_terminal(f"Identity removed: {name} ({identity['id']})")
-
-    def open_identity_folder(self):
-        identity = self.get_selected_identity()
-        if identity is None:
-            messagebox.showinfo("Select Identity", "Choose an identity to open its folder.")
-            return
-
-        folder = self.identity_root / identity["id"]
-        folder.mkdir(exist_ok=True)
-
-        try:
-            if sys.platform == "darwin":
-                subprocess.run(["open", str(folder)], check=False)
-            elif os.name == "nt":
-                os.startfile(str(folder))  # type: ignore[attr-defined]
-            else:
-                subprocess.run(["xdg-open", str(folder)], check=False)
-        except Exception as exc:
-            messagebox.showerror("Open Folder Failed", f"Unable to open folder:\n{exc}")
-
-    def update_identity_details(self, *_):
-        if self.identity_details_var is None:
-            return
-        identity = self.get_selected_identity()
-        if identity is None:
-            self.identity_details_var.set("Select an identity to view details.")
-            return
-
-        image_count = len(identity.get("images", []))
-        created = identity.get("created_at", "Unknown")
-        updated = identity.get("updated_at", created)
-        folder_name = (self.identity_root / identity["id"]).name
-        details = (
-            f"Name: {identity.get('name', 'Unnamed')}\n"
-            f"Folder: {folder_name}\n"
-            f"Images: {image_count}\n"
-            f"Last Updated: {updated}"
-        )
-        self.identity_details_var.set(details)
-
     def save_config(self):
         """Save launcher configuration"""
         try:
@@ -368,21 +111,10 @@ class LauncherGUI:
             messagebox.showerror("Configuration Error", f"Failed to save config: {e}")
     
     def setup_styles(self):
-        """Setup custom styles for the GUI"""
+        """Setup basic styles while keeping the system theme"""
         self.style = ttk.Style()
-        self.style.theme_use('clam')
-        
-        # Define custom colors
-        self.colors = {
-            'primary': '#2E86AB',
-            'secondary': '#A23B72',
-            'success': '#F18F01',
-            'warning': '#C73E1D',
-            'background': '#F5F5F5',
-            'text': '#333333'
-        }
-        
-        # Configure styles
+
+        # Configure typography similar to other tools in the suite
         self.style.configure('Title.TLabel', font=('Arial', 16, 'bold'))
         self.style.configure('Subtitle.TLabel', font=('Arial', 12, 'bold'))
         self.style.configure('Status.TLabel', font=('Arial', 10))
@@ -630,52 +362,28 @@ class LauncherGUI:
         self.front_node_frame.grid_remove()
     
     def create_general_frame(self, parent):
-        """Create general options and identity gallery management"""
-        general_frame = ttk.LabelFrame(parent, text="Identity & Tools", padding="10")
+        """Create general tools and quick links."""
+        general_frame = ttk.LabelFrame(parent, text="Tools", padding="10")
         general_frame.grid(row=3, column=2, sticky="nsew", padx=(5, 0))
         general_frame.columnconfigure(0, weight=1)
-        general_frame.rowconfigure(0, weight=3)
-        general_frame.rowconfigure(1, weight=1)
 
         identity_frame = ttk.LabelFrame(general_frame, text="Identity Gallery", padding="8")
-        identity_frame.grid(row=0, column=0, sticky="nsew")
+        identity_frame.grid(row=0, column=0, sticky="ew")
         identity_frame.columnconfigure(0, weight=1)
-        identity_frame.rowconfigure(0, weight=1)
 
-        self.identity_listbox = tk.Listbox(identity_frame, height=8, exportselection=False)
-        self.identity_listbox.grid(row=0, column=0, sticky="nsew")
-        identity_scroll = ttk.Scrollbar(identity_frame, orient=tk.VERTICAL, command=self.identity_listbox.yview)
-        identity_scroll.grid(row=0, column=1, sticky="ns")
-        self.identity_listbox.configure(yscrollcommand=identity_scroll.set)
-        self.identity_listbox.bind("<<ListboxSelect>>", self.update_identity_details)
-
-        self.identity_details_var = tk.StringVar(value="No identities imported yet.")
         ttk.Label(
             identity_frame,
-            textvariable=self.identity_details_var,
-            wraplength=240,
+            text="Manage performers and photos in the dedicated configurator.",
+            wraplength=260,
             justify="left",
-            style='Status.TLabel'
-        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        ).grid(row=0, column=0, sticky="w")
 
-        button_frame = ttk.Frame(identity_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, sticky="ew")
-        for col in range(4):
-            button_frame.columnconfigure(col, weight=1)
-
-        ttk.Button(button_frame, text="New", command=self.prompt_new_identity).grid(row=0, column=0, padx=2, pady=2, sticky="ew")
-        ttk.Button(button_frame, text="Import Photos", command=self.import_identity_images).grid(row=0, column=1, padx=2, pady=2, sticky="ew")
-        ttk.Button(button_frame, text="Open Folder", command=self.open_identity_folder).grid(row=0, column=2, padx=2, pady=2, sticky="ew")
-        ttk.Button(button_frame, text="Remove", command=self.remove_identity).grid(row=0, column=3, padx=2, pady=2, sticky="ew")
-
-        self.identity_status_var = tk.StringVar(value="Add a new identity to begin.")
-        ttk.Label(
+        ttk.Button(
             identity_frame,
-            textvariable=self.identity_status_var,
-            wraplength=240,
-            justify="left",
-            style='Status.TLabel'
-        ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+            text="Open Identity Configurator",
+            command=self.launch_identity_configurator,
+            style='Primary.TButton',
+        ).grid(row=1, column=0, sticky="ew", pady=(6, 0))
 
         tools_frame = ttk.LabelFrame(general_frame, text="General Tools", padding="8")
         tools_frame.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
@@ -697,8 +405,6 @@ class LauncherGUI:
         ttk.Separator(tools_frame, orient='horizontal').grid(row=4, column=0, sticky="ew", pady=10)
 
         ttk.Button(tools_frame, text="Exit", command=self.root.quit).grid(row=5, column=0, sticky="ew")
-
-        self.refresh_identity_list()
     
     def create_terminal_frame(self, parent):
         """Create terminal output display"""
@@ -995,6 +701,14 @@ class LauncherGUI:
         script_path = Path(__file__).parent / "control" / "reid_configurator.py"
         self.run_script(script_path, "ReID Camera Configurator")
     
+    def launch_identity_configurator(self):
+        """Launch standalone identity configurator"""
+        script_path = Path(__file__).parent / "control" / "identity_configurator.py"
+        if not script_path.exists():
+            messagebox.showerror("Error", "Identity configurator script not found")
+            return
+        self.run_script(script_path, "Identity Configurator")
+
     def launch_offline_mode(self):
         """Launch control stack in offline/demo mode"""
         script_path = Path(__file__).parent / "control" / "main.py"
