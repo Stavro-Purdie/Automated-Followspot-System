@@ -21,3 +21,4 @@ scipy
 # Uncomment if needed:
 # opencv-contrib-python>=4.5.0  # Additional OpenCV features
 # av>=8.0.0  # Audio/Video processing
+# coremltools==6.4  # Apple Neural Engine acceleration (optional)

@@ -11,6 +11,7 @@ import numpy as np
 import time
 import json
 import logging
+import platform
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -43,6 +44,19 @@ class OptimizedReIDProcessor:
         self.identity_embeddings: Dict[str, Dict[str, Any]] = {}
         self.identity_manifest_mtime: Optional[float] = None
         self._last_identity_refresh = 0.0
+
+        # Apple Silicon / CoreML configuration
+        optimization_cfg = self.config.get("optimization", {})
+        self.use_coreml_reid = bool(optimization_cfg.get("coreml_reid_enabled", False))
+        self.coreml_model_path = optimization_cfg.get("coreml_model_path")
+        self.coreml_compute_unit = str(optimization_cfg.get("coreml_compute_unit", "ANE_ONLY")).upper()
+        self.coreml_skip_torch = bool(optimization_cfg.get("coreml_skip_torch", True))
+        self.use_half_precision = bool(optimization_cfg.get("use_half_precision", False))
+        self.coreml_model = None
+        self.coreml_input_name: Optional[str] = None
+        self.coreml_output_name: Optional[str] = None
+        self.coreml_input_layout: str = "NCHW"
+        self.coreml_use_cpu_only = False
         
         # Performance tracking
         self.target_fps = self.config["performance"]["target_fps"]
@@ -77,16 +91,31 @@ class OptimizedReIDProcessor:
     
     def _setup_device(self) -> torch.device:
         """Setup optimal device (CUDA/CPU)"""
-        if self.config["models"]["detector"]["device"] == "auto":
+        device_pref = self.config["models"]["detector"].get("device", "auto")
+        if device_pref == "auto":
             if torch.cuda.is_available():
                 device = torch.device("cuda")
                 logger.info(f"Using CUDA device: {torch.cuda.get_device_name(0)}")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                device = torch.device("mps")
+                logger.info("Using Apple Silicon MPS device")
             else:
                 device = torch.device("cpu")
                 logger.info("Using CPU device")
         else:
-            device = torch.device(self.config["models"]["detector"]["device"])
-            
+            try:
+                device = torch.device(device_pref)
+            except (TypeError, ValueError):
+                logger.warning(f"Invalid device '{device_pref}', falling back to CPU")
+                device = torch.device("cpu")
+            else:
+                if device.type == "cuda" and torch.cuda.is_available():
+                    logger.info(f"Using CUDA device: {torch.cuda.get_device_name(0)}")
+                elif device.type == "mps" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    logger.info("Using Apple Silicon MPS device")
+                else:
+                    logger.info(f"Using device: {device}")
+        self.device = device
         return device
 
     def _resolve_path(self, path_value: Any) -> Path:
@@ -107,12 +136,31 @@ class OptimizedReIDProcessor:
             
             # Load person detector
             self.person_detector = self._load_person_detector()
-            
-            # Load ReID model
-            self.reid_model = self._load_reid_model()
-            
+
             # Setup image transforms
             self.transforms = self._setup_transforms()
+
+            # Optionally load CoreML model for Apple Silicon acceleration
+            coreml_loaded = self._load_coreml_model()
+            if self.use_coreml_reid and not coreml_loaded:
+                logger.warning("CoreML ReID acceleration requested but model could not be loaded; falling back to Torch")
+
+            # Load Torch ReID model unless CoreML is active and torch loading is skipped
+            load_torch_reid = True
+            if coreml_loaded and self.coreml_skip_torch:
+                load_torch_reid = False
+
+            self.reid_model = self._load_reid_model() if load_torch_reid else None
+
+            if self.reid_model is not None and self.use_half_precision and self.device.type == "cuda":
+                try:
+                    self.reid_model.half()
+                    logger.info("ReID model converted to FP16 for CUDA acceleration")
+                except Exception as exc:
+                    logger.warning(f"Failed to convert ReID model to FP16: {exc}")
+
+            if self.reid_model is None and self.coreml_model is None:
+                raise RuntimeError("No ReID backend available (CoreML and Torch loaders both unavailable)")
 
             # Load identity gallery embeddings
             self._build_identity_index(force=True)
@@ -194,6 +242,193 @@ class OptimizedReIDProcessor:
             logger.error(f"Failed to load ReID model: {e}")
             raise
     
+    def _load_coreml_model(self) -> bool:
+        """Load CoreML ReID model if configured."""
+        if not self.use_coreml_reid:
+            return False
+
+        if platform.system() != "Darwin":
+            logger.warning("CoreML ReID requested but not running on macOS; skipping CoreML load")
+            return False
+
+        if not self.coreml_model_path:
+            logger.error("CoreML ReID enabled but no model path provided")
+            return False
+
+        model_path = self._resolve_path(self.coreml_model_path)
+        if not model_path.exists():
+            logger.error(f"CoreML model not found at {model_path}")
+            return False
+
+        try:
+            import coremltools as ct  # type: ignore[import-not-found]
+            from coremltools.models import MLModel  # type: ignore[import-not-found]
+        except ImportError:
+            logger.error("coremltools is not installed; cannot load CoreML ReID model")
+            return False
+
+        compute_map = {
+            "ALL": ct.ComputeUnit.ALL,
+            "CPU_ONLY": ct.ComputeUnit.CPU_ONLY,
+            "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,
+            "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
+            "ANE_ONLY": ct.ComputeUnit.CPU_AND_NE,
+        }
+        compute_unit = compute_map.get(self.coreml_compute_unit, ct.ComputeUnit.ALL)
+        self.coreml_use_cpu_only = compute_unit == ct.ComputeUnit.CPU_ONLY
+
+        try:
+            self.coreml_model = MLModel(str(model_path), compute_units=compute_unit)
+        except Exception as exc:
+            logger.error(f"Failed to load CoreML model: {exc}")
+            self.coreml_model = None
+            return False
+
+        try:
+            spec = self.coreml_model.get_spec()
+            if not spec.description.input:
+                logger.error("CoreML model has no inputs")
+                self.coreml_model = None
+                return False
+            input_desc = spec.description.input[0]
+            self.coreml_input_name = input_desc.name
+            self.coreml_input_layout = self._infer_coreml_input_layout(input_desc)
+
+            if not spec.description.output:
+                logger.error("CoreML model has no outputs")
+                self.coreml_model = None
+                return False
+            output_desc = spec.description.output[0]
+            self.coreml_output_name = output_desc.name
+
+            output_type = output_desc.type.WhichOneof("Type")
+            if output_type == "multiArrayType":
+                shape = list(output_desc.type.multiArrayType.shape)
+                if shape:
+                    self.feature_dim = int(np.prod(shape))
+            logger.info(f"Loaded CoreML ReID model from {model_path} (compute unit: {self.coreml_compute_unit})")
+            return True
+
+        except Exception as exc:
+            logger.error(f"Failed to inspect CoreML model specification: {exc}")
+            self.coreml_model = None
+            return False
+
+    @staticmethod
+    def _infer_coreml_input_layout(input_desc) -> str:
+        layout = "NCHW"
+        try:
+            input_type = input_desc.type.WhichOneof("Type")
+        except Exception:
+            return layout
+
+        if input_type == "multiArrayType":
+            shape = list(input_desc.type.multiArrayType.shape)
+            if len(shape) == 4:
+                if len(shape) >= 2 and shape[1] in (1, 3):
+                    layout = "NCHW"
+                elif shape[-1] in (1, 3):
+                    layout = "NHWC"
+            elif len(shape) == 3:
+                if shape[0] in (1, 3):
+                    layout = "CHW"
+                elif shape[-1] in (1, 3):
+                    layout = "HWC"
+        elif input_type == "imageType":
+            layout = "HWC"
+
+        return layout
+
+    def _run_reid_inference(self, transformed: torch.Tensor) -> Optional[np.ndarray]:
+        feature_vector: Optional[np.ndarray] = None
+
+        if self.coreml_model is not None and self.coreml_input_name and self.coreml_output_name:
+            feature_vector = self._run_coreml_reid(transformed)
+
+        if feature_vector is None and self.reid_model is not None:
+            feature_vector = self._run_torch_reid(transformed)
+
+        return feature_vector
+
+    def _run_coreml_reid(self, transformed: torch.Tensor) -> Optional[np.ndarray]:
+        if self.coreml_model is None or not self.coreml_input_name or not self.coreml_output_name:
+            return None
+
+        array = transformed.detach().cpu().numpy().astype(np.float32)
+
+        if self.coreml_input_layout == "NCHW":
+            array = np.expand_dims(array, axis=0)
+        elif self.coreml_input_layout == "NHWC":
+            array = np.expand_dims(array, axis=0)
+            array = np.transpose(array, (0, 2, 3, 1))
+        elif self.coreml_input_layout == "HWC":
+            array = np.transpose(array, (1, 2, 0))
+        elif self.coreml_input_layout == "CHW":
+            # Expected shape already matches (C, H, W)
+            pass
+        else:
+            array = np.expand_dims(array, axis=0)
+
+        array = np.ascontiguousarray(array)
+        input_data = {self.coreml_input_name: array}
+
+        try:
+            result = self.coreml_model.predict(input_data, useCPUOnly=self.coreml_use_cpu_only)
+        except Exception as exc:
+            logger.error(f"CoreML ReID inference failed: {exc}")
+            return None
+
+        if self.coreml_output_name not in result:
+            logger.error("CoreML ReID output missing expected tensor")
+            return None
+
+        output = np.array(result[self.coreml_output_name], dtype=np.float32).flatten()
+        if output.size == 0:
+            return None
+
+        self.feature_dim = output.size
+        norm = np.linalg.norm(output)
+        if norm > 0:
+            output = (output / norm).astype(np.float32)
+        else:
+            output = np.zeros(self.feature_dim, dtype=np.float32)
+
+        return output
+
+    def _run_torch_reid(self, transformed: torch.Tensor) -> Optional[np.ndarray]:
+        if self.reid_model is None:
+            return None
+
+        if not isinstance(transformed, torch.Tensor):
+            transformed = torch.as_tensor(transformed)
+
+        input_tensor = transformed.unsqueeze(0).to(self.device)
+        if self.use_half_precision and self.device.type == "cuda":
+            input_tensor = input_tensor.half()
+
+        try:
+            with torch.no_grad():
+                feature_tensor = self.reid_model(input_tensor)
+        except Exception as exc:
+            logger.error(f"Torch ReID inference failed: {exc}")
+            return None
+
+        if isinstance(feature_tensor, (tuple, list)):
+            feature_tensor = feature_tensor[0]
+
+        feature_vector = feature_tensor.detach().cpu().numpy().flatten()
+        if feature_vector.size == 0:
+            return None
+
+        self.feature_dim = feature_vector.size
+        norm = np.linalg.norm(feature_vector)
+        if norm > 0:
+            feature_vector = (feature_vector / norm).astype(np.float32)
+        else:
+            feature_vector = np.zeros(self.feature_dim, dtype=np.float32)
+
+        return feature_vector
+
     def _setup_transforms(self):
         """Setup image preprocessing transforms"""
         # Standard ReID preprocessing
@@ -237,7 +472,7 @@ class OptimizedReIDProcessor:
         new_embeddings: Dict[str, Dict[str, Any]] = {}
         total_refs = 0
 
-        if not self.transforms or self.reid_model is None:
+        if not self.transforms or (self.reid_model is None and self.coreml_model is None):
             logger.warning("Cannot build identity index before models are initialized")
             return
 
@@ -293,36 +528,18 @@ class OptimizedReIDProcessor:
             logger.warning(f"Failed to load identity image {image_path}: {exc}")
             return None
 
-        if self.transforms is None or self.reid_model is None:
+        if self.transforms is None or (self.reid_model is None and self.coreml_model is None):
             return None
 
         transformed = self.transforms(np_img)
-        if isinstance(transformed, torch.Tensor):
-            input_tensor = transformed.unsqueeze(0)
-        else:
-            input_tensor = torch.as_tensor(transformed).unsqueeze(0)
-        input_tensor = input_tensor.to(self.device)
+        if not isinstance(transformed, torch.Tensor):
+            transformed = torch.as_tensor(transformed)
 
-        try:
-            with torch.no_grad():
-                feature_tensor = self.reid_model(input_tensor)
-        except Exception as exc:
-            logger.error(f"Failed to compute identity embedding for {image_path}: {exc}")
+        feature_vector = self._run_reid_inference(transformed)
+        if feature_vector is None or feature_vector.size == 0:
             return None
 
-        if isinstance(feature_tensor, (tuple, list)):
-            feature_tensor = feature_tensor[0]
-
-        feature_vector = feature_tensor.detach().cpu().numpy().flatten()
-        if feature_vector.size == 0:
-            return None
-
-        self.feature_dim = feature_vector.size
-        norm = np.linalg.norm(feature_vector)
-        if norm == 0:
-            return None
-
-        return (feature_vector / norm).astype(np.float32)
+        return feature_vector.astype(np.float32)
 
     def _maybe_refresh_identity_index(self) -> None:
         if self.identity_reload_interval <= 0:
@@ -499,6 +716,8 @@ class OptimizedReIDProcessor:
         """Extract ReID features from detected persons (target: <15ms)"""
         features: List[np.ndarray] = []
 
+        transform_fn = self.transforms
+
         try:
             for person in persons:
                 bbox = np.array(person["bbox"]).astype(int)
@@ -514,31 +733,15 @@ class OptimizedReIDProcessor:
 
                 person_crop = frame[y1:y2, x1:x2]
 
-                if self.transforms and self.reid_model is not None:
-                    transformed = self.transforms(person_crop)
-                    if isinstance(transformed, torch.Tensor):
-                        input_tensor = transformed.unsqueeze(0)
-                    else:
-                        input_tensor = torch.as_tensor(transformed).unsqueeze(0)
-                    input_tensor = input_tensor.to(self.device)
+                if transform_fn and (self.reid_model is not None or self.coreml_model is not None):
+                    transformed = transform_fn(person_crop)
+                    if not isinstance(transformed, torch.Tensor):
+                        transformed = torch.as_tensor(transformed)
 
-                    with torch.no_grad():
-                        feature_tensor = self.reid_model(input_tensor)
-
-                    if isinstance(feature_tensor, (tuple, list)):
-                        feature_tensor = feature_tensor[0]
-
-                    feature_vector = feature_tensor.detach().cpu().numpy().flatten()
-                    if feature_vector.size == 0:
+                    feature_vector = self._run_reid_inference(transformed)
+                    if feature_vector is None or feature_vector.size == 0:
                         feature_vector = np.zeros(self.feature_dim, dtype=np.float32)
-                    else:
-                        self.feature_dim = feature_vector.size
-                        norm = np.linalg.norm(feature_vector)
-                        if norm > 0:
-                            feature_vector = (feature_vector / norm).astype(np.float32)
-                        else:
-                            feature_vector = np.zeros(self.feature_dim, dtype=np.float32)
-                    features.append(feature_vector)
+                    features.append(feature_vector.astype(np.float32))
                 else:
                     hist = cv2.calcHist([person_crop], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
                     vec = hist.flatten().astype(np.float32)
