@@ -251,6 +251,8 @@ class PersonTracker:
             "reid_features": [reid_feature.copy()],
             "depths": [depth],
             "timestamps": [timestamp],
+            "identity_history": [],
+            "confidence_history": [detection.get("confidence", 0.5)],
             
             # Motion estimation
             "velocity": np.zeros(3),
@@ -261,6 +263,14 @@ class PersonTracker:
             "max_confidence": detection.get("confidence", 0.5),
             "feature_consistency": 1.0
         }
+
+        identity_match = detection.get("identity_match")
+        if identity_match:
+            identity_snapshot = dict(identity_match)
+            track["identity"] = identity_snapshot
+            track["identity_history"].append(identity_snapshot)
+        else:
+            track["identity"] = None
         
         self.tracks[track_id] = track
         self.track_stats["total_tracks_created"] += 1
@@ -292,6 +302,8 @@ class PersonTracker:
         track["reid_features"].append(reid_feature.copy())
         track["depths"].append(depth)
         track["timestamps"].append(timestamp)
+        track.setdefault("identity_history", [])
+        confidence_history = track.setdefault("confidence_history", [])
         
         # Limit history size for memory management
         max_history = self.track_memory_frames
@@ -301,6 +313,7 @@ class PersonTracker:
             track["reid_features"] = track["reid_features"][-max_history:]
             track["depths"] = track["depths"][-max_history:]
             track["timestamps"] = track["timestamps"][-max_history:]
+            track["identity_history"] = track["identity_history"][-max_history:]
         
         # Update velocity estimation
         if len(track["positions"]) >= 2:
@@ -318,9 +331,22 @@ class PersonTracker:
         track["confidence"] = current_conf
         track["max_confidence"] = max(track["max_confidence"], current_conf)
         
+        identity_match = detection.get("identity_match")
+        if identity_match:
+            identity_snapshot = dict(identity_match)
+            track["identity_history"].append(identity_snapshot)
+            if len(track["identity_history"]) > max_history:
+                track["identity_history"] = track["identity_history"][-max_history:]
+            best = track.get("identity")
+            if best is None or identity_snapshot.get("score", 0) >= (best.get("score", 0) or 0):
+                track["identity"] = identity_snapshot
+
         # Update average confidence
-        all_confidences = [detection.get("confidence", 0.5) for _ in track["timestamps"]]
-        track["average_confidence"] = float(np.mean(all_confidences))
+        confidence_history.append(current_conf)
+        if len(confidence_history) > max_history:
+            track["confidence_history"] = confidence_history[-max_history:]
+            confidence_history = track["confidence_history"]
+        track["average_confidence"] = float(np.mean(confidence_history))
         
         # Feature consistency (similarity with track's average feature)
         if len(track["reid_features"]) > 1:

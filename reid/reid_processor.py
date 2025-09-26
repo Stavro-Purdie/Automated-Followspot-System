@@ -14,6 +14,8 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
+from PIL import Image
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("reid_processor")
@@ -28,6 +30,19 @@ class OptimizedReIDProcessor:
         """Initialize the ReID processor with configuration"""
         self.config = self._load_config(config_path)
         self.device = self._setup_device()
+        self.project_root = Path(__file__).resolve().parent.parent
+        self.feature_dim = int(self.config.get("models", {}).get("reid", {}).get("feature_dim", 512))
+
+        # Identity gallery integration
+        self.identity_config = self.config.get("identities", {})
+        self.identity_gallery_path = self._resolve_path(self.identity_config.get("gallery_path", "identity_gallery"))
+        manifest_default = self.identity_gallery_path / "manifest.json"
+        self.identity_manifest_path = self._resolve_path(self.identity_config.get("manifest_path", manifest_default))
+        self.identity_match_threshold = float(self.identity_config.get("match_threshold", 0.55))
+        self.identity_reload_interval = float(self.identity_config.get("reload_interval_sec", 5.0))
+        self.identity_embeddings: Dict[str, Dict[str, Any]] = {}
+        self.identity_manifest_mtime: Optional[float] = None
+        self._last_identity_refresh = 0.0
         
         # Performance tracking
         self.target_fps = self.config["performance"]["target_fps"]
@@ -73,6 +88,16 @@ class OptimizedReIDProcessor:
             device = torch.device(self.config["models"]["detector"]["device"])
             
         return device
+
+    def _resolve_path(self, path_value: Any) -> Path:
+        """Resolve a path relative to the project root."""
+        if isinstance(path_value, Path):
+            path = path_value
+        else:
+            path = Path(path_value)
+        if not path.is_absolute():
+            path = (self.project_root / path).resolve()
+        return path
     
     def start(self) -> bool:
         """Initialize and load all models"""
@@ -88,6 +113,10 @@ class OptimizedReIDProcessor:
             
             # Setup image transforms
             self.transforms = self._setup_transforms()
+
+            # Load identity gallery embeddings
+            self._build_identity_index(force=True)
+            self._last_identity_refresh = time.time()
             
             # Mark as initialized
             self.is_initialized = True
@@ -152,8 +181,11 @@ class OptimizedReIDProcessor:
             logger.warning("torchreid not available, using fallback ReID model")
             # Simple fallback - ResNet feature extractor
             import torchvision.models as models
-            model = models.resnet50(pretrained=True)
-            model.fc = torch.nn.Identity()  # Remove classification layer
+            try:
+                model = models.resnet50(weights=None)
+            except TypeError:
+                model = models.resnet50(pretrained=False)
+            model.fc = torch.nn.Identity()  # type: ignore[assignment]
             model.to(self.device)
             model.eval()
             return model
@@ -174,8 +206,170 @@ class OptimizedReIDProcessor:
         
         logger.info("Image transforms configured")
         return transforms
+
+    def _build_identity_index(self, force: bool = False) -> None:
+        """Load identity manifest and pre-compute embeddings."""
+        manifest_path = self.identity_manifest_path
+        if not manifest_path.exists():
+            if force:
+                logger.warning(f"Identity manifest not found at {manifest_path}")
+            self.identity_embeddings = {}
+            self.identity_manifest_mtime = None
+            return
+
+        try:
+            mtime = manifest_path.stat().st_mtime
+        except OSError as exc:
+            logger.error(f"Unable to stat identity manifest: {exc}")
+            return
+
+        if not force and self.identity_manifest_mtime is not None and mtime <= self.identity_manifest_mtime:
+            return
+
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+        except Exception as exc:
+            logger.error(f"Failed to load identity manifest: {exc}")
+            return
+
+        identities = manifest.get("identities", [])
+        new_embeddings: Dict[str, Dict[str, Any]] = {}
+        total_refs = 0
+
+        if not self.transforms or self.reid_model is None:
+            logger.warning("Cannot build identity index before models are initialized")
+            return
+
+        for identity in identities:
+            identity_id = identity.get("id")
+            if not identity_id:
+                continue
+
+            vectors: List[np.ndarray] = []
+            image_paths = identity.get("images", [])
+            if not image_paths and identity.get("primary_image"):
+                image_paths = [identity["primary_image"]]
+
+            for rel_path in image_paths:
+                img_path = self.identity_gallery_path / rel_path
+                if not img_path.exists():
+                    logger.debug(f"Identity image missing: {img_path}")
+                    continue
+                feature = self._embed_identity_image(img_path)
+                if feature is not None:
+                    vectors.append(feature)
+
+            if not vectors:
+                continue
+
+            try:
+                feature_matrix = np.vstack(vectors).astype(np.float32)
+            except ValueError:
+                feature_matrix = np.array(vectors, dtype=np.float32)
+
+            new_embeddings[identity_id] = {
+                "name": identity.get("name", identity_id),
+                "code": identity.get("code"),
+                "primary_image": identity.get("primary_image"),
+                "features": feature_matrix,
+                "updated_at": identity.get("updated_at"),
+                "created_at": identity.get("created_at"),
+            }
+            total_refs += feature_matrix.shape[0]
+
+        self.identity_embeddings = new_embeddings
+        self.identity_manifest_mtime = mtime
+        logger.info(f"Identity gallery loaded: {len(new_embeddings)} identities, {total_refs} reference photos")
+        self._last_identity_refresh = time.time()
+
+    def _embed_identity_image(self, image_path: Path) -> Optional[np.ndarray]:
+        """Compute a normalized feature vector for an identity reference image."""
+        try:
+            with Image.open(image_path) as img:
+                rgb = img.convert("RGB")
+                np_img = np.array(rgb)
+        except Exception as exc:
+            logger.warning(f"Failed to load identity image {image_path}: {exc}")
+            return None
+
+        if self.transforms is None or self.reid_model is None:
+            return None
+
+        transformed = self.transforms(np_img)
+        if isinstance(transformed, torch.Tensor):
+            input_tensor = transformed.unsqueeze(0)
+        else:
+            input_tensor = torch.as_tensor(transformed).unsqueeze(0)
+        input_tensor = input_tensor.to(self.device)
+
+        try:
+            with torch.no_grad():
+                feature_tensor = self.reid_model(input_tensor)
+        except Exception as exc:
+            logger.error(f"Failed to compute identity embedding for {image_path}: {exc}")
+            return None
+
+        if isinstance(feature_tensor, (tuple, list)):
+            feature_tensor = feature_tensor[0]
+
+        feature_vector = feature_tensor.detach().cpu().numpy().flatten()
+        if feature_vector.size == 0:
+            return None
+
+        self.feature_dim = feature_vector.size
+        norm = np.linalg.norm(feature_vector)
+        if norm == 0:
+            return None
+
+        return (feature_vector / norm).astype(np.float32)
+
+    def _maybe_refresh_identity_index(self) -> None:
+        if self.identity_reload_interval <= 0:
+            return
+        now = time.time()
+        if now - self._last_identity_refresh >= self.identity_reload_interval:
+            self._build_identity_index()
+            self._last_identity_refresh = now
+
+    def _match_identity(self, feature_vector: np.ndarray) -> Optional[Dict[str, Any]]:
+        if feature_vector is None or feature_vector.size == 0:
+            return None
+        if not self.identity_embeddings:
+            return None
+
+        norm = np.linalg.norm(feature_vector)
+        if norm == 0:
+            return None
+        normalized = feature_vector / norm
+
+        best_id = None
+        best_score = -1.0
+        best_entry: Optional[Dict[str, Any]] = None
+
+        for identity_id, entry in self.identity_embeddings.items():
+            vectors = entry.get("features")
+            if vectors is None or len(vectors) == 0:
+                continue
+            scores = np.dot(vectors, normalized)
+            score = float(np.max(scores))
+            if score > best_score:
+                best_score = score
+                best_id = identity_id
+                best_entry = entry
+
+        if best_entry is None or best_score < self.identity_match_threshold:
+            return None
+
+        return {
+            "id": best_id,
+            "name": best_entry.get("name") or best_id,
+            "code": best_entry.get("code"),
+            "primary_image": best_entry.get("primary_image"),
+            "score": best_score,
+        }
     
-    def process_frame(self, rgb_frame: np.ndarray, timestamp: float = None) -> Dict[str, Any]:
+    def process_frame(self, rgb_frame: np.ndarray, timestamp: Optional[float] = None) -> Dict[str, Any]:
         """
         Main frame processing pipeline
         Target: <55ms processing time
@@ -195,33 +389,43 @@ class OptimizedReIDProcessor:
             timestamp = time.time()
             
         start_time = time.time()
-        
+
         # Frame rate control
         if start_time - self.last_process_time < self.frame_interval:
             return {"skipped": True, "reason": "frame_rate_limit"}
-        
+
+        self._maybe_refresh_identity_index()
+
         try:
             # Step 1: Detect persons (~25ms target)
             persons = self._detect_persons(rgb_frame)
-            
-            # Step 2: Extract ReID features (~15ms target)  
+
+            # Step 2: Extract ReID features (~15ms target)
             person_features = self._extract_reid_features(rgb_frame, persons)
-            
+
             # Step 3: Estimate depths (~5ms target)
             person_depths = self._estimate_depths(persons, rgb_frame.shape)
-            
+
+            # Step 4: Match identities
+            identity_matches = [self._match_identity(f) if isinstance(f, np.ndarray) else None for f in person_features]
+
             # Combine results
             results = []
             for i, person in enumerate(persons):
-                results.append({
-                    "person_id": i,  # Temporary ID, tracking will assign persistent IDs
+                feature_vec = person_features[i] if i < len(person_features) else None
+                match_info = identity_matches[i] if i < len(identity_matches) else None
+                result_entry = {
+                    "person_id": i,
                     "bbox": person["bbox"],
                     "center": person["center"],
                     "confidence": person["confidence"],
-                    "features": person_features[i] if i < len(person_features) else None,
+                    "features": feature_vec,
                     "depth": person_depths[i] if i < len(person_depths) else None,
-                    "timestamp": timestamp
-                })
+                    "timestamp": timestamp,
+                }
+                if match_info:
+                    result_entry["identity_match"] = match_info
+                results.append(result_entry)
             
             processing_time = time.time() - start_time
             self.processing_times.append(processing_time)
@@ -263,7 +467,7 @@ class OptimizedReIDProcessor:
             # Run detection
             with torch.no_grad():
                 if hasattr(self.person_detector, 'predict'):  # YOLOv8
-                    results = self.person_detector.predict(detect_frame, verbose=False)
+                    results = self.person_detector.predict(detect_frame, verbose=False)  # type: ignore[attr-defined]
                     
                     # Process YOLOv8 results
                     for result in results:
@@ -293,41 +497,61 @@ class OptimizedReIDProcessor:
     
     def _extract_reid_features(self, frame: np.ndarray, persons: List[Dict]) -> List[np.ndarray]:
         """Extract ReID features from detected persons (target: <15ms)"""
-        features = []
-        
+        features: List[np.ndarray] = []
+
         try:
             for person in persons:
-                # Crop person from frame
-                bbox = person["bbox"].astype(int)
+                bbox = np.array(person["bbox"]).astype(int)
                 x1, y1, x2, y2 = bbox
-                
-                # Ensure coordinates are within frame bounds
+
                 h, w = frame.shape[:2]
                 x1, x2 = max(0, x1), min(w, x2)
                 y1, y2 = max(0, y1), min(h, y2)
-                
-                if x2 > x1 and y2 > y1:
-                    person_crop = frame[y1:y2, x1:x2]
-                    
-                    # Preprocess for ReID model
-                    if self.transforms:
-                        input_tensor = self.transforms(person_crop).unsqueeze(0).to(self.device)
-                        
-                        # Extract features
-                        with torch.no_grad():
-                            feature_vector = self.reid_model(input_tensor)
-                            feature_vector = feature_vector.cpu().numpy().flatten()
-                            features.append(feature_vector)
+
+                if x2 <= x1 or y2 <= y1:
+                    features.append(np.zeros(self.feature_dim, dtype=np.float32))
+                    continue
+
+                person_crop = frame[y1:y2, x1:x2]
+
+                if self.transforms and self.reid_model is not None:
+                    transformed = self.transforms(person_crop)
+                    if isinstance(transformed, torch.Tensor):
+                        input_tensor = transformed.unsqueeze(0)
                     else:
-                        # Fallback: simple histogram features
-                        hist = cv2.calcHist([person_crop], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
-                        features.append(hist.flatten())
+                        input_tensor = torch.as_tensor(transformed).unsqueeze(0)
+                    input_tensor = input_tensor.to(self.device)
+
+                    with torch.no_grad():
+                        feature_tensor = self.reid_model(input_tensor)
+
+                    if isinstance(feature_tensor, (tuple, list)):
+                        feature_tensor = feature_tensor[0]
+
+                    feature_vector = feature_tensor.detach().cpu().numpy().flatten()
+                    if feature_vector.size == 0:
+                        feature_vector = np.zeros(self.feature_dim, dtype=np.float32)
+                    else:
+                        self.feature_dim = feature_vector.size
+                        norm = np.linalg.norm(feature_vector)
+                        if norm > 0:
+                            feature_vector = (feature_vector / norm).astype(np.float32)
+                        else:
+                            feature_vector = np.zeros(self.feature_dim, dtype=np.float32)
+                    features.append(feature_vector)
                 else:
-                    features.append(np.zeros(512))  # Dummy features for invalid crops
-                    
+                    hist = cv2.calcHist([person_crop], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+                    vec = hist.flatten().astype(np.float32)
+                    if vec.size != self.feature_dim:
+                        self.feature_dim = vec.size
+                    norm = np.linalg.norm(vec)
+                    if norm > 0:
+                        vec = vec / norm
+                    features.append(vec)
+
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
-        
+
         return features
     
     def _estimate_depths(self, persons: List[Dict], frame_shape: Tuple[int, int]) -> List[float]:
@@ -364,7 +588,7 @@ class OptimizedReIDProcessor:
         
         return depths
     
-    def get_performance_stats(self) -> Dict[str, float]:
+    def get_performance_stats(self) -> Dict[str, Any]:
         """Get performance statistics"""
         if not self.processing_times:
             return {"error": "No processing data available"}
@@ -372,12 +596,12 @@ class OptimizedReIDProcessor:
         recent_times = self.processing_times[-30:] if len(self.processing_times) >= 30 else self.processing_times
         
         return {
-            "avg_processing_time_ms": np.mean(recent_times) * 1000,
-            "max_processing_time_ms": np.max(recent_times) * 1000,
-            "min_processing_time_ms": np.min(recent_times) * 1000,
-            "avg_fps": 1.0 / np.mean(recent_times),
-            "frames_processed": self.frame_count,
-            "target_fps": self.target_fps
+            "avg_processing_time_ms": float(np.mean(recent_times) * 1000),
+            "max_processing_time_ms": float(np.max(recent_times) * 1000),
+            "min_processing_time_ms": float(np.min(recent_times) * 1000),
+            "avg_fps": float(1.0 / np.mean(recent_times)),
+            "frames_processed": int(self.frame_count),
+            "target_fps": float(self.target_fps),
         }
     
     def stop(self):

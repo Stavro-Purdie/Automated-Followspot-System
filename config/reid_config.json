@@ -27,6 +27,12 @@
       "model_path": "reid/models/osnet_x0_5_market1501.pth"
     }
   },
+  "identities": {
+    "gallery_path": "identity_gallery",
+    "manifest_path": "identity_gallery/manifest.json",
+    "match_threshold": 0.58,
+    "reload_interval_sec": 5.0
+  },
   "optimization": {
     "use_half_precision": true,
     "tensorrt_optimization": false,

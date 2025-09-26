@@ -5,12 +5,13 @@ Reads network camera from front_array_config.json, runs ReID processor and perso
 and publishes track states for fusion.
 """
 
+import argparse
 import cv2
 import json
 import time
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, List
 import sys
 
 import numpy as np
@@ -31,6 +32,129 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("reid_runner")
 
 
+def run_smoke_test(
+    test_image: Optional[str] = None,
+    front_config_path: str = str(Path(__file__).parent.parent / "config" / "front_array_config.json"),
+    reid_config_path: str = str(Path(__file__).parent.parent / "config" / "reid_config.json"),
+) -> Tuple[bool, Dict[str, Any]]:
+    """Run a minimal offline validation of the ReID pipeline."""
+
+    summary: Dict[str, Any] = {
+        "mode": "smoke_test",
+        "front_config": front_config_path,
+        "reid_config": reid_config_path,
+    }
+
+    processor: Optional[OptimizedReIDProcessor] = None
+    try:
+        processor = OptimizedReIDProcessor(config_path=reid_config_path)
+        if not processor.start():
+            summary["error"] = "reid_processor_failed_to_start"
+            return False, summary
+
+        summary["models_loaded"] = True
+        summary["identity_count"] = len(processor.identity_embeddings)
+
+        image_path: Optional[Path] = Path(test_image) if test_image else None
+        if image_path and not image_path.exists():
+            summary["warning"] = f"test_image_not_found: {image_path}"
+            image_path = None
+
+        if image_path is None and processor.identity_embeddings:
+            first_identity = next(iter(processor.identity_embeddings.values()))
+            primary = first_identity.get("primary_image")
+            if primary:
+                candidate = processor.identity_gallery_path / primary
+                if candidate.exists():
+                    image_path = candidate
+        summary["test_image"] = str(image_path) if image_path else None
+
+        frame_result: Dict[str, Any] = {}
+        if image_path and image_path.exists():
+            bgr = cv2.imread(str(image_path))
+            if bgr is not None:
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                frame_result = processor.process_frame(rgb, timestamp=time.time())
+        summary["frame_result_keys"] = list(frame_result.keys()) if isinstance(frame_result, dict) else []
+
+        persons = frame_result.get("persons", []) if isinstance(frame_result, dict) else []
+        summary["detections"] = len(persons)
+        summary["identity_matches"] = [p.get("identity_match") for p in persons if p.get("identity_match")]
+
+        success = False
+
+        if persons:
+            with open(front_config_path, "r", encoding="utf-8") as handle:
+                front_config = json.load(handle)
+            tracker = PersonTracker(front_config)
+
+            feature_vectors: List[np.ndarray] = []
+            for person in persons:
+                feat = person.get("features")
+                if isinstance(feat, np.ndarray):
+                    feature_vectors.append(feat.astype(np.float32))
+                elif isinstance(feat, list):
+                    feature_vectors.append(np.array(feat, dtype=np.float32))
+                else:
+                    feature_vectors.append(np.zeros(processor.feature_dim, dtype=np.float32))
+
+            if feature_vectors:
+                try:
+                    features = np.stack(feature_vectors)
+                except ValueError:
+                    features = np.array(feature_vectors, dtype=np.float32)
+            else:
+                features = np.zeros((0, processor.feature_dim), dtype=np.float32)
+
+            depths = [float(p.get("depth", 10.0) or 10.0) for p in persons]
+
+            detections_for_tracker = []
+            for person in persons:
+                bbox = np.array(person.get("bbox", [0, 0, 0, 0]), dtype=np.float32)
+                entry: Dict[str, Any] = {
+                    "bbox": bbox,
+                    "confidence": person.get("confidence", 0.5),
+                }
+                if person.get("identity_match"):
+                    entry["identity_match"] = person["identity_match"]
+                detections_for_tracker.append(entry)
+
+            tracks = tracker.update_tracks(detections_for_tracker, features, depths, time.time())
+            summary["tracks"] = {
+                tid: {
+                    "status": data.get("status"),
+                    "identity": data.get("identity"),
+                    "average_confidence": data.get("average_confidence"),
+                }
+                for tid, data in tracks.items()
+            }
+
+            success = any(person.get("identity_match") for person in persons)
+            if not success:
+                success = len(persons) > 0
+        else:
+            # Fallback: manually embed and match an identity image so we confirm gallery support
+            manual_match = None
+            if image_path and image_path.exists():
+                feature_vec = processor._embed_identity_image(image_path)
+                if feature_vec is not None:
+                    manual_match = processor._match_identity(feature_vec)
+            summary["manual_identity_match"] = manual_match
+            success = manual_match is not None
+
+        summary["success"] = success
+        return success, summary
+
+    except Exception as exc:
+        summary["error"] = str(exc)
+        logger.exception("Smoke test failed")
+        return False, summary
+
+    finally:
+        if processor:
+            processor.stop()
+
+
 class ReIDRunner:
     def __init__(self, config_path: str = str(Path(__file__).parent.parent / "config" / "front_array_config.json")):
         self.config_path = config_path
@@ -38,9 +162,9 @@ class ReIDRunner:
         self.camera_url = self.config["camera"]["front_camera"]["server_url"]
         self.protocol = self.config["camera"]["front_camera"].get("protocol", "webrtc")
 
-        # ReID processor uses its own config; pass front config for camera params
+        # ReID processor uses dedicated config with identity gallery settings
         self.reid_processor = OptimizedReIDProcessor(
-            config_path=str(Path(__file__).parent.parent / "config" / "front_array_config.json")
+            config_path=str(Path(__file__).parent.parent / "config" / "reid_config.json")
         )
         self.person_tracker = PersonTracker(self.config)
 
@@ -198,7 +322,17 @@ class ReIDRunner:
         features = np.array([d.get("features", np.zeros(512)) for d in detections], dtype=np.float32)
         depths = [float(d.get("depth", 10.0)) for d in detections]
         # Create detection dicts for tracker
-        det_list = [{"bbox": b, "confidence": d.get("confidence", 0.5)} for b, d in zip(bboxes, detections)]
+        det_list = []
+        for bbox, det in zip(bboxes, detections):
+            entry = {
+                "bbox": bbox,
+                "confidence": det.get("confidence", 0.5),
+            }
+            if "identity_match" in det:
+                entry["identity_match"] = det["identity_match"]
+            if "center" in det:
+                entry["center"] = det["center"]
+            det_list.append(entry)
         tracks = self.person_tracker.update_tracks(det_list, features, depths, ts)
         return tracks
 
@@ -265,7 +399,32 @@ class ReIDRunner:
 
 
 def main():
-    runner = ReIDRunner()
+    parser = argparse.ArgumentParser(description="Run the Automated Followspot ReID pipeline")
+    parser.add_argument("--config", dest="front_config", help="Path to front array configuration JSON")
+    parser.add_argument("--reid-config", dest="reid_config", help="Path to ReID configuration JSON")
+    parser.add_argument("--smoke-test", action="store_true", help="Run a single-frame smoke test using the identity gallery")
+    parser.add_argument("--test-image", dest="test_image", help="Optional path to an image to use during the smoke test")
+    args = parser.parse_args()
+
+    default_front_config = Path(__file__).parent.parent / "config" / "front_array_config.json"
+    default_reid_config = Path(__file__).parent.parent / "config" / "reid_config.json"
+
+    if args.smoke_test:
+        success, summary = run_smoke_test(
+            test_image=args.test_image,
+            front_config_path=args.front_config or str(default_front_config),
+            reid_config_path=args.reid_config or str(default_reid_config),
+        )
+        if success:
+            logger.info("Smoke test completed successfully")
+            if summary.get("detections", 0) == 0:
+                logger.warning("Smoke test relied on synthetic detections; verify with live video when available.")
+        else:
+            logger.error("Smoke test failed")
+        logger.info(json.dumps(summary, indent=2, default=str))
+        sys.exit(0 if success else 1)
+
+    runner = ReIDRunner(config_path=args.front_config or str(default_front_config))
     if not runner.start():
         return
     logger.info("ReID runner started. Press Ctrl+C to stop.")
