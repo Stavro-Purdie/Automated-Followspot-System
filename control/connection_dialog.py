@@ -7,6 +7,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import os
 import logging
+import subprocess
+import sys
+import webbrowser
+from pathlib import Path
+
+CONTROL_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CONTROL_DIR.parent
 
 logger = logging.getLogger("connection_dialog")
 
@@ -32,6 +39,7 @@ class ConnectionDialog:
         self.root.geometry(f"450x350+{x}+{y}")
         
         self._create_widgets()
+        self._build_menubar()
         
         # Make dialog modal
         self.root.transient()
@@ -134,6 +142,81 @@ class ConnectionDialog:
         config_frame.columnconfigure(1, weight=1)
         status_frame.columnconfigure(0, weight=1)
     
+    def _build_menubar(self) -> None:
+        if not self.root:
+            return
+
+        menubar = tk.Menu(self.root)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Open Launcher", command=self._open_launcher)
+        file_menu.add_command(label="Check for Updates", command=self._launch_launcher_updates)
+        file_menu.add_separator()
+        file_menu.add_command(label="Close", command=self._exit)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(
+            label="Roof Array Configuration",
+            command=lambda: self._launch_script("camera_config_gui.py", "Camera Configuration"),
+        )
+        tools_menu.add_command(
+            label="ReID Configuration",
+            command=lambda: self._launch_script("reid_configurator.py", "ReID Configuration"),
+        )
+        tools_menu.add_command(
+            label="Identity Configurator",
+            command=lambda: self._launch_script("identity_configurator.py", "Identity Configurator"),
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Diagnostics", command=self._open_launcher_diagnostics)
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="Project README", command=self._open_readme)
+        help_menu.add_command(label="Report Issue", command=self._open_issue_tracker)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self.root.config(menu=menubar)
+
+    def _launcher_path(self) -> Path:
+        return PROJECT_ROOT / "launcher_gui.py"
+
+    def _launch_script(self, relative_script: str, description: str) -> None:
+        script_path = CONTROL_DIR / relative_script
+        if not script_path.exists():
+            messagebox.showerror("Missing Tool", f"{description} not found at:\n{script_path}")
+            return
+
+        try:
+            subprocess.Popen([sys.executable, str(script_path)])
+        except Exception as exc:
+            messagebox.showerror("Launch Failed", f"Could not open {description}:\n{exc}")
+
+    def _open_launcher(self) -> None:
+        launcher = self._launcher_path()
+        if not launcher.exists():
+            messagebox.showerror("Launcher Missing", "The main launcher could not be located.")
+            return
+        try:
+            subprocess.Popen([sys.executable, str(launcher)])
+        except Exception as exc:
+            messagebox.showerror("Launcher Error", f"Failed to open launcher:\n{exc}")
+
+    def _launch_launcher_updates(self) -> None:
+        self._open_launcher()
+
+    def _open_launcher_diagnostics(self) -> None:
+        self._open_launcher()
+
+    def _open_readme(self) -> None:
+        webbrowser.open_new_tab("https://github.com/Stavro-Purdie/Automated-Followspot-System")
+
+    def _open_issue_tracker(self) -> None:
+        webbrowser.open_new_tab(
+            "https://github.com/Stavro-Purdie/Automated-Followspot-System/issues/new/choose"
+        )
+
     def _select_live_mode(self):
         """Select live mode"""
         if not os.path.exists(self.config_file):

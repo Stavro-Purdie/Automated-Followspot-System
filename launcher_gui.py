@@ -19,6 +19,9 @@ import queue
 import webbrowser
 import shutil
 from urllib.parse import urlparse
+from typing import Callable, Dict, Optional
+
+from update_manager import UpdateManager, UpdateError, CommitInfo
 
 class LauncherGUI:
     def __init__(self):
@@ -26,6 +29,11 @@ class LauncherGUI:
         self.root.title("Automated Followspot System Launcher")
         self.root.geometry("900x700")
         self.root.resizable(True, True)
+        self.project_root = Path(__file__).resolve().parent
+        self.update_check_in_progress = False
+        self.update_manager = UpdateManager(
+            "Stavro-Purdie", "Automated-Followspot-System", self.project_root
+        )
         
         # Initialize configuration
         self.config_file = "launcher_config.json"
@@ -37,7 +45,9 @@ class LauncherGUI:
         # Setup GUI
         self.setup_styles()
         self.create_widgets()
+        self.build_common_menubar(self.root)
         self.update_ui_state()
+        self.root.after(2000, lambda: self.check_updates(auto_triggered=True))
         
         # Start periodic checks
         self.root.after(1000, self.periodic_checks)
@@ -80,6 +90,28 @@ class LauncherGUI:
                 "check_interval_days": 7,
                 "allow_concurrent_stacks": False,
                 "debug_mode": False
+            },
+            "update_settings": {
+                "release_channel": "stable",
+                "auto_check": True,
+                "check_interval_hours": 12,
+                "auto_update_nodes": True,
+                "branches": {
+                    "main": {
+                        "last_remote": None,
+                        "last_prompted": None,
+                        "last_applied": None,
+                        "last_node_applied": None,
+                        "last_checked": None
+                    },
+                    "testing": {
+                        "last_remote": None,
+                        "last_prompted": None,
+                        "last_applied": None,
+                        "last_node_applied": None,
+                        "last_checked": None
+                    }
+                }
             }
         }
         
@@ -95,6 +127,13 @@ class LauncherGUI:
                         for subkey in default_config[key]:
                             if subkey not in config[key]:
                                 config[key][subkey] = default_config[key][subkey]
+                        if key == "update_settings":
+                            branch_defaults = default_config["update_settings"].get("branches", {})
+                            branches = config[key].setdefault("branches", {})
+                            for branch_name, state_defaults in branch_defaults.items():
+                                branch_state = branches.setdefault(branch_name, {})
+                                for state_key, state_value in state_defaults.items():
+                                    branch_state.setdefault(state_key, state_value)
                 return config
             except Exception as e:
                 messagebox.showerror("Configuration Error", f"Failed to load config: {e}")
@@ -139,6 +178,76 @@ class LauncherGUI:
         self.create_node_frame(main_frame)
         self.create_general_frame(main_frame)
         self.create_terminal_frame(main_frame)
+
+    def build_common_menubar(
+        self,
+        window,
+        *,
+        save_command: Optional[Callable[[], None]] = None,
+        close_command: Optional[Callable[[], None]] = None,
+    ) -> tk.Menu:
+        """Attach and return a standard menubar for launcher-related windows."""
+
+        menubar = tk.Menu(window)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Settings…", command=self.show_settings)
+        file_menu.add_command(
+            label="Check for Updates",
+            command=lambda: self.check_updates(auto_triggered=False),
+        )
+        if save_command:
+            file_menu.add_separator()
+            file_menu.add_command(label="Save", command=save_command)
+
+        if close_command is None:
+            if window is self.root:
+                close_action: Callable[[], None] = self.root.quit
+            else:
+                close_action = window.destroy  # type: ignore[assignment]
+        else:
+            close_action = close_command
+
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Exit" if window is self.root else "Close",
+            command=close_action,
+        )
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(
+            label="System Status Dashboard",
+            command=self.show_status_window,
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Roof Array Configuration",
+            command=self.launch_configuration,
+        )
+        tools_menu.add_command(
+            label="ReID Configuration",
+            command=self.launch_reid_configurator,
+        )
+        tools_menu.add_command(
+            label="Identity Configurator",
+            command=self.launch_identity_configurator,
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Diagnostics", command=self.node_diagnostics)
+        tools_menu.add_command(
+            label="Open Settings",
+            command=self.show_settings,
+        )
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="About", command=self.show_about)
+        help_menu.add_command(label="Report Issue", command=self.report_bug)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        window.config(menu=menubar)
+        return menubar
     
     def create_status_frame(self, parent):
         """Create system status display"""
@@ -616,6 +725,20 @@ class LauncherGUI:
             # Check if we need to run dependency check
             if last_check is None or (datetime.now() - last_check).days >= self.config['settings']['check_interval_days']:
                 self.check_dependencies_async()
+
+        update_settings = self.config.get("update_settings", {})
+        if update_settings.get("auto_check", True) and not self.update_check_in_progress:
+            branch = self.update_manager.channel_to_branch(
+                update_settings.get("release_channel", "stable")
+            )
+            branch_state = self._get_branch_state(branch)
+            last_checked = self._parse_iso_datetime(branch_state.get("last_checked"))
+            interval_hours = max(1, int(update_settings.get("check_interval_hours", 12)))
+            if (
+                last_checked is None
+                or (datetime.now() - last_checked).total_seconds() >= interval_hours * 3600
+            ):
+                self.check_updates(auto_triggered=True)
         
         # Schedule next check
         self.root.after(60000, self.periodic_checks)  # Check every minute
@@ -658,6 +781,7 @@ class LauncherGUI:
         viewer = tk.Toplevel(self.root)
         viewer.title(f"{display_name} Log")
         viewer.geometry("700x500")
+        self.build_common_menubar(viewer)
 
         text_widget = scrolledtext.ScrolledText(viewer, wrap=tk.WORD, font=('Consolas', 10))
         text_widget.pack(fill=tk.BOTH, expand=True)
@@ -867,17 +991,269 @@ class LauncherGUI:
         """Show about dialog"""
         AboutWindow(self).show()
     
+    def show_status_window(self):
+        """Open the system status dashboard."""
+        StatusWindow(self).show()
+
     def report_bug(self):
         """Open bug report URL"""
         url = "https://github.com/Stavro-Purdie/Automated-Followspot-System/issues"
         webbrowser.open(url)
         self.log_to_terminal(f"Opened bug report URL: {url}")
     
-    def check_updates(self):
-        """Check for system updates"""
-        self.log_to_terminal("Checking for updates...")
-        # TODO: Implement update checking
-        messagebox.showinfo("Updates", "Update checking not yet implemented")
+    def check_updates(self, auto_triggered: bool = False):
+        """Check for updates on the configured release channel."""
+        if self.update_check_in_progress:
+            return
+
+        update_settings = self.config.setdefault("update_settings", {})
+        channel = update_settings.get("release_channel", "stable")
+        branch = self.update_manager.channel_to_branch(channel)
+        branch_state = self._get_branch_state(branch)
+        fallback_commit = branch_state.get("last_applied")
+
+        self.update_check_in_progress = True
+        self.log_to_terminal(f"Checking for {channel} updates (branch: {branch})...")
+
+        def worker():
+            try:
+                result = self.update_manager.check_for_update(
+                    branch, last_known_commit=fallback_commit
+                )
+                result["branch"] = branch
+            except UpdateError as exc:
+                result = {"error": str(exc), "branch": branch}
+            except Exception as exc:  # pragma: no cover - defensive
+                result = {"error": str(exc), "branch": branch}
+            self.root.after(
+                0, lambda: self._handle_update_check(result, auto_triggered)
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_update_check(self, result, auto_triggered: bool) -> None:
+        self.update_check_in_progress = False
+
+        if result.get("error"):
+            error_text = str(result["error"])
+            branch = result.get("branch", "")
+            if "Release branch" in error_text:
+                self._handle_missing_release_branch(branch, error_text, auto_triggered)
+                return
+
+            message = f"Update check failed: {error_text}"
+            self.log_to_terminal(message)
+            if not auto_triggered:
+                messagebox.showerror("Update Check Failed", message)
+            return
+
+        branch: str = result.get("branch", "")  # type: ignore[assignment]
+        latest = result.get("latest")
+        branch_state = self._get_branch_state(branch)
+        branch_state["last_checked"] = datetime.now().isoformat()
+        if isinstance(latest, CommitInfo):
+            branch_state["last_remote"] = latest.sha
+        self.save_config()
+
+        if not result.get("update_available"):
+            self.log_to_terminal("No updates available.")
+            if not auto_triggered:
+                messagebox.showinfo("Updates", "You are already on the latest version.")
+            return
+
+        latest_sha = latest.sha if isinstance(latest, CommitInfo) else ""
+
+        if (
+            auto_triggered
+            and latest_sha
+            and branch_state.get("last_prompted") == latest_sha
+            and branch_state.get("last_applied") != latest_sha
+        ):
+            # Already prompted for this commit during automatic checks
+            return
+
+        update_settings = self.config.setdefault("update_settings", {})
+        if (
+            latest_sha
+            and self.config["installations"]["node_stack"].get("installed")
+            and update_settings.get("auto_update_nodes", True)
+            and branch_state.get("last_node_applied") != latest_sha
+        ):
+            self._apply_node_update(branch, latest_sha)
+
+        commit_summary = latest_sha[:7] if latest_sha else "unknown"
+        commit_date = latest.timestamp if isinstance(latest, CommitInfo) else "unknown"
+        prompt_text = (
+            f"A new update is available on branch '{branch}'.\n\n"
+            f"Latest commit: {commit_summary}\n"
+            f"Date: {commit_date}\n\n"
+            "Would you like to download and apply it now?"
+        )
+        apply_update = messagebox.askyesno("Update Available", prompt_text)
+        if apply_update and latest_sha:
+            self._apply_control_update(branch, latest_sha)
+        else:
+            branch_state["last_prompted"] = latest_sha
+            self.save_config()
+
+    def _apply_control_update(self, branch: str, commit_sha: str) -> None:
+        self.log_to_terminal(
+            f"Applying control update from {branch} ({commit_sha[:7]})..."
+        )
+
+        def worker():
+            try:
+                info = self.update_manager.apply_update(
+                    branch,
+                    preserve={"config", "identity_gallery", "logs", "updates", "backups"},
+                )
+                self.root.after(
+                    0,
+                    lambda: self._on_control_update_success(branch, commit_sha, info),
+                )
+            except UpdateError as exc:
+                self.root.after(
+                    0, lambda: self._on_control_update_failure(str(exc))
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                self.root.after(
+                    0, lambda: self._on_control_update_failure(str(exc))
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_control_update_success(
+        self, branch: str, commit_sha: str, info: Dict[str, object]
+    ) -> None:
+        branch_state = self._get_branch_state(branch)
+        branch_state["last_applied"] = commit_sha
+        branch_state["last_prompted"] = commit_sha
+        self.config.setdefault("system_info", {})["last_updated"] = datetime.now().isoformat()
+        self.save_config()
+
+        backup_path = info.get("backup_path", "unknown")
+        self.log_to_terminal(
+            f"Control update applied successfully (commit {commit_sha[:7]}). Backup: {backup_path}"
+        )
+        messagebox.showinfo(
+            "Update Complete",
+            "The control stack has been updated successfully.\n"
+            f"Backup created at: {backup_path}",
+        )
+        self.update_ui_state()
+
+    def _handle_missing_release_branch(
+        self, branch: str, error_text: str, auto_triggered: bool
+    ) -> None:
+        update_cfg = self.config.setdefault("update_settings", {})
+        current_channel = update_cfg.get("release_channel", "stable")
+
+        note = (
+            "Beta release channel is unavailable; reverting to Stable and retrying."
+            if current_channel != "stable"
+            else f"Update check failed: {error_text}"
+        )
+
+        if current_channel != "stable":
+            update_cfg["release_channel"] = "stable"
+            self.save_config()
+            self.log_to_terminal(
+                f"{error_text} Switching back to stable channel and retrying."
+            )
+            if not auto_triggered:
+                messagebox.showinfo(
+                    "Update Channel",
+                    "Beta updates are unavailable right now. Switched to the Stable channel and will retry.",
+                )
+            # Retry the update check on the new channel
+            self.root.after(500, lambda: self.check_updates(auto_triggered=auto_triggered))
+        else:
+            self.log_to_terminal(note)
+            if not auto_triggered:
+                messagebox.showerror("Update Check Failed", note)
+
+    def _on_control_update_failure(self, error_message: str) -> None:
+        self.log_to_terminal(f"Control update failed: {error_message}")
+        messagebox.showerror("Update Failed", f"Control update failed:\n{error_message}")
+
+    def _apply_node_update(self, branch: str, commit_sha: str) -> None:
+        self.log_to_terminal(
+            f"Auto-updating node stack from {branch} ({commit_sha[:7]})..."
+        )
+
+        def worker():
+            try:
+                info = self.update_manager.apply_update(
+                    branch,
+                    components=["node"],
+                    preserve={"config", "identity_gallery", "logs", "updates", "backups"},
+                )
+                self.root.after(
+                    0,
+                    lambda: self._on_node_update_result(
+                        branch, commit_sha, info, error=None
+                    ),
+                )
+            except UpdateError as exc:
+                self.root.after(
+                    0,
+                    lambda: self._on_node_update_result(
+                        branch, commit_sha, None, error=str(exc)
+                    ),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                self.root.after(
+                    0,
+                    lambda: self._on_node_update_result(
+                        branch, commit_sha, None, error=str(exc)
+                    ),
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_node_update_result(
+        self,
+        branch: str,
+        commit_sha: str,
+        info: Optional[Dict[str, object]],
+        error: Optional[str],
+    ) -> None:
+        if error:
+            self.log_to_terminal(f"Node auto-update failed: {error}")
+            return
+
+        branch_state = self._get_branch_state(branch)
+        branch_state["last_node_applied"] = commit_sha
+        self.save_config()
+
+        backup_path = info.get("backup_path") if info else "unknown"
+        self.log_to_terminal(
+            f"Node stack updated automatically to commit {commit_sha[:7]}. Backup: {backup_path}"
+        )
+
+    def _get_branch_state(self, branch: str) -> Dict[str, Optional[str]]:
+        update_cfg = self.config.setdefault("update_settings", {})
+        branches = update_cfg.setdefault("branches", {})
+        state = branches.setdefault(
+            branch,
+            {
+                "last_remote": None,
+                "last_prompted": None,
+                "last_applied": None,
+                "last_node_applied": None,
+                "last_checked": None,
+            },
+        )
+        return state
+
+    @staticmethod
+    def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
     
     def show_settings(self):
         """Show settings dialog"""
@@ -948,6 +1324,13 @@ class InstallerWindow:
         self.window.geometry("700x500")
         self.window.transient(parent.root)
         self.window.grab_set()
+        menubar = self.parent.build_common_menubar(
+            self.window,
+            close_command=self.close_window,
+        )
+        actions_menu = tk.Menu(menubar, tearoff=0)
+        actions_menu.add_command(label="Start Installation", command=self.start_installation)
+        menubar.add_cascade(label="Actions", menu=actions_menu)
         
         self.setup_installer_ui()
     
@@ -1031,6 +1414,28 @@ class InstallerWindow:
                         self.window.after(0, self.log, f"Dependency installation failed with code {process.returncode}")
                         self.window.after(0, self.installation_failed)
                         return
+
+                # Ensure SSL certificates are available for update checks
+                self.window.after(0, self.log, "Ensuring SSL certificate bundle (certifi) is installed...")
+                certifi_cmd = [sys.executable, "-m", "pip", "install", "certifi"]
+                certifi_process = subprocess.Popen(
+                    certifi_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    universal_newlines=True,
+                )
+
+                if certifi_process.stdout:
+                    for line in certifi_process.stdout:
+                        self.window.after(0, self.log, line.strip())
+
+                certifi_process.wait()
+
+                if certifi_process.returncode == 0:
+                    self.window.after(0, self.log, "Certificate bundle verified.")
+                else:
+                    self.window.after(0, self.log, "Warning: Unable to install certifi automatically. SSL-secured features may fail.")
                 
                 # Mark as installed
                 self.window.after(0, lambda: self.status_label.config(text="Finalizing installation..."))
@@ -1088,6 +1493,7 @@ class StatusWindow:
         self.window.title("System Status - Automated Followspot System")
         self.window.geometry("800x600")
         self.window.resizable(True, True)
+        self.parent.build_common_menubar(self.window)
         
         # Center the window
         self.window.update_idletasks()
@@ -1506,6 +1912,13 @@ class DiagnosticsWindow:
         self.window.title(f"{self.stack_display} Stack Diagnostics")
         self.window.geometry("600x400")
         self.window.transient(parent.root)
+        menubar = self.parent.build_common_menubar(
+            self.window,
+            close_command=self.window.destroy,
+        )
+        diagnostics_menu = tk.Menu(menubar, tearoff=0)
+        diagnostics_menu.add_command(label="Run Diagnostics", command=self.run_diagnostics)
+        menubar.add_cascade(label="Diagnostics", menu=diagnostics_menu)
         
         self.setup_ui()
     
@@ -1608,6 +2021,7 @@ class AboutWindow:
         self.window.geometry("500x400")
         self.window.transient(parent.root)
         self.window.resizable(False, False)
+        self.parent.build_common_menubar(self.window)
         
         self.setup_ui()
     
@@ -1663,8 +2077,13 @@ class SettingsWindow:
         
         self.window = tk.Toplevel(parent.root)
         self.window.title("Settings")
-        self.window.geometry("640x720")
-        self.window.minsize(600, 680)
+        self.window.geometry("760x860")
+        self.window.minsize(720, 820)
+        self.parent.build_common_menubar(
+            self.window,
+            save_command=self.save_settings,
+            close_command=self.window.destroy,
+        )
         self.window.transient(parent.root)
         self.project_root = Path(__file__).resolve().parent
         self.reid_config_path = self.project_root / "config" / "reid_config.json"
@@ -1674,6 +2093,10 @@ class SettingsWindow:
             ("Neural Engine (ANE)", "CPU_AND_NE"),
             ("GPU (Metal)", "CPU_AND_GPU"),
             ("CPU Only", "CPU_ONLY"),
+        ]
+        self.channel_options = [
+            ("Stable (Main Branch)", "stable"),
+            ("Beta (Testing Branch)", "beta"),
         ]
         
         self.setup_ui()
@@ -1752,6 +2175,48 @@ class SettingsWindow:
             wraplength=420,
             foreground="#555555"
         ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
+        ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=(10, 15))
+
+        update_cfg = self.parent.config.setdefault("update_settings", {})
+        updates_frame = ttk.LabelFrame(main_frame, text="Update Settings", padding="12")
+        updates_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        updates_frame.columnconfigure(1, weight=1)
+
+        self.release_channel_var = tk.StringVar(
+            value=self._channel_value_to_display(update_cfg.get("release_channel", "stable"))
+        )
+        ttk.Label(updates_frame, text="Release channel:").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(
+            updates_frame,
+            textvariable=self.release_channel_var,
+            values=[label for label, _ in self.channel_options],
+            state="readonly",
+        ).grid(row=0, column=1, sticky="we", pady=(0, 5))
+
+        self.update_auto_check_var = tk.BooleanVar(value=update_cfg.get("auto_check", True))
+        ttk.Checkbutton(
+            updates_frame,
+            text="Automatically check for updates",
+            variable=self.update_auto_check_var,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 5))
+
+        ttk.Label(updates_frame, text="Update check interval (hours):").grid(row=2, column=0, sticky="w")
+        self.update_interval_var = tk.IntVar(value=int(update_cfg.get("check_interval_hours", 12)))
+        ttk.Spinbox(
+            updates_frame,
+            from_=1,
+            to=168,
+            textvariable=self.update_interval_var,
+            width=10,
+        ).grid(row=2, column=1, sticky="w")
+
+        self.auto_update_nodes_var = tk.BooleanVar(value=update_cfg.get("auto_update_nodes", True))
+        ttk.Checkbutton(
+            updates_frame,
+            text="Automatically update node stacks when new builds are detected",
+            variable=self.auto_update_nodes_var,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
@@ -1765,6 +2230,12 @@ class SettingsWindow:
         self.parent.config['settings']['auto_dependency_check'] = self.auto_check_var.get()
         self.parent.config['settings']['check_interval_days'] = self.interval_var.get()
         self.parent.config['settings']['debug_mode'] = self.debug_var.get()
+
+        update_cfg = self.parent.config.setdefault("update_settings", {})
+        update_cfg["release_channel"] = self._channel_display_to_value(self.release_channel_var.get())
+        update_cfg["auto_check"] = self.update_auto_check_var.get()
+        update_cfg["check_interval_hours"] = max(1, int(self.update_interval_var.get()))
+        update_cfg["auto_update_nodes"] = self.auto_update_nodes_var.get()
 
         optimization_cfg = self.reid_config.setdefault("optimization", {})
         coreml_enabled = self.coreml_enabled_var.get()
@@ -1819,6 +2290,19 @@ class SettingsWindow:
             if stored_value == normalized:
                 return display
         return self.coreml_unit_choices[0][0]
+
+    def _channel_display_to_value(self, label: str) -> str:
+        for display, value in self.channel_options:
+            if display == label:
+                return value
+        return "stable"
+
+    def _channel_value_to_display(self, value: str) -> str:
+        normalized = (value or "stable").lower()
+        for display, stored in self.channel_options:
+            if stored == normalized:
+                return display
+        return self.channel_options[0][0]
 
     def load_reid_config(self) -> dict:
         try:

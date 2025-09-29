@@ -11,7 +11,7 @@
       "version": "1.0.0",
       "install_date": "2025-09-17T11:45:02.046067",
       "dependencies_verified": false,
-      "last_dependency_check": "2025-09-26 15:55:16"
+      "last_dependency_check": "2025-09-29 16:37:00"
     },
     "node_stack": {
       "installed": false,
@@ -34,5 +34,27 @@
     "check_interval_days": 7,
     "allow_concurrent_stacks": false,
     "debug_mode": false
+  },
+  "update_settings": {
+    "release_channel": "stable",
+    "auto_check": true,
+    "check_interval_hours": 12,
+    "auto_update_nodes": false,
+    "branches": {
+      "main": {
+        "last_remote": "2c16c89e68a17b11ce6a60bf40fc200ab309c004",
+        "last_prompted": "2c16c89e68a17b11ce6a60bf40fc200ab309c004",
+        "last_applied": null,
+        "last_node_applied": null,
+        "last_checked": "2025-09-29T16:36:58.485823"
+      },
+      "testing": {
+        "last_remote": null,
+        "last_prompted": null,
+        "last_applied": null,
+        "last_node_applied": null,
+        "last_checked": null
+      }
+    }
   }
 }

@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -67,11 +68,77 @@ class IdentityConfigurator:
         # Load manifest then build UI
         self.identity_data = self._load_manifest()
         self._build_ui()
+        self._build_menubar()
         self.refresh_identity_list()
 
         # Event bindings
         self.search_var.trace_add("write", lambda *_: self.refresh_identity_list())
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _build_menubar(self) -> None:
+        menubar = tk.Menu(self.root)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="New Identity", command=self.create_identity)
+        file_menu.add_command(label="Save Manifest", command=self._save_manifest)
+        file_menu.add_command(label="Reload Manifest", command=self.refresh_identity_list)
+        file_menu.add_separator()
+        file_menu.add_command(label="Open Launcher", command=self._open_launcher)
+        file_menu.add_separator()
+        file_menu.add_command(label="Close", command=self._on_close)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(label="Import Photos", command=self.import_photos)
+        tools_menu.add_command(label="Open Gallery Folder", command=self.open_identity_folder)
+        tools_menu.add_command(label="Refresh List", command=self.refresh_identity_list)
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Open Camera Configurator",
+            command=lambda: self._launch_tool("camera_config_gui.py", "Camera Configurator"),
+        )
+        tools_menu.add_command(
+            label="Open ReID Configurator",
+            command=lambda: self._launch_tool("reid_configurator.py", "ReID Configurator"),
+        )
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(
+            label="Project README",
+            command=lambda: webbrowser.open_new_tab(
+                "https://github.com/Stavro-Purdie/Automated-Followspot-System"
+            ),
+        )
+        help_menu.add_command(
+            label="Report Issue",
+            command=lambda: webbrowser.open_new_tab(
+                "https://github.com/Stavro-Purdie/Automated-Followspot-System/issues/new/choose"
+            ),
+        )
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self.root.config(menu=menubar)
+
+    def _launch_tool(self, script_name: str, description: str) -> None:
+        script_path = self.control_dir / script_name
+        if not script_path.exists():
+            messagebox.showerror("Missing Tool", f"{description} not found at:\n{script_path}")
+            return
+        try:
+            subprocess.Popen([sys.executable, str(script_path)])
+        except Exception as exc:
+            messagebox.showerror("Launch Failed", f"Could not start {description}:\n{exc}")
+
+    def _open_launcher(self) -> None:
+        launcher_path = self.project_root / "launcher_gui.py"
+        if not launcher_path.exists():
+            messagebox.showerror("Launcher Missing", "launcher_gui.py could not be found.")
+            return
+        try:
+            subprocess.Popen([sys.executable, str(launcher_path)])
+        except Exception as exc:
+            messagebox.showerror("Launcher Error", f"Failed to open launcher:\n{exc}")
 
     # ------------------------------------------------------------------
     # Manifest helpers

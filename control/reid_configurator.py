@@ -27,10 +27,16 @@ import cv2
 import numpy as np
 import threading
 import time
+import subprocess
+import webbrowser
 from pathlib import Path
 from datetime import datetime
 import os
 import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 class ReIDConfigurator:
     """
@@ -63,10 +69,75 @@ class ReIDConfigurator:
         # Create GUI
         self.setup_styles()
         self.create_widgets()
+        self._build_menubar()
         self.load_config_to_gui()
         
         # Bind cleanup
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def _build_menubar(self) -> None:
+        menubar = tk.Menu(self.root)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Save Configuration", command=self.save_config)
+        file_menu.add_command(label="Reload Configuration", command=self.load_config_to_gui)
+        file_menu.add_separator()
+        file_menu.add_command(label="Open Launcher", command=self._open_launcher)
+        file_menu.add_command(
+            label="Open Camera Configurator",
+            command=lambda: self._launch_tool("camera_config_gui.py", "Camera Configurator"),
+        )
+        file_menu.add_separator()
+        file_menu.add_command(label="Close", command=self.on_closing)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(label="Start Camera", command=self.start_camera)
+        tools_menu.add_command(label="Stop Camera", command=self.stop_camera)
+        tools_menu.add_command(label="Toggle Camera", command=self.toggle_camera)
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Open Identity Configurator",
+            command=lambda: self._launch_tool("identity_configurator.py", "Identity Configurator"),
+        )
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(
+            label="Project README",
+            command=lambda: webbrowser.open_new_tab(
+                "https://github.com/Stavro-Purdie/Automated-Followspot-System"
+            ),
+        )
+        help_menu.add_command(
+            label="Report Issue",
+            command=lambda: webbrowser.open_new_tab(
+                "https://github.com/Stavro-Purdie/Automated-Followspot-System/issues/new/choose"
+            ),
+        )
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self.root.config(menu=menubar)
+
+    def _launch_tool(self, script_name: str, description: str) -> None:
+        tool_path = Path(__file__).resolve().parent / script_name
+        if not tool_path.exists():
+            messagebox.showerror("Missing Tool", f"{description} not found at:\n{tool_path}")
+            return
+        try:
+            subprocess.Popen([sys.executable, str(tool_path)])
+        except Exception as exc:
+            messagebox.showerror("Launch Failed", f"Could not start {description}:\n{exc}")
+
+    def _open_launcher(self) -> None:
+        launcher_path = PROJECT_ROOT / "launcher_gui.py"
+        if not launcher_path.exists():
+            messagebox.showerror("Launcher Missing", "launcher_gui.py could not be found.")
+            return
+        try:
+            subprocess.Popen([sys.executable, str(launcher_path)])
+        except Exception as exc:
+            messagebox.showerror("Launcher Error", f"Failed to open launcher:\n{exc}")
     
     def load_config(self):
         """Load front array (ReID) configuration file or create default"""

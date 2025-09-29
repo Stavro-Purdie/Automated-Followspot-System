@@ -8,6 +8,8 @@ import json
 import os
 import threading
 import time
+import subprocess
+import webbrowser
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -20,6 +22,10 @@ from PIL import Image, ImageTk
 import asyncio
 import aiohttp
 from aiortc import RTCPeerConnection, RTCSessionDescription
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 @dataclass
 class CameraConfig:
@@ -117,23 +123,68 @@ class CameraConfigGUI:
     def setup_menu(self):
         """Setup menu bar"""
         menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
-        
-        # File menu
+
         file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Load Config", command=self.load_config_dialog)
         file_menu.add_command(label="Save Config", command=self.save_config)
         file_menu.add_command(label="Save Config As...", command=self.save_config_as)
         file_menu.add_separator()
+        file_menu.add_command(label="Open Launcher", command=self._open_launcher)
+        file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.on_closing)
-        
-        # Tools menu
+        menubar.add_cascade(label="File", menu=file_menu)
+
         tools_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Tools", menu=tools_menu)
         tools_menu.add_command(label="Auto-Arrange Grid", command=self.auto_arrange_grid)
         tools_menu.add_command(label="Auto-Crop All", command=self.auto_crop_all)
         tools_menu.add_command(label="Test All Connections", command=self.test_all_connections)
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Open ReID Configurator",
+            command=lambda: self._launch_tool("reid_configurator.py", "ReID Configurator"),
+        )
+        tools_menu.add_command(
+            label="Open Identity Configurator",
+            command=lambda: self._launch_tool("identity_configurator.py", "Identity Configurator"),
+        )
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(
+            label="Project README",
+            command=lambda: webbrowser.open_new_tab(
+                "https://github.com/Stavro-Purdie/Automated-Followspot-System"
+            ),
+        )
+        help_menu.add_command(
+            label="Report Issue",
+            command=lambda: webbrowser.open_new_tab(
+                "https://github.com/Stavro-Purdie/Automated-Followspot-System/issues/new/choose"
+            ),
+        )
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self.root.config(menu=menubar)
+
+    def _launch_tool(self, script_name: str, description: str) -> None:
+        tool_path = Path(__file__).resolve().parent / script_name
+        if not tool_path.exists():
+            messagebox.showerror("Missing Tool", f"{description} not found at:\n{tool_path}")
+            return
+        try:
+            subprocess.Popen([sys.executable, str(tool_path)])
+        except Exception as exc:
+            messagebox.showerror("Launch Failed", f"Could not start {description}:\n{exc}")
+
+    def _open_launcher(self) -> None:
+        launcher_path = Path(__file__).resolve().parent.parent / "launcher_gui.py"
+        if not launcher_path.exists():
+            messagebox.showerror("Launcher Missing", "launcher_gui.py could not be found.")
+            return
+        try:
+            subprocess.Popen([sys.executable, str(launcher_path)])
+        except Exception as exc:
+            messagebox.showerror("Launcher Error", f"Failed to open launcher:\n{exc}")
         
     def setup_camera_controls(self, parent):
         """Setup camera control panel"""
@@ -651,7 +702,7 @@ Auto Crop: {camera.auto_crop}"""
                         # Update label
                         label = self.camera_preview_labels[camera_id]
                         label.configure(image=photo, text="")
-                        label.image = photo  # Keep a reference
+                        label.image = photo  # type: ignore[attr-defined]  # Keep a reference
                         
             except Exception as e:
                 print(f"Error updating preview: {e}")

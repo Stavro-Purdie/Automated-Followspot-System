@@ -14,7 +14,14 @@ import logging
 from typing import Optional, List, Dict, Tuple, Any
 import importlib
 import json
+import sys
+import subprocess
+import webbrowser
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
     # Data fusion for IR + ReID
@@ -123,14 +130,83 @@ class VideoDisplayGUI:
     def setup_menu(self):
         """Setup the menu bar"""
         menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
-        
-        # Help menu
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Save Screenshot", command=self.save_screenshot)
+        file_menu.add_command(label="Reset View", command=self.reset_view)
+        file_menu.add_separator()
+        file_menu.add_command(label="Open Launcher", command=self._open_launcher)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.on_closing)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        view_menu = tk.Menu(menubar, tearoff=0)
+        view_menu.add_command(label="Start Display", command=self.start_display)
+        view_menu.add_command(label="Stop Display", command=self.stop_display)
+        view_menu.add_separator()
+        view_menu.add_checkbutton(label="Show Coordinates", variable=self.show_coordinates)
+        view_menu.add_checkbutton(label="Show Grid", variable=self.show_grid)
+        view_menu.add_checkbutton(label="Show IR Beacons", variable=self.show_beacons)
+        view_menu.add_checkbutton(label="Show Fused Targets", variable=self.show_fused_overlay)
+        view_menu.add_checkbutton(label="Show Front Overlay", variable=self.show_reid_overlay)
+        menubar.add_cascade(label="View", menu=view_menu)
+
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(
+            label="Open Camera Configurator",
+            command=lambda: self._launch_tool("camera_config_gui.py", "Camera Configurator"),
+        )
+        tools_menu.add_command(
+            label="Open ReID Configurator",
+            command=lambda: self._launch_tool("reid_configurator.py", "ReID Configurator"),
+        )
+        tools_menu.add_command(
+            label="Open Identity Configurator",
+            command=lambda: self._launch_tool("identity_configurator.py", "Identity Configurator"),
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Diagnostics Panel", command=self.show_help_window)
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
         help_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="Keyboard Shortcuts", command=self.show_help_window)
-        help_menu.add_separator()
         help_menu.add_command(label="About", command=self.show_about)
+        help_menu.add_separator()
+        help_menu.add_command(
+            label="Project README",
+            command=lambda: webbrowser.open_new_tab(
+                "https://github.com/Stavro-Purdie/Automated-Followspot-System"
+            ),
+        )
+        help_menu.add_command(
+            label="Report Issue",
+            command=lambda: webbrowser.open_new_tab(
+                "https://github.com/Stavro-Purdie/Automated-Followspot-System/issues/new/choose"
+            ),
+        )
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self.root.config(menu=menubar)
+
+    def _launch_tool(self, script_name: str, description: str) -> None:
+        script_path = Path(__file__).resolve().parent / script_name
+        if not script_path.exists():
+            messagebox.showerror("Missing Tool", f"{description} not found at:\n{script_path}")
+            return
+        try:
+            subprocess.Popen([sys.executable, str(script_path)])
+        except Exception as exc:
+            messagebox.showerror("Launch Failed", f"Could not open {description}:\n{exc}")
+
+    def _open_launcher(self) -> None:
+        launcher_path = PROJECT_ROOT / "launcher_gui.py"
+        if not launcher_path.exists():
+            messagebox.showerror("Launcher Missing", "launcher_gui.py could not be found.")
+            return
+        try:
+            subprocess.Popen([sys.executable, str(launcher_path)])
+        except Exception as exc:
+            messagebox.showerror("Launcher Error", f"Failed to open launcher:\n{exc}")
         
     def setup_ui(self):
         """Setup the user interface"""
