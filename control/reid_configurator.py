@@ -1,23 +1,8 @@
 #!/usr/bin/env python3
 """
-ReID Camera Configurator for Automated Followspot System
-Handle            "camera": {
-                "front_camera": {
-                    "device_id": 0,
-                    "position": [0, 0, 2.5],
-                    "angle": 0,
-                    "fov": 60,
-                    "focal_length": 1000,
-                    "resolution": [1920, 1080],
-                    "calibration_matrix": [
-                        [1000, 0, 960],
-                        [0, 1000, 540], 
-                        [0, 0, 1]
-                    ],
-                    "distortion_coeffs": [0, 0, 0, 0, 0]
-                }
-            }, of front truss camera, measurements, and ReID system parameters
-Part of the Control Stack
+Guide operators through tuning the ReID camera and stage measurements.
+This window is where you pick camera devices, tweak calibration points, and keep the front
+array's metrics in sync with reality.
 """
 
 import tkinter as tk
@@ -39,9 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 class ReIDConfigurator:
-    """
-    Comprehensive configurator for ReID camera system and stage measurements
-    """
+    """All-in-one toolkit for managing the front ReID camera pipeline."""
     
     def __init__(self):
         self.root = tk.Tk()
@@ -76,6 +59,7 @@ class ReIDConfigurator:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def _build_menubar(self) -> None:
+        """Give operators shortcuts to hop between companion tools."""
         menubar = tk.Menu(self.root)
 
         file_menu = tk.Menu(menubar, tearoff=0)

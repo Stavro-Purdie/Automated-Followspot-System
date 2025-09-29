@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""
-Optimized Person Re-Identification Processor
-Designed for 15fps @ 1080p real-time performance
+"""Real-time ReID engine that keeps pace with a live followspot show.
+
+This module juggles model loading, identity gallery lookups, and platform quirks
+while trying to stay under ~55 ms per frame.
 """
 
 import cv2
@@ -90,7 +91,7 @@ class OptimizedReIDProcessor:
             raise
     
     def _setup_device(self) -> torch.device:
-        """Setup optimal device (CUDA/CPU)"""
+        """Choose the best compute device available on this machine."""
         device_pref = self.config["models"]["detector"].get("device", "auto")
         if device_pref == "auto":
             if torch.cuda.is_available():

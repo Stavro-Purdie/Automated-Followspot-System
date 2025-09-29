@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
+"""
+Operator-facing dashboard for the live multi-camera followspot feed.
 
-# Video Display GUI for Multi-Camera System
-# Displays composite video feed with IR beacon overlay and coordinate system
+This window is central to the system. It streams the stitched video
+wall, layers tracking overlays, and gives the operator quick controls for
+screenshots, thresholds, and diagnostic panels.
+"""
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -52,7 +56,7 @@ except Exception:
 logger = logging.getLogger("video_display_gui")
 
 class VideoDisplayGUI:
-    """Main GUI for displaying video feed with IR beacon overlay"""
+    """Handles live playback, overlays, and operator controls in one place."""
 
     def __init__(self, camera_manager, reid_runner: Optional[Any] = None):
         self.camera_manager = camera_manager
@@ -128,7 +132,7 @@ class VideoDisplayGUI:
         self.setup_bindings()
         
     def setup_menu(self):
-        """Setup the menu bar"""
+        """Create a friendly menu for hopping between tools and toggling overlays."""
         menubar = tk.Menu(self.root)
 
         file_menu = tk.Menu(menubar, tearoff=0)
@@ -209,7 +213,7 @@ class VideoDisplayGUI:
             messagebox.showerror("Launcher Error", f"Failed to open launcher:\n{exc}")
         
     def setup_ui(self):
-        """Setup the user interface"""
+        """Assemble the main layout: controls on the left, video wall on the right."""
         # Main container
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
@@ -230,7 +234,7 @@ class VideoDisplayGUI:
         self.setup_status_bar(main_frame)
         
     def setup_control_panel(self, parent):
-        """Setup the control panel with settings and statistics"""
+        """Layout the tactile controls operators reach for during a show."""
         control_frame = ttk.LabelFrame(parent, text="Controls", padding="10")
         control_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
 

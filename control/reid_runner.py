@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-Front Array ReID Runner
-Reads network camera from front_array_config.json, runs ReID processor and person tracker,
-and publishes track states for fusion.
+Launch the front-array ReID pipeline and stream tracks to the fusion layer.
 """
 
 import argparse
@@ -156,6 +154,7 @@ def run_smoke_test(
 
 
 class ReIDRunner:
+    """Connects to the front camera, runs ReID, and exposes track snapshots."""
     def __init__(self, config_path: str = str(Path(__file__).parent.parent / "config" / "front_array_config.json")):
         self.config_path = config_path
         self.config = self._load_config()
@@ -181,6 +180,7 @@ class ReIDRunner:
         self.last_detections = []
 
     def _load_config(self) -> Dict[str, Any]:
+        """Read the front array configuration file from disk."""
         with open(self.config_path, 'r') as f:
             return json.load(f)
 

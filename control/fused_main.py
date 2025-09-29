@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""
-Fused control orchestrator
-Runs roof IR beacon tracker and front ReID tracker together, fuses outputs,
-and provides a single control loop.
+"""Tie the roof IR rig and the front ReID camera into one feedback loop.
+
+This script is often run by engineers while tuning the fusion pipeline
 """
 
 import asyncio
@@ -28,6 +27,7 @@ logger = logging.getLogger("fused_main")
 
 
 class FusedController:
+    """Owns the lifecycle of the IR array, the ReID runner, and the fusion engine."""
     def __init__(self,
                  roof_config: str = str(Path(__file__).parent.parent / "config" / "roof_array_config.json"),
                  front_config: str = str(Path(__file__).parent.parent / "config" / "front_array_config.json")):
@@ -44,6 +44,7 @@ class FusedController:
         self.loop_running = False
 
     async def start(self):
+        """Kick off camera connections and the ReID runner before entering the loop."""
         # Start roof connections asynchronously (use existing CLI helpers)
         logger.info("Starting roof camera connections...")
         # Connect cameras
@@ -61,6 +62,7 @@ class FusedController:
         self.loop_running = True
 
     async def _connect_camera(self, cfg):
+        """Wrapper around the aggregator's connect helper with friendlier logging."""
         from camera_aggregator import connect_to_camera
         try:
             await connect_to_camera(cfg, self.roof_manager)

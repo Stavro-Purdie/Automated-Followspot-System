@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 GUI Launcher for Automated Followspot System
-Provides graphical interface for installation, configuration, and management of Control and Node stacks.
+This launcher wraps every maintenance task—installing updates, opening the
+control suite, peeking at logs—into one approachable window.
 """
 
 import tkinter as tk
@@ -24,6 +25,7 @@ from typing import Callable, Dict, Optional
 from update_manager import UpdateManager, UpdateError, CommitInfo
 
 class LauncherGUI:
+    """High-level coordinator for the launcher window and its helper dialogs."""
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Automated Followspot System Launcher")

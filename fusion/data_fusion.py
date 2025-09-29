@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Data Fusion Module for combining ReID tracking with IR beacon tracking
-Merges person tracking with existing IR beacon system for complete 3D coordinates
+Data fusion helpers for blending vision tracking with beacon telemetry.
+
+This file glues together two very different data sources, the computer-vision
+ReID pipeline that recognises people and the hardware IR beacon network that is
+great at spotting precise stage positions.
 """
 
 import numpy as np
@@ -15,14 +18,14 @@ from enum import Enum
 logger = logging.getLogger("data_fusion")
 
 class TrackingSource(Enum):
-    """Source of tracking data"""
+    """Labels that explain where a position estimate was born."""
     IR_BEACON = "ir_beacon"
     REID_CAMERA = "reid_camera"
     FUSED = "fused"
 
 @dataclass
 class Position3D:
-    """3D position with metadata"""
+    """Describes a point in space and remembers how trustworthy it is."""
     x: float
     y: float
     z: float
@@ -31,12 +34,12 @@ class Position3D:
     source: TrackingSource
     
     def distance_to(self, other: 'Position3D') -> float:
-        """Calculate 3D distance to another position"""
+        """Quick helper for measuring person-to-person separation in metres."""
         return np.sqrt((self.x - other.x)**2 + (self.y - other.y)**2 + (self.z - other.z)**2)
 
 @dataclass
 class Person:
-    """Unified person representation"""
+    """Snapshot of a performer that stitches together camera and beacon clues."""
     id: int
     reid_track_id: Optional[int]
     ir_beacon_id: Optional[int]
@@ -48,16 +51,17 @@ class Person:
     fusion_confidence: float
 
 class DataFusion:
-    """
-    Fuses ReID person tracking with IR beacon tracking
-    """
+    """Orchestrates the reconciliation between camera tracks and IR beacons."""
     
     def __init__(self, config: Dict):
-        """
-        Initialize data fusion system
-        
+        """Load knobs from config and set the stage for fusion to run.
+
         Args:
-            config: Reid configuration dictionary
+            config: Reid configuration dictionary. We expect this to contain a
+                ``data_fusion`` section (tuning thresholds and blending weights)
+                and ``stage_geometry`` (how big the playable area is). Passing
+                the whole config keeps the call-site simple and mirrors how the
+                rest of the control stack loads settings.
         """
         self.fusion_config = config["data_fusion"]
         self.stage_config = config["stage_geometry"]
@@ -70,6 +74,9 @@ class DataFusion:
         self.fusion_memory_time = self.fusion_config["fusion_memory_time"]
         
         # Stage bounds for validation
+        # A friendly guard-rail that stops us from reporting ghosts far outside
+        # the actual stage. The values are mirrored around the centre of the
+        # stage so we can validate positions with one compact helper later on.
         self.stage_bounds = {
             "x_min": -self.stage_config["width"] / 2,
             "x_max": self.stage_config["width"] / 2,
@@ -99,18 +106,27 @@ class DataFusion:
         
         logger.info("DataFusion initialized")
     
-    def update_fusion(self, reid_tracks: Dict[int, Dict], ir_beacons: List[Dict], 
-                     current_timestamp: float) -> Dict[int, Person]:
-        """
-        Update fused person tracking with new ReID and IR data
-        
+    def update_fusion(self, reid_tracks: Dict[int, Dict], ir_beacons: List[Dict],
+                      current_timestamp: float) -> Dict[int, Person]:
+        """Blend the latest ReID and IR observations into unified person records.
+
+        The flow looks like this:
+
+        1. Normalise both input streams into the shared :class:`Position3D`
+           representation so downstream code does not worry about origin format.
+        2. Pair up ReID tracks with nearby beacons (when available) using a
+           simple distance matrix. Think of this as speed-dating for sensors.
+        3. Update or create :class:`Person` objects with fused coordinates,
+           keeping velocity estimates fresh and pruning stale entries.
+
         Args:
-            reid_tracks: Dictionary of ReID track data
-            ir_beacons: List of IR beacon detections with positions
-            current_timestamp: Current timestamp
-            
+            reid_tracks: Raw ReID tracker output keyed by track id.
+            ir_beacons: List of IR beacon detections in stage space.
+            current_timestamp: Wall-clock timestamp used to age the tracks.
+
         Returns:
-            Dictionary of fused person data
+            Dictionary ``person_id -> Person`` describing everyone we currently
+            believe is on stage.
         """
         start_time = time.time()
         
@@ -135,9 +151,16 @@ class DataFusion:
         
         return dict(self.persons)
     
-    def _extract_reid_positions(self, reid_tracks: Dict[int, Dict], 
-                               timestamp: float) -> Dict[int, Position3D]:
-        """Extract 3D positions from ReID tracks"""
+    def _extract_reid_positions(self, reid_tracks: Dict[int, Dict],
+                                timestamp: float) -> Dict[int, Position3D]:
+        """Translate raw ReID tracker output into stage-aware positions.
+
+        The ReID subsystem reports pixel-space positions and a confidence score
+        for each active track. We convert those into stage coordinates (meters)
+        via :meth:`_camera_to_stage_coordinates` so they can be compared against
+        the IR data. Tracks flagged as inactive or missing positional history are
+        skipped gracefully.
+        """
         positions = {}
         
         for track_id, track in reid_tracks.items():
@@ -161,9 +184,16 @@ class DataFusion:
         
         return positions
     
-    def _extract_ir_positions(self, ir_beacons: List[Dict], 
-                             timestamp: float) -> Dict[int, Position3D]:
-        """Extract 3D positions from IR beacon data"""
+    def _extract_ir_positions(self, ir_beacons: List[Dict],
+                              timestamp: float) -> Dict[int, Position3D]:
+        """Wrap IR telemetry in :class:`Position3D` objects for consistency.
+
+        IR beacons already speak the stage's language (``x`` and ``y`` in
+        metres), but they usually cannot measure height. We keep things simple
+        by borrowing a sensible default height unless the beacon payload says
+        otherwise. Each beacon is tagged with the acquisition timestamp so we
+        can reason about staleness later while pruning tracks.
+        """
         positions = {}
         
         for i, beacon in enumerate(ir_beacons):
@@ -182,9 +212,12 @@ class DataFusion:
         return positions
     
     def _camera_to_stage_coordinates(self, camera_pos: np.ndarray) -> np.ndarray:
-        """
-        Convert camera coordinates to stage coordinates
-        This would need proper camera calibration in a real system
+        """Apply a rough-and-ready mapping from camera pixels to stage metres.
+
+        This placeholder keeps the rest of the fusion logic keyboard-ready while
+        the calibration pipeline evolves. It scales pixel positions into metres
+        and clamps height to a realistic human range so the followspot does not
+        chase imaginary people floating above the rigging.
         """
         # Simplified conversion - in reality this needs camera calibration matrix
         # For now, assume camera is looking down at stage center
@@ -194,20 +227,27 @@ class DataFusion:
         
         return np.array([stage_x, stage_y, stage_z])
     
-    def _match_reid_to_ir(self, reid_positions: Dict[int, Position3D], 
-                         ir_positions: Dict[int, Position3D]) -> List[Tuple[int, int]]:
-        """
-        Match ReID tracks to IR beacons based on position proximity
-        
+    def _match_reid_to_ir(self, reid_positions: Dict[int, Position3D],
+                          ir_positions: Dict[int, Position3D]) -> List[Tuple[int, int]]:
+        """Pair up ReID tracks with IR beacons by looking for the closest dance partner.
+
+        We build a tiny distance matrix of X/Y deltas, then greedily pick the
+        smallest remaining pair until everyone is either matched or outside the
+        configured proximity threshold. It is deliberately simple so we can
+        debug by eye—when this needs to scale to dozens of performers we can
+        swap in the Hungarian algorithm without touching the rest of the code.
+
         Returns:
-            List of (reid_track_id, ir_beacon_id) matches
+            A list of ``(reid_track_id, ir_beacon_id)`` tuples describing the
+            best matches seen in this frame.
         """
         matches = []
         
         if not reid_positions or not ir_positions:
             return matches
         
-        # Build distance matrix
+        # Build distance matrix so we can compare every ReID track against every
+        # beacon in one go. This remains tiny in the current theatre setup.
         reid_ids = list(reid_positions.keys())
         ir_ids = list(ir_positions.keys())
         
@@ -259,10 +299,20 @@ class DataFusion:
         
         return matches
     
-    def _update_persons(self, reid_positions: Dict[int, Position3D], 
-                       ir_positions: Dict[int, Position3D],
-                       matches: List[Tuple[int, int]], timestamp: float):
-        """Update fused person data"""
+    def _update_persons(self, reid_positions: Dict[int, Position3D],
+                        ir_positions: Dict[int, Position3D],
+                        matches: List[Tuple[int, int]], timestamp: float):
+        """Refresh :class:`Person` objects with the latest sensor inputs.
+
+        This routine updates three buckets:
+
+        * "Fused" people where both systems agree on who is who.
+        * ReID-only tracks still waiting for an IR confirmation.
+        * IR-only hits that have yet to be associated with a visual identity.
+
+        Keeping the logic in one place stops subtle drift bugs where one bucket
+        forgets to update velocity or timestamps.
+        """
         
         # Update matched persons (fused data)
         matched_reid_ids = set()
@@ -283,7 +333,7 @@ class DataFusion:
             fused_y = (reid_pos.y * self.reid_weight + ir_pos.y * self.ir_weight) / (self.reid_weight + self.ir_weight)
             fused_z = reid_pos.z  # ReID provides Z, IR typically doesn't
             
-            # Combined confidence
+            # Combined confidence gives us a legible number to sort and filter on
             fusion_confidence = (reid_pos.confidence * self.reid_weight + 
                                ir_pos.confidence * self.ir_weight) / (self.reid_weight + self.ir_weight)
             
@@ -342,7 +392,13 @@ class DataFusion:
                 person.last_updated = timestamp
     
     def _find_or_create_person(self, reid_id: Optional[int], ir_id: Optional[int]) -> Person:
-        """Find existing person or create new one"""
+        """Reuse an existing :class:`Person` if possible or spin up a fresh one.
+
+        Re-using objects preserves velocity and confidence so performers do not
+        jitter between identities when sensors briefly disagree. The lookup is
+        intentionally linear—our performer counts are tiny and this keeps the
+        code easy to reason about.
+        """
         
         # Look for existing person with these IDs
         for person in self.persons.values():
@@ -355,7 +411,8 @@ class DataFusion:
                     person.ir_beacon_id = ir_id
                 return person
         
-        # Create new person
+    # Create new person with placeholders so the caller can populate the
+    # meaningful data in one predictable place.
         person_id = self.next_person_id
         self.next_person_id += 1
         
@@ -375,7 +432,7 @@ class DataFusion:
         return person
     
     def _cleanup_old_persons(self, current_timestamp: float):
-        """Remove persons not updated recently"""
+        """Prune tracks that have gone stale to avoid following ghosts."""
         persons_to_remove = []
         
         for person_id, person in self.persons.items():
@@ -387,7 +444,7 @@ class DataFusion:
             logger.debug(f"Removed old person {person_id}")
     
     def _update_fusion_stats(self):
-        """Update fusion statistics"""
+        """Keep counters up to date for dashboards and debugging overlays."""
         self.fusion_stats["total_fusions"] = len(self.persons)
         
         reid_only = sum(1 for p in self.persons.values() 
@@ -402,7 +459,12 @@ class DataFusion:
         self.fusion_stats["fused_persons"] = fused
     
     def get_person_positions(self) -> List[Dict]:
-        """Get all person positions in standard format for followspot system"""
+        """Return a tidy list of people ready to feed the followspot logic.
+
+        We validate positions against stage bounds to avoid reporting junk data
+        and sort by confidence so callers can trivially pick the most reliable
+        performer when they only need one spotlight.
+        """
         positions = []
         
         for person in self.persons.values():
@@ -428,29 +490,32 @@ class DataFusion:
         return positions
     
     def _is_position_valid(self, position: Position3D) -> bool:
-        """Check if position is within valid stage bounds"""
+        """Double-check a position lives within the expected stage envelope."""
         return (self.stage_bounds["x_min"] <= position.x <= self.stage_bounds["x_max"] and
                 self.stage_bounds["y_min"] <= position.y <= self.stage_bounds["y_max"] and
                 self.stage_bounds["z_min"] <= position.z <= self.stage_bounds["z_max"])
     
     def get_fusion_stats(self) -> Dict:
-        """Get fusion statistics"""
+        """Expose our running counters for UI panels and logging."""
         return dict(self.fusion_stats)
     
     def calibrate_coordinate_systems(self, calibration_points: List[Dict]):
+        """Placeholder for the future calibration workflow.
+
+        In production we will map camera pixels to stage metres using measured
+        correspondences. For now we log the intent so integrators can see when
+        calibration would have been triggered.
         """
-        Calibrate coordinate system mapping between cameras and IR system
-        This would be called during system setup
-        """
-        # This would implement camera calibration in a real system
-        # For now, just log the calibration request
+        # This would implement camera calibration in a real system. Leaving a
+        # breadcrumb here helps me understand why nothing happens
+        # yet instead of assuming the call silently failed.
         logger.info(f"Coordinate system calibration requested with {len(calibration_points)} points")
         pass
 
 
 # Test function
 def test_data_fusion():
-    """Test data fusion functionality"""
+    """Quick smoke-test that narrates how the fusion logic behaves."""
     print("🧪 Testing Data Fusion...")
     
     # Load config

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""
-Person Tracking Module for temporal person association
-Handles person Re-identification and tracking across frames
+"""Keep tabs on performers by blending ReID signals with geometry and timing.
+
+This tracker is the glue between raw detections and the fused followspot view.
 """
 
 import numpy as np
@@ -15,16 +15,15 @@ import json
 logger = logging.getLogger("person_tracker")
 
 class PersonTracker:
-    """
-    Tracks persons across frames using ReID features and geometric constraints
-    """
+    """Tracks performers frame-to-frame using appearance, position, and timing."""
     
     def __init__(self, config: Dict):
-        """
-        Initialize person tracker with configuration
-        
+        """Load thresholds and counters from config so tracking feels consistent.
+
         Args:
-            config: Reid configuration dictionary
+            config: Full ReID configuration dictionary (we cherry-pick the
+                ``tracking`` and ``performance`` sections). Passing the whole
+                blob keeps the call-site tidy and mirrors the rest of the stack.
         """
         self.tracking_config = config["tracking"]
         self.performance_config = config["performance"]
@@ -55,19 +54,18 @@ class PersonTracker:
         
         logger.info("PersonTracker initialized")
     
-    def update_tracks(self, detections: List[Dict], reid_features: np.ndarray, 
-                     depths: List[float], frame_timestamp: float) -> Dict[int, Dict]:
-        """
-        Update person tracks with new detections
-        
+    def update_tracks(self, detections: List[Dict], reid_features: np.ndarray,
+                      depths: List[float], frame_timestamp: float) -> Dict[int, Dict]:
+        """Main entry point: reconcile fresh detections with the existing roster.
+
         Args:
-            detections: List of person detection dictionaries
-            reid_features: ReID features for each detection (N x feature_dim)
-            depths: Estimated depths for each detection
-            frame_timestamp: Current frame timestamp
-            
+            detections: Output from the detector describing bounding boxes etc.
+            reid_features: Appearance embeddings aligned with ``detections``.
+            depths: Estimated depth for each detection (from stereo or monocular).
+            frame_timestamp: Timestamp for the current frame.
+
         Returns:
-            Dictionary of active tracks with their data
+            ``track_id -> track_data`` mapping suitable for downstream fusion.
         """
         start_time = time.time()
         self.frame_count += 1
@@ -107,13 +105,18 @@ class PersonTracker:
         
         return dict(self.tracks)
     
-    def _match_detections_to_tracks(self, detections: List[Dict], reid_features: np.ndarray,
-                                  depths: List[float], frame_timestamp: float) -> Tuple[List[Tuple], List[int], List[int]]:
-        """
-        Match current detections to existing tracks using ReID features and geometry
-        
+    def _match_detections_to_tracks(
+        self,
+        detections: List[Dict],
+        reid_features: np.ndarray,
+        depths: List[float],
+        frame_timestamp: float,
+    ) -> Tuple[List[Tuple], List[int], List[int]]:
+        """Pair detections with existing tracks by weighing look, location, and timing.
+
         Returns:
-            Tuple of (matched_pairs, unmatched_detection_indices, unmatched_track_ids)
+            ``(matched_pairs, unmatched_detection_indices, unmatched_track_ids)``
+            so the caller knows which tracks to update, spawn, or retire.
         """
         if not detections or len(self.tracks) == 0:
             return [], list(range(len(detections))), []

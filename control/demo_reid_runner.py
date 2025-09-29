@@ -41,6 +41,7 @@ class DemoReIDRunner:
         self._overlay_frame: np.ndarray | None = None
 
     def _init_actors(self) -> None:
+        """Populate the virtual stage with a handful of performers."""
         actor_count = self._rng.randint(1, 3)
         for actor_id in range(1, actor_count + 1):
             stage_x = self._rng.uniform(-self.stage_width / 3, self.stage_width / 3)
@@ -68,6 +69,7 @@ class DemoReIDRunner:
         self.running = False
 
     def read_and_process(self) -> Dict[int, Dict[str, Any]]:
+        """Update simulated actors and return dummy track records."""
         if not self.running:
             return {}
 

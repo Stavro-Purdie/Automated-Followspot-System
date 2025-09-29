@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+"""Synthetic camera feeds used for demos, rehearsals, and test rigs.
 
-# Demo Mode for Multi-Camera System
-# Generates simulated video feeds with IR beacons for demonstration purposes.
+This script generates  IR beacons that bounce around so the rest of the
+pipeline can be tested with no hardware connected.
+"""
 
 import cv2
 import numpy as np
@@ -15,7 +17,7 @@ from typing import Dict, List, Tuple, Optional
 logger = logging.getLogger("demo_mode")
 
 class DemoVideoGenerator:
-    """Generates simulated video feeds with moving IR beacons"""
+    """Build a stream of frames so operators can practise without cameras."""
     
     def __init__(self, width: int = 640, height: int = 480):
         self.width = width

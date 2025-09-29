@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+"""Interactive control room for wrangling every camera in the rig.
 
-# Multi-Camera Configuration GUI
-# Configures multiple cameras for the automated followspot system.
+This GUI is the operator's playground: they can tune crops, rearrange the grid,
+and sanity-check WebRTC connections without touching JSON by hand.
+"""
 
 import sys
 import json
@@ -29,7 +31,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 @dataclass
 class CameraConfig:
-    """Configuration for a single camera"""
+    """Describes one camera tile exactly how the UI expects to see it."""
     server_url: str
     crop_rect: Tuple[int, int, int, int]  # (x, y, width, height)
     position: Tuple[int, int]  # (grid_x, grid_y) position in final layout
@@ -40,7 +42,7 @@ class CameraConfig:
 
 @dataclass
 class GridConfig:
-    """Grid layout configuration"""
+    """Captures the high-level grid arrangement the operator requested."""
     cameras_per_row: int
     total_cameras: int
     cell_width: int
@@ -48,6 +50,7 @@ class GridConfig:
     auto_arrange: bool = True
 
 class CameraConfigGUI:
+    """High-level controller that binds together networking, previews and UI."""
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Multi-Camera Configuration")
@@ -82,16 +85,16 @@ class CameraConfigGUI:
         self.preview_thread.start()
         
     def setup_gui(self):
-        """Setup the main GUI layout"""
+        """Lay out the two-panel interface (controls on the left, previews on the right)."""
         # Main container
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Left panel - Camera list and controls
+    # Left panel - Camera list and controls. This is where operators tweak knobs.
         left_frame = ttk.Frame(main_frame)
         left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         
-        # Right panel - Preview grid
+    # Right panel - Preview grid showing live thumbnails for spatial context.
         right_frame = ttk.Frame(main_frame)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         
@@ -121,7 +124,7 @@ class CameraConfigGUI:
         print(f"GUI refreshed with {len(self.cameras)} cameras from configuration")
         
     def setup_menu(self):
-        """Setup menu bar"""
+        """Build the menubar that shuttles operators between sister tools."""
         menubar = tk.Menu(self.root)
 
         file_menu = tk.Menu(menubar, tearoff=0)

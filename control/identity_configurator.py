@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Standalone Identity Configurator for the Automated Followspot System.
+"""Curates the performer roster—with photos, metadata, and quick edits.
 
-Provides a richer interface for managing performer identities, including
-metadata editing, photo import/removal, and large image previews backed by the
-shared identity_gallery/manifest.json structure.
+The identity configurator gives creative teams a comfortable UI for keeping the
+gallery in sync: update costume codes, drop in new headshots, or retire old
+performers without hand-editing JSON.
 """
 
 from __future__ import annotations
@@ -76,6 +76,7 @@ class IdentityConfigurator:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_menubar(self) -> None:
+        """Wire up quick navigation between identity tasks and sister tools."""
         menubar = tk.Menu(self.root)
 
         file_menu = tk.Menu(menubar, tearoff=0)

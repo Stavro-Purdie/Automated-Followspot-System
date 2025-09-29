@@ -1,10 +1,8 @@
-'''
-Utility helpers for checking and applying project updates.
+"""A friendly concierge for checking and applying project updates.
 
-This module fetches branch heads from GitHub, determines whether a newer
-revision exists, and downloads branch archives for installation while
-preserving user-state directories (such as configuration and galleries).
-'''
+It talks to GitHub on the user's behalf, figures out whether a fresher build is
+available, downloads it, and swaps files while preserving local state.
+"""
 
 from __future__ import annotations
 
@@ -40,7 +38,7 @@ class UpdateError(Exception):
 
 
 class UpdateManager:
-    """Coordinate remote update checks and local application."""
+    """Coordinate remote update checks, downloads, backups, and installs."""
 
     _GITHUB_API = "https://api.github.com/repos/{owner}/{repo}/commits/{ref}"
     _GITHUB_ARCHIVE = "https://github.com/{owner}/{repo}/archive/refs/heads/{ref}.zip"
@@ -57,6 +55,7 @@ class UpdateManager:
 
     @staticmethod
     def channel_to_branch(channel: str) -> str:
+        """Translate a launcher channel selection into a Git branch name."""
         channel = (channel or "stable").lower()
         return "main" if channel == "stable" else "testing"
 
@@ -65,7 +64,7 @@ class UpdateManager:
         branch: str,
         last_known_commit: Optional[str] = None,
     ) -> Dict[str, Optional[object]]:
-        """Return metadata describing whether an update is available."""
+        """Ask GitHub whether there's a newer build than the one we're running."""
 
         latest = self._fetch_latest_commit(branch)
         current_commit = self._get_local_commit() or last_known_commit
@@ -82,6 +81,7 @@ class UpdateManager:
     # ---------------------------------------------------------------------
     # Remote helpers
     def _fetch_latest_commit(self, branch: str) -> CommitInfo:
+        """Pull the tip commit for ``branch`` and narrate errors in plain English."""
         url = self._GITHUB_API.format(owner=self.owner, repo=self.repo, ref=branch)
         request = urllib.request.Request(
             url, headers={"User-Agent": "Automated-Followspot-Updater"}
@@ -112,6 +112,7 @@ class UpdateManager:
         )
 
     def _get_local_commit(self) -> Optional[str]:
+        """Return the current git SHA if the project lives in a Git checkout."""
         try:
             result = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"],
@@ -172,6 +173,7 @@ class UpdateManager:
             shutil.rmtree(archive_root, ignore_errors=True)
 
     def _download_and_extract(self, branch: str) -> Path:
+        """Grab the zip archive for ``branch`` and expand it into a temp folder."""
         archive_url = self._GITHUB_ARCHIVE.format(
             owner=self.owner, repo=self.repo, ref=branch
         )
@@ -206,6 +208,7 @@ class UpdateManager:
     # ------------------------------------------------------------------
     # Networking helpers
     def _open_url(self, request: urllib.request.Request, *, timeout: int):
+        """Open a URL with a helpful retry that explains certificate errors."""
         try:
             return urllib.request.urlopen(request, timeout=timeout)
         except urllib.error.URLError as exc:
@@ -237,6 +240,7 @@ class UpdateManager:
 
     @staticmethod
     def _is_certificate_error(error: urllib.error.URLError) -> bool:
+        """Detect whether the given URLError was caused by certificate issues."""
         reason = getattr(error, "reason", None)
         if isinstance(reason, ssl.SSLError):
             return True
@@ -244,6 +248,7 @@ class UpdateManager:
         return "CERTIFICATE_VERIFY_FAILED" in message or "certificate verify failed" in message.lower()
 
     def _get_certifi_context(self) -> Optional[ssl.SSLContext]:
+        """Lazily build and cache an SSL context backed by certifi if installed."""
         if self._certifi_context is not None:
             return self._certifi_context
 
@@ -257,6 +262,7 @@ class UpdateManager:
         return self._certifi_context
 
     def _find_archive_root(self, extracted_dir: Path, branch: str) -> Path:
+        """Locate the actual project directory inside GitHub's zip wrapper."""
         prefix = f"{self.repo}-{branch}"
         for child in extracted_dir.iterdir():
             if child.is_dir() and child.name.startswith(prefix):
@@ -264,12 +270,14 @@ class UpdateManager:
         raise UpdateError("Unable to locate extracted archive root")
 
     def _create_backup_dir(self, branch: str) -> Path:
+        """Create a timestamped backup directory for files we're about to replace."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_dir = self.backup_dir / f"{branch}_{timestamp}"
         backup_dir.mkdir(parents=True, exist_ok=True)
         return backup_dir
 
     def _backup_then_replace(self, src: Path, dest: Path, backup_target: Path) -> None:
+        """Copy ``dest`` into the backup folder before overwriting it with ``src``."""
         if dest.exists():
             backup_target.parent.mkdir(parents=True, exist_ok=True)
             if dest.is_dir():
