@@ -220,11 +220,6 @@ class LauncherGUI:
 
         tools_menu = tk.Menu(menubar, tearoff=0)
         tools_menu.add_command(
-            label="System Status Dashboard",
-            command=self.show_status_window,
-        )
-        tools_menu.add_separator()
-        tools_menu.add_command(
             label="Roof Array Configuration",
             command=self.launch_configuration,
         )
@@ -237,7 +232,10 @@ class LauncherGUI:
             command=self.launch_identity_configurator,
         )
         tools_menu.add_separator()
-        tools_menu.add_command(label="Diagnostics", command=self.node_diagnostics)
+        tools_menu.add_command(
+            label="Connection Status",
+            command=self.node_diagnostics,
+        )
         tools_menu.add_command(
             label="Open Settings",
             command=self.show_settings,
@@ -245,6 +243,11 @@ class LauncherGUI:
         menubar.add_cascade(label="Tools", menu=tools_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(
+            label="System Status Dashboard",
+            command=self.show_status_window,
+        )
+        help_menu.add_separator()
         help_menu.add_command(label="About", command=self.show_about)
         help_menu.add_command(label="Report Issue", command=self.report_bug)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -412,7 +415,11 @@ class LauncherGUI:
         )
         self.cron_checkbox.grid(row=4, column=0, sticky="w", pady=(0, 5))
 
-        ttk.Button(self.roof_frame, text="Diagnostics", command=self.node_diagnostics).grid(
+        ttk.Button(
+            self.roof_frame,
+            text="Connection Status",
+            command=self.node_diagnostics,
+        ).grid(
             row=5,
             column=0,
             sticky="ew",
@@ -883,6 +890,39 @@ class LauncherGUI:
             launch_callback=start_live_mode,
         )
     
+    def show_connection_status_monitor(self) -> None:
+        """Open the connection status window in monitor mode (non-blocking)."""
+        configs_dir = Path(__file__).parent / "config"
+        roof_config = configs_dir / "roof_array_config.json"
+        front_config = configs_dir / "front_array_config.json"
+
+        if not roof_config.exists():
+            if messagebox.askyesno(
+                "Roof Configuration Missing",
+                "No roof array configuration found. Configure now?",
+            ):
+                self.launch_configuration()
+            return
+
+        existing = getattr(self, "connection_status_window", None)
+        window_obj = getattr(existing, "window", None)
+        if window_obj is not None:
+            try:
+                if window_obj.winfo_exists():
+                    window_obj.lift()
+                    return
+            except Exception:
+                pass
+
+        self.connection_status_window = ConnectionStatusWindow(
+            launcher=self,
+            roof_config_path=str(roof_config),
+            front_config_path=str(front_config),
+            launch_callback=None,
+            modal=False,
+            allow_launch=False,
+        )
+
     def repair_control(self):
         """Repair control stack installation"""
         if messagebox.askyesno("Repair Control Stack", 
@@ -957,8 +997,8 @@ class LauncherGUI:
         # TODO: Implement actual cron job management
     
     def node_diagnostics(self):
-        """Run node diagnostics"""
-        DiagnosticsWindow(self, "node").show()
+        """Open the connection status window without blocking other tools."""
+        self.show_connection_status_monitor()
     
     def repair_node(self):
         """Repair node stack installation"""
@@ -1324,6 +1364,57 @@ class LauncherGUI:
         self.root.mainloop()
 
 
+class HoverTooltip:
+    """Simple tooltip helper that tracks the mouse and shows contextual text."""
+
+    def __init__(self, parent: tk.Toplevel | tk.Tk) -> None:
+        self.parent = parent
+        self.tipwindow: Optional[tk.Toplevel] = None
+        self.current_text: Optional[str] = None
+
+    def show(self, text: str, x: int, y: int) -> None:
+        clean_text = (text or "").strip()
+        if not clean_text:
+            self.hide()
+            return
+
+        if len(clean_text) > 280:
+            clean_text = clean_text[:277] + "…"
+
+        if self.tipwindow and self.current_text == clean_text:
+            self.tipwindow.wm_geometry(f"+{x}+{y}")
+            return
+
+        self.hide()
+
+        self.tipwindow = tk.Toplevel(self.parent)
+        self.tipwindow.wm_overrideredirect(True)
+        try:
+            self.tipwindow.wm_attributes("-topmost", True)
+        except Exception:
+            pass
+        self.tipwindow.wm_geometry(f"+{x}+{y}")
+
+        label = ttk.Label(
+            self.tipwindow,
+            text=clean_text,
+            background="#ffffe0",
+            relief=tk.SOLID,
+            borderwidth=1,
+            padding=(8, 4),
+            justify=tk.LEFT,
+            wraplength=360,
+        )
+        label.pack()
+        self.current_text = clean_text
+
+    def hide(self) -> None:
+        if self.tipwindow is not None:
+            self.tipwindow.destroy()
+            self.tipwindow = None
+        self.current_text = None
+
+
 class ConnectionStatusWindow:
     """Modal window that checks camera connectivity before launching live mode."""
 
@@ -1332,18 +1423,22 @@ class ConnectionStatusWindow:
         launcher: "LauncherGUI",
         roof_config_path: str,
         front_config_path: str,
-        launch_callback: Callable[[], None],
+        launch_callback: Optional[Callable[[], None]] = None,
+        *,
+        modal: bool = True,
+        allow_launch: bool = True,
     ) -> None:
         self.launcher = launcher
         self.roof_config_path = Path(roof_config_path)
         self.front_config_path = Path(front_config_path)
         self.launch_callback = launch_callback
+        self.modal = modal
+        self.allow_launch = allow_launch
 
         self.window = tk.Toplevel(self.launcher.root)
         self.window.title("Camera Connection Status")
         self.window.geometry("1000x700")
         self.window.transient(self.launcher.root)
-        self.window.grab_set()
         self.window.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         self.override_var = tk.BooleanVar(value=False)
@@ -1356,6 +1451,9 @@ class ConnectionStatusWindow:
         self.tile_width = 180
         self.tile_height = 135
         self.offline_rects: set[int] = set()
+        self.tooltip = HoverTooltip(self.window)
+        self.start_button: Optional[ttk.Button] = None
+        self.override_check: Optional[ttk.Checkbutton] = None
 
         self.roof_entries: List[Dict[str, Any]] = []
         self.front_entry: Optional[Dict[str, Any]] = None
@@ -1367,10 +1465,18 @@ class ConnectionStatusWindow:
                 "No enabled cameras were found. Live mode will launch without checks.",
             )
             self._cleanup()
-            self.launch_callback()
+            self.window.destroy()
+            if self.launch_callback:
+                self.launch_callback()
             return
 
         self._build_ui()
+
+        if self.modal:
+            try:
+                self.window.grab_set()
+            except Exception:
+                pass
 
         self.worker_thread = threading.Thread(target=self._poll_status_loop, daemon=True)
         self.worker_thread.start()
@@ -1476,6 +1582,8 @@ class ConnectionStatusWindow:
         self.tree.configure(yscrollcommand=tree_scroll.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.bind("<Motion>", self._on_tree_motion)
+        self.tree.bind("<Leave>", self._on_tree_leave)
 
         visual_frame = ttk.LabelFrame(content, text="Composite View", padding="10")
         visual_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -1494,6 +1602,7 @@ class ConnectionStatusWindow:
             highlightthickness=0,
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.bind("<Leave>", self._on_canvas_leave)
 
         for entry in self.roof_entries:
             col, row = entry.get("position", (0, 0))
@@ -1521,6 +1630,10 @@ class ConnectionStatusWindow:
             )
             entry["canvas_rect"] = int(rect)
             entry["canvas_text"] = int(text)
+            for handle in (entry["canvas_rect"], entry["canvas_text"]):
+                self.canvas.tag_bind(handle, "<Enter>", lambda e, ent=entry: self._on_canvas_hover(ent, e))
+                self.canvas.tag_bind(handle, "<Leave>", self._on_canvas_leave)
+                self.canvas.tag_bind(handle, "<Motion>", lambda e, ent=entry: self._on_canvas_hover(ent, e))
 
         if self.front_entry:
             base_y = self.roof_rows * self.tile_height + 40
@@ -1542,6 +1655,10 @@ class ConnectionStatusWindow:
             )
             self.front_entry["canvas_rect"] = int(rect)
             self.front_entry["canvas_text"] = int(text)
+            for handle in (self.front_entry["canvas_rect"], self.front_entry["canvas_text"]):
+                self.canvas.tag_bind(handle, "<Enter>", lambda e, ent=self.front_entry: self._on_canvas_hover(ent, e))
+                self.canvas.tag_bind(handle, "<Leave>", self._on_canvas_leave)
+                self.canvas.tag_bind(handle, "<Motion>", lambda e, ent=self.front_entry: self._on_canvas_hover(ent, e))
 
         for entry in self.cameras:
             label = str(entry.get("label", ""))
@@ -1561,27 +1678,40 @@ class ConnectionStatusWindow:
         button_row = ttk.Frame(self.window, padding="10")
         button_row.pack(fill=tk.X)
 
-        self.override_check = ttk.Checkbutton(
-            button_row,
-            text="Override offline cameras",
-            variable=self.override_var,
-            command=self._update_start_button_state,
-        )
-        self.override_check.pack(side=tk.LEFT)
+        if self.allow_launch:
+            self.override_check = ttk.Checkbutton(
+                button_row,
+                text="Override offline cameras",
+                variable=self.override_var,
+                command=self._update_start_button_state,
+            )
+            self.override_check.pack(side=tk.LEFT)
+            ttk.Button(
+                button_row,
+                text="Refresh Now",
+                command=self._trigger_manual_refresh,
+            ).pack(side=tk.LEFT, padx=(10, 0))
+        else:
+            self.override_check = None
+            ttk.Button(
+                button_row,
+                text="Refresh Now",
+                command=self._trigger_manual_refresh,
+            ).pack(side=tk.LEFT)
 
-        ttk.Button(button_row, text="Refresh Now", command=self._trigger_manual_refresh).pack(
-            side=tk.LEFT, padx=(10, 0)
-        )
+        cancel_label = "Cancel" if self.allow_launch else "Close"
+        ttk.Button(button_row, text=cancel_label, command=self._on_cancel).pack(side=tk.RIGHT)
 
-        ttk.Button(button_row, text="Cancel", command=self._on_cancel).pack(side=tk.RIGHT)
-
-        self.start_button = ttk.Button(
-            button_row,
-            text="Start Live Mode",
-            command=self._on_start,
-            state=tk.DISABLED,
-        )
-        self.start_button.pack(side=tk.RIGHT, padx=(0, 10))
+        if self.allow_launch:
+            self.start_button = ttk.Button(
+                button_row,
+                text="Start Live Mode",
+                command=self._on_start,
+                state=tk.DISABLED,
+            )
+            self.start_button.pack(side=tk.RIGHT, padx=(0, 10))
+        else:
+            self.start_button = None
 
         self._update_summary()
         self._update_start_button_state()
@@ -1622,6 +1752,34 @@ class ConnectionStatusWindow:
             self.canvas.itemconfig(rect_id, fill=color, outline="#aa2222")
         self.window.after(500, self._toggle_flash)
 
+    def _on_tree_motion(self, event: Any) -> None:
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            self.tooltip.hide()
+            return
+        entry = next((c for c in self.cameras if c["id"] == iid), None)
+        if not entry:
+            self.tooltip.hide()
+            return
+        detail = str(entry.get("detail", "")).strip()
+        if entry.get("status") != "online" and detail:
+            self.tooltip.show(detail, event.x_root + 12, event.y_root + 12)
+        else:
+            self.tooltip.hide()
+
+    def _on_tree_leave(self, _event: Any) -> None:
+        self.tooltip.hide()
+
+    def _on_canvas_hover(self, entry: Dict[str, Any], event: Any) -> None:
+        detail = str(entry.get("detail", "")).strip()
+        if entry.get("status") != "online" and detail:
+            self.tooltip.show(detail, event.x_root + 12, event.y_root + 12)
+        else:
+            self.tooltip.hide()
+
+    def _on_canvas_leave(self, _event: Any) -> None:
+        self.tooltip.hide()
+
     def _apply_status(self, cam_id: str, status: str, detail: str) -> None:
         entry = next((c for c in self.cameras if c["id"] == cam_id), None)
         if not entry:
@@ -1629,13 +1787,7 @@ class ConnectionStatusWindow:
         entry["status"] = status
         entry["detail"] = detail or ""
 
-        detail_text = detail or ""
-        if detail_text and len(detail_text) > 24:
-            detail_text = detail_text[:24] + "…"
-
         display = status.capitalize()
-        if detail_text:
-            display = f"{display} ({detail_text})"
 
         label = str(entry.get("label", ""))
         entry_type = str(entry.get("type", ""))
@@ -1647,8 +1799,6 @@ class ConnectionStatusWindow:
         text_id = entry.get("canvas_text")
         if isinstance(text_id, int):
             lines = [label, status.upper()]
-            if detail_text:
-                lines.append(detail_text)
             self.canvas.itemconfig(text_id, text="\n".join(lines))
 
         rect_handle = entry.get("canvas_rect")
@@ -1712,6 +1862,8 @@ class ConnectionStatusWindow:
         self.summary_var.set(f"{online}/{total} cameras online")
 
     def _update_start_button_state(self) -> None:
+        if not self.allow_launch or self.start_button is None:
+            return
         all_online = all(
             entry.get("status") == "online"
             for entry in self.cameras
@@ -1725,8 +1877,14 @@ class ConnectionStatusWindow:
     def _cleanup(self) -> None:
         self.running = False
         self.refresh_event.set()
+        self.tooltip.hide()
         try:
             self.window.grab_release()
+        except Exception:
+            pass
+        try:
+            if getattr(self.launcher, "connection_status_window", None) is self:
+                setattr(self.launcher, "connection_status_window", None)
         except Exception:
             pass
 
@@ -1735,6 +1893,11 @@ class ConnectionStatusWindow:
         self.window.destroy()
 
     def _on_start(self) -> None:
+        if not self.allow_launch:
+            self._cleanup()
+            self.window.destroy()
+            return
+
         offline = [entry for entry in self.cameras if entry.get("status") != "online"]
         if offline and not self.override_var.get():
             messagebox.showwarning(
@@ -1754,7 +1917,8 @@ class ConnectionStatusWindow:
         self.launcher.log_to_terminal("Launching live mode…")
         self._cleanup()
         self.window.destroy()
-        self.launch_callback()
+        if self.launch_callback:
+            self.launch_callback()
 
 class InstallerWindow:
     """GUI installer window for control or node stack"""

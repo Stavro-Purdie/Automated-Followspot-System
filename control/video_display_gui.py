@@ -169,11 +169,12 @@ class VideoDisplayGUI:
             command=lambda: self._launch_tool("identity_configurator.py", "Identity Configurator"),
         )
         tools_menu.add_separator()
-        tools_menu.add_command(label="Diagnostics Panel", command=self.show_help_window)
+        tools_menu.add_command(label="Connection Status", command=self.show_connection_status)
         menubar.add_cascade(label="Tools", menu=tools_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="Keyboard Shortcuts", command=self.show_help_window)
+        help_menu.add_command(label="Diagnostics Panel", command=self.show_help_window)
         help_menu.add_command(label="About", command=self.show_about)
         help_menu.add_separator()
         help_menu.add_command(
@@ -211,6 +212,51 @@ class VideoDisplayGUI:
             subprocess.Popen([sys.executable, str(launcher_path)])
         except Exception as exc:
             messagebox.showerror("Launcher Error", f"Failed to open launcher:\n{exc}")
+
+    def show_connection_status(self) -> None:
+        """Open the connection status window to inspect camera reachability."""
+        try:
+            from launcher_gui import ConnectionStatusWindow  # type: ignore
+        except Exception as exc:  # pragma: no cover - defensive import guard
+            messagebox.showerror(
+                "Connection Status Unavailable",
+                f"Could not load connection status window:\n{exc}",
+            )
+            return
+
+        class _LauncherProxy:
+            def __init__(self, root: tk.Tk):
+                self.root = root
+
+            @staticmethod
+            def log_to_terminal(message: str) -> None:
+                logger.info("[ConnectionStatus] %s", message)
+
+        config_root = PROJECT_ROOT / "config"
+        roof_path = getattr(self.camera_manager, "config_file", str(config_root / "roof_array_config.json"))
+        roof_config = Path(roof_path)
+        if not roof_config.is_absolute():
+            roof_config = (PROJECT_ROOT / roof_config).resolve()
+        if not roof_config.exists():
+            roof_config = config_root / "roof_array_config.json"
+
+        front_config = config_root / "front_array_config.json"
+
+        try:
+            ConnectionStatusWindow(  # type: ignore[arg-type]
+                launcher=_LauncherProxy(self.root),
+                roof_config_path=str(roof_config),
+                front_config_path=str(front_config),
+                launch_callback=None,
+                modal=False,
+                allow_launch=False,
+            )
+        except Exception as exc:  # pragma: no cover - UI fallback
+            messagebox.showerror(
+                "Connection Status Error",
+                f"Unable to open connection status window:\n{exc}",
+            )
+            return
         
     def setup_ui(self):
         """Assemble the main layout: controls on the left, video wall on the right."""
