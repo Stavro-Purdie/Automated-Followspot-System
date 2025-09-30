@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Tuple, Optional, Set
 import time
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger("data_fusion")
@@ -32,6 +32,7 @@ class Position3D:
     confidence: float
     timestamp: float
     source: TrackingSource
+    axis_confidence: Tuple[float, float, float] = (1.0, 1.0, 1.0)
     
     def distance_to(self, other: 'Position3D') -> float:
         """Quick helper for measuring person-to-person separation in metres."""
@@ -49,6 +50,7 @@ class Person:
     ir_confidence: float
     last_updated: float
     fusion_confidence: float
+    axis_confidence: np.ndarray = field(default_factory=lambda: np.ones(3))
 
 class DataFusion:
     """Orchestrates the reconciliation between camera tracks and IR beacons."""
@@ -65,6 +67,36 @@ class DataFusion:
         """
         self.fusion_config = config["data_fusion"]
         self.stage_config = config["stage_geometry"]
+        camera_cfg = config.get("camera", {}).get("front_camera", {})
+        extrinsics_cfg = camera_cfg.get("extrinsics", {})
+        depth_cfg = camera_cfg.get("depth", {})
+
+        # Camera calibration parameters
+        self.camera_intrinsics = np.array(
+            camera_cfg.get("calibration_matrix", np.eye(3)), dtype=float
+        )
+        try:
+            self.camera_intrinsics_inv = np.linalg.inv(self.camera_intrinsics)
+        except np.linalg.LinAlgError:
+            logger.warning("Camera intrinsics not invertible; using identity transform")
+            self.camera_intrinsics = np.eye(3)
+            self.camera_intrinsics_inv = np.eye(3)
+
+        self.camera_rotation = np.array(
+            extrinsics_cfg.get("rotation_matrix", np.eye(3)), dtype=float
+        )
+        self.camera_translation = np.array(
+            extrinsics_cfg.get("translation_vector", [0.0, 0.0, 0.0]), dtype=float
+        )
+        self.camera_reference_frame = extrinsics_cfg.get("reference_frame", "stage")
+        self.camera_calibrated = bool(extrinsics_cfg.get("calibrated", False))
+
+        # Depth handling parameters
+        self.depth_enabled = bool(depth_cfg.get("enabled", True))
+        self.depth_confidence_floor = float(depth_cfg.get("confidence_floor", 0.4))
+        self.depth_fallback_height = float(depth_cfg.get("fallback_height", 1.75))
+        self.depth_smoothing_window = int(depth_cfg.get("smoothing_window", 5))
+        self._depth_history: Dict[int, List[float]] = {}
         
         # Fusion parameters
         self.position_match_threshold = self.fusion_config["position_match_threshold"]
@@ -172,6 +204,17 @@ class DataFusion:
             
             # Convert to stage coordinates (this would need calibration in real system)
             stage_pos = self._camera_to_stage_coordinates(latest_pos)
+            depth_history = self._depth_history.setdefault(track_id, [])
+            depth_history.append(float(stage_pos[2]))
+            if len(depth_history) > self.depth_smoothing_window:
+                depth_history.pop(0)
+            stage_pos[2] = float(np.mean(depth_history))
+
+            axis_confidence = (
+                float(np.clip(track.get("confidence", 0.5) * 0.5, self.depth_confidence_floor, 1.0)),
+                float(np.clip(track.get("confidence", 0.5) * 0.5, self.depth_confidence_floor, 1.0)),
+                float(np.clip(track.get("confidence", 0.5), self.depth_confidence_floor, 1.0))
+            )
             
             positions[track_id] = Position3D(
                 x=stage_pos[0],
@@ -179,8 +222,14 @@ class DataFusion:
                 z=stage_pos[2],
                 confidence=track["confidence"],
                 timestamp=track["last_update"],
-                source=TrackingSource.REID_CAMERA
+                source=TrackingSource.REID_CAMERA,
+                axis_confidence=axis_confidence
             )
+        
+        # Clean up depth history for retired tracks
+        for track_id in list(self._depth_history.keys()):
+            if track_id not in positions:
+                del self._depth_history[track_id]
         
         return positions
     
@@ -206,25 +255,40 @@ class DataFusion:
                 z=beacon.get("z", 1.75),  # Default person height if not available
                 confidence=beacon.get("confidence", 0.9),  # IR typically high confidence
                 timestamp=timestamp,
-                source=TrackingSource.IR_BEACON
+                source=TrackingSource.IR_BEACON,
+                axis_confidence=(
+                    float(np.clip(beacon.get("confidence", 0.9), 0.0, 1.0)),
+                    float(np.clip(beacon.get("confidence", 0.9), 0.0, 1.0)),
+                    0.2
+                )
             )
         
         return positions
     
     def _camera_to_stage_coordinates(self, camera_pos: np.ndarray) -> np.ndarray:
-        """Apply a rough-and-ready mapping from camera pixels to stage metres.
+        """Project a ReID track from camera space into stage coordinates."""
 
-        This placeholder keeps the rest of the fusion logic keyboard-ready while
-        the calibration pipeline evolves. It scales pixel positions into metres
-        and clamps height to a realistic human range so the followspot does not
-        chase imaginary people floating above the rigging.
-        """
-        # Simplified conversion - in reality this needs camera calibration matrix
-        # For now, assume camera is looking down at stage center
-        stage_x = camera_pos[0] * 0.01  # Scale camera pixels to meters
-        stage_y = camera_pos[1] * 0.01
-        stage_z = max(0.0, min(3.0, camera_pos[2]))  # Clamp Z to reasonable range
-        
+        if camera_pos is None or len(camera_pos) < 3:
+            return np.array([0.0, 0.0, self.depth_fallback_height])
+
+        x_px, y_px, depth = float(camera_pos[0]), float(camera_pos[1]), float(camera_pos[2])
+
+        if depth <= 0 or not np.isfinite(depth):
+            depth = self.depth_fallback_height
+
+        if self.camera_calibrated:
+            pixel_h = np.array([x_px, y_px, 1.0], dtype=float)
+            camera_point = depth * (self.camera_intrinsics_inv @ pixel_h)
+            stage_point = self.camera_rotation @ camera_point + self.camera_translation
+            stage_point[2] = np.clip(stage_point[2], self.stage_bounds["z_min"], self.stage_bounds["z_max"])
+            stage_point[0] = np.clip(stage_point[0], self.stage_bounds["x_min"], self.stage_bounds["x_max"])
+            stage_point[1] = np.clip(stage_point[1], self.stage_bounds["y_min"], self.stage_bounds["y_max"])
+            return stage_point
+
+        # Fallback heuristic scaling if calibration is unavailable
+        stage_x = np.clip(x_px * 0.01, self.stage_bounds["x_min"], self.stage_bounds["x_max"])
+        stage_y = np.clip(y_px * 0.01, self.stage_bounds["y_min"], self.stage_bounds["y_max"])
+        stage_z = np.clip(depth, self.stage_bounds["z_min"], self.stage_bounds["z_max"])
         return np.array([stage_x, stage_y, stage_z])
     
     def _match_reid_to_ir(self, reid_positions: Dict[int, Position3D],
@@ -329,13 +393,21 @@ class DataFusion:
             person = self._find_or_create_person(reid_id, ir_id)
             
             # Fuse positions using weighted average
-            fused_x = (reid_pos.x * self.reid_weight + ir_pos.x * self.ir_weight) / (self.reid_weight + self.ir_weight)
-            fused_y = (reid_pos.y * self.reid_weight + ir_pos.y * self.ir_weight) / (self.reid_weight + self.ir_weight)
+            weight_sum = (self.reid_weight + self.ir_weight)
+            fused_x = (reid_pos.x * self.reid_weight + ir_pos.x * self.ir_weight) / weight_sum
+            fused_y = (reid_pos.y * self.reid_weight + ir_pos.y * self.ir_weight) / weight_sum
             fused_z = reid_pos.z  # ReID provides Z, IR typically doesn't
             
             # Combined confidence gives us a legible number to sort and filter on
             fusion_confidence = (reid_pos.confidence * self.reid_weight + 
-                               ir_pos.confidence * self.ir_weight) / (self.reid_weight + self.ir_weight)
+                               ir_pos.confidence * self.ir_weight) / weight_sum
+
+            fused_axis_conf = np.array([
+                (reid_pos.axis_confidence[0] * self.reid_weight + ir_pos.axis_confidence[0] * self.ir_weight) / weight_sum,
+                (reid_pos.axis_confidence[1] * self.reid_weight + ir_pos.axis_confidence[1] * self.ir_weight) / weight_sum,
+                reid_pos.axis_confidence[2]
+            ])
+            fused_axis_conf = np.clip(fused_axis_conf, 0.0, 1.0)
             
             # Update person
             old_pos = np.array([person.position.x, person.position.y, person.position.z])
@@ -350,12 +422,14 @@ class DataFusion:
                 x=fused_x, y=fused_y, z=fused_z,
                 confidence=fusion_confidence,
                 timestamp=timestamp,
-                source=TrackingSource.FUSED
+                source=TrackingSource.FUSED,
+                axis_confidence=tuple(fused_axis_conf.tolist())
             )
             person.reid_confidence = reid_pos.confidence
             person.ir_confidence = ir_pos.confidence
             person.fusion_confidence = fusion_confidence
             person.last_updated = timestamp
+            person.axis_confidence = fused_axis_conf
         
         # Update ReID-only persons
         for reid_id, reid_pos in reid_positions.items():
@@ -373,6 +447,7 @@ class DataFusion:
                 person.reid_confidence = reid_pos.confidence
                 person.fusion_confidence = reid_pos.confidence * 0.7  # Lower confidence without IR
                 person.last_updated = timestamp
+                person.axis_confidence = np.array(reid_pos.axis_confidence)
         
         # Update IR-only persons  
         for ir_id, ir_pos in ir_positions.items():
@@ -390,6 +465,7 @@ class DataFusion:
                 person.ir_confidence = ir_pos.confidence
                 person.fusion_confidence = ir_pos.confidence * 0.8  # Good X,Y but no Z
                 person.last_updated = timestamp
+                person.axis_confidence = np.array(ir_pos.axis_confidence)
     
     def _find_or_create_person(self, reid_id: Optional[int], ir_id: Optional[int]) -> Person:
         """Reuse an existing :class:`Person` if possible or spin up a fresh one.
@@ -420,12 +496,13 @@ class DataFusion:
             id=person_id,
             reid_track_id=reid_id,
             ir_beacon_id=ir_id,
-            position=Position3D(0, 0, 0, 0, 0, TrackingSource.FUSED),
+            position=Position3D(0, 0, 0, 0, 0, TrackingSource.FUSED, (0.0, 0.0, 0.0)),
             velocity=np.zeros(3),
             reid_confidence=0.0,
             ir_confidence=0.0,
             last_updated=0.0,
-            fusion_confidence=0.0
+            fusion_confidence=0.0,
+            axis_confidence=np.zeros(3)
         )
         
         self.persons[person_id] = person
@@ -478,11 +555,13 @@ class DataFusion:
                 "y": person.position.y,
                 "z": person.position.z,
                 "confidence": person.fusion_confidence,
+                "axis_confidence": list(person.position.axis_confidence),
                 "velocity": person.velocity.tolist(),
                 "reid_id": person.reid_track_id,
                 "ir_id": person.ir_beacon_id,
                 "source": person.position.source.value,
-                "timestamp": person.position.timestamp
+                "timestamp": person.position.timestamp,
+                "updated_at": person.last_updated
             })
         
         # Sort by confidence (highest first)

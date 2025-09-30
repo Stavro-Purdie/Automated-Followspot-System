@@ -18,6 +18,7 @@ from pathlib import Path
 from datetime import datetime
 import os
 import sys
+from typing import Dict, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -38,6 +39,10 @@ class ReIDConfigurator:
         
         # Load existing configuration
         self.config = self.load_config()
+        self._ensure_camera_defaults()
+        self.spotlight_config_file = PROJECT_ROOT / "config" / "spotlight_config.json"
+        self.spotlight_config_file.parent.mkdir(exist_ok=True)
+        self.spotlight_config = self._load_spotlight_config()
         
         # Camera preview variables
         self.camera_active = False
@@ -153,6 +158,23 @@ class ReIDConfigurator:
                     "fov": 60,
                     "focal_length": 1000,
                     "resolution": [1920, 1080],
+                    "extrinsics": {
+                        "rotation_matrix": [
+                            [1.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0],
+                            [0.0, 0.0, 1.0]
+                        ],
+                        "translation_vector": [0.0, 0.0, 0.0],
+                        "reference_frame": "stage",
+                        "calibrated": False,
+                        "calibration_date": None
+                    },
+                    "depth": {
+                        "enabled": True,
+                        "confidence_floor": 0.4,
+                        "fallback_height": 1.75,
+                        "smoothing_window": 5
+                    },
                     "calibration_matrix": [
                         [1000, 0, 960],
                         [0, 1000, 540],
@@ -171,18 +193,76 @@ class ReIDConfigurator:
             "data_fusion": {"position_match_threshold": 1.0, "time_sync_tolerance": 0.1, "reid_weight": 0.4, "ir_weight": 0.6, "fusion_memory_time": 3.0},
             "calibration": {"stage_corners": [], "reference_points": [], "calibrated": False, "calibration_date": None}
         }
+
+    def _ensure_camera_defaults(self) -> None:
+        """Ensure new calibration fields exist so the UI can bind to them."""
+        camera_root = self.config.setdefault("camera", {})
+        cam_cfg = camera_root.setdefault("front_camera", {})
+
+        extrinsics = cam_cfg.setdefault("extrinsics", {})
+        extrinsics.setdefault("rotation_matrix", [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        extrinsics.setdefault("translation_vector", [0.0, 0.0, 0.0])
+        extrinsics.setdefault("reference_frame", "stage")
+        extrinsics.setdefault("calibrated", False)
+        extrinsics.setdefault("calibration_date", None)
+
+        depth_cfg = cam_cfg.setdefault("depth", {})
+        depth_cfg.setdefault("enabled", True)
+        depth_cfg.setdefault("confidence_floor", 0.4)
+        depth_cfg.setdefault("fallback_height", 1.75)
+        depth_cfg.setdefault("smoothing_window", 5)
+
+    def _load_spotlight_config(self) -> Dict:
+        try:
+            if self.spotlight_config_file.exists():
+                with self.spotlight_config_file.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            else:
+                data = {}
+        except Exception as exc:
+            messagebox.showwarning("Spotlight Config", f"Failed to load spotlight config: {exc}\nUsing defaults.")
+            data = {}
+
+        return self._ensure_spotlight_defaults(data)
+
+    def _ensure_spotlight_defaults(self, cfg: Dict) -> Dict:
+        rig_cfg = cfg.setdefault("rig", {})
+        rig_cfg.setdefault("fixture_position_m", [0.0, -5.0, 6.5])
+        rig_cfg.setdefault("stage_origin_m", [0.0, 0.0, 0.0])
+        rig_cfg.setdefault("pan_zero_angle_deg", 0.0)
+        rig_cfg.setdefault("tilt_zero_angle_deg", -35.0)
+        rig_cfg.setdefault("pan_limits_deg", [-120.0, 120.0])
+        rig_cfg.setdefault("tilt_limits_deg", [-120.0, 10.0])
+        smoothing = rig_cfg.setdefault("smoothing", {})
+        smoothing.setdefault("pan_alpha", 0.2)
+        smoothing.setdefault("tilt_alpha", 0.25)
+
+        dmx_cfg = cfg.setdefault("dmx", {})
+        dmx_cfg.setdefault("universe", 1)
+        dmx_cfg.setdefault("pan_address", 1)
+        dmx_cfg.setdefault("tilt_address", 3)
+        dmx_cfg.setdefault("pan_scale", 1.0)
+        dmx_cfg.setdefault("tilt_scale", 1.0)
+        dmx_cfg.setdefault("transport", "stub")
+
+        return cfg
     
     def save_config(self):
         """Save configuration to file"""
+        if not self.update_config_from_gui():
+            return False
         try:
             # Update configuration timestamp
             self.config["last_updated"] = datetime.now().isoformat()
             
             with open(self.config_file, 'w') as f:
                 json.dump(self.config, f, indent=2)
+
+            with open(self.spotlight_config_file, 'w', encoding="utf-8") as fh:
+                json.dump(self.spotlight_config, fh, indent=2)
             
             messagebox.showinfo("Configuration Saved", 
-                               f"Configuration saved to:\n{self.config_file}")
+                               f"Configuration saved to:\n{self.config_file}\n{self.spotlight_config_file}")
             return True
         except Exception as e:
             messagebox.showerror("Save Error", f"Error saving configuration: {e}")
@@ -244,6 +324,9 @@ class ReIDConfigurator:
         
         # Data fusion tab
         self.create_fusion_tab()
+        
+        # Spotlight control tab
+        self.create_spotlight_tab()
     
     def create_camera_tab(self):
         """Create camera configuration tab"""
@@ -283,6 +366,69 @@ class ReIDConfigurator:
         ttk.Label(camera_frame, text="Focal Length (px):").grid(row=6,column=0,sticky="w",pady=5)
         self.camera_focal_var = tk.StringVar(value=str(cam_cfg.get("focal_length",1000)))
         ttk.Entry(camera_frame, textvariable=self.camera_focal_var, width=10).grid(row=6,column=1,sticky="w",padx=(5,0),pady=5)
+
+        # Extrinsics section
+        ttk.Separator(camera_frame, orient="horizontal").grid(row=7, column=0, columnspan=2, sticky="ew", pady=10)
+        ttk.Label(camera_frame, text="Camera Extrinsics", style='Heading.TLabel').grid(row=8, column=0, sticky="w")
+        ttk.Button(camera_frame, text="Calibration Guide", command=self.open_calibration_doc).grid(row=8, column=1, sticky="e")
+
+        extrinsics = cam_cfg.get("extrinsics", {})
+        extrinsics_frame = ttk.Frame(camera_frame)
+        extrinsics_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=5)
+
+        self.extrinsics_calibrated_var = tk.BooleanVar(value=extrinsics.get("calibrated", False))
+        ttk.Checkbutton(extrinsics_frame, text="Calibrated", variable=self.extrinsics_calibrated_var).grid(row=0, column=0, sticky="w")
+
+        ttk.Label(extrinsics_frame, text="Calibration Date (ISO):").grid(row=0, column=1, sticky="e", padx=(10, 5))
+        self.extrinsics_date_var = tk.StringVar(value=extrinsics.get("calibration_date") or "")
+        ttk.Entry(extrinsics_frame, textvariable=self.extrinsics_date_var, width=20).grid(row=0, column=2, sticky="w")
+
+        ttk.Label(extrinsics_frame, text="Reference Frame:").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.extrinsics_reference_var = tk.StringVar(value=extrinsics.get("reference_frame", "stage"))
+        ttk.Entry(extrinsics_frame, textvariable=self.extrinsics_reference_var, width=15).grid(row=1, column=1, sticky="w", pady=(8, 0))
+
+        # Rotation matrix inputs
+        rot_frame = ttk.LabelFrame(camera_frame, text="Rotation Matrix")
+        rot_frame.grid(row=10, column=0, columnspan=2, sticky="ew", pady=5)
+        self.rotation_vars = []
+        rotation_matrix = extrinsics.get("rotation_matrix", [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        for i in range(3):
+            row_vars = []
+            for j in range(3):
+                var = tk.StringVar(value=str(rotation_matrix[i][j]))
+                row_vars.append(var)
+                ttk.Entry(rot_frame, textvariable=var, width=8).grid(row=i, column=j, padx=4, pady=2)
+            self.rotation_vars.append(row_vars)
+
+        # Translation vector inputs
+        trans_frame = ttk.LabelFrame(camera_frame, text="Translation Vector (m)")
+        trans_frame.grid(row=11, column=0, columnspan=2, sticky="ew", pady=5)
+        translation_vector = extrinsics.get("translation_vector", [0.0, 0.0, 0.0])
+        self.translation_vars = []
+        for idx in range(3):
+            var = tk.StringVar(value=str(translation_vector[idx]))
+            self.translation_vars.append(var)
+            ttk.Entry(trans_frame, textvariable=var, width=10).grid(row=0, column=idx, padx=4, pady=2)
+
+        # Depth configuration section
+        depth_cfg = cam_cfg.get("depth", {})
+        depth_frame = ttk.LabelFrame(camera_frame, text="Depth Settings")
+        depth_frame.grid(row=12, column=0, columnspan=2, sticky="ew", pady=10)
+
+        self.depth_enabled_var = tk.BooleanVar(value=depth_cfg.get("enabled", True))
+        ttk.Checkbutton(depth_frame, text="Enable Camera Z Contribution", variable=self.depth_enabled_var).grid(row=0, column=0, columnspan=2, sticky="w")
+
+        ttk.Label(depth_frame, text="Confidence Floor:").grid(row=1, column=0, sticky="w", pady=5)
+        self.depth_conf_floor_var = tk.StringVar(value=str(depth_cfg.get("confidence_floor", 0.4)))
+        ttk.Entry(depth_frame, textvariable=self.depth_conf_floor_var, width=10).grid(row=1, column=1, sticky="w", pady=5)
+
+        ttk.Label(depth_frame, text="Fallback Height (m):").grid(row=2, column=0, sticky="w", pady=5)
+        self.depth_fallback_var = tk.StringVar(value=str(depth_cfg.get("fallback_height", 1.75)))
+        ttk.Entry(depth_frame, textvariable=self.depth_fallback_var, width=10).grid(row=2, column=1, sticky="w", pady=5)
+
+        ttk.Label(depth_frame, text="Smoothing Window (frames):").grid(row=3, column=0, sticky="w", pady=5)
+        self.depth_smoothing_var = tk.StringVar(value=str(depth_cfg.get("smoothing_window", 5)))
+        ttk.Entry(depth_frame, textvariable=self.depth_smoothing_var, width=10).grid(row=3, column=1, sticky="w", pady=5)
 
     def create_stage_tab(self):
         """Create stage geometry configuration tab"""
@@ -435,6 +581,96 @@ class ReIDConfigurator:
         ttk.Entry(fusion_frame, textvariable=self.time_sync_var, width=10).grid(row=3, column=1, sticky="w", padx=(5, 0), pady=5)
         
         fusion_frame.columnconfigure(1, weight=1)
+
+    def create_spotlight_tab(self):
+        """Create spotlight configuration tab"""
+        spot_frame = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(spot_frame, text="Spotlight Rig")
+
+        rig_cfg = self.spotlight_config["rig"]
+        dmx_cfg = self.spotlight_config["dmx"]
+
+        ttk.Label(spot_frame, text="Fixture Position (m)", style='Heading.TLabel').grid(row=0, column=0, sticky="w", pady=(0, 5))
+        fixture_frame = ttk.Frame(spot_frame)
+        fixture_frame.grid(row=0, column=1, sticky="w", pady=(0, 5))
+        self.fixture_pos_vars = [tk.StringVar(value=str(rig_cfg["fixture_position_m"][idx])) for idx in range(3)]
+        for idx, axis_label in enumerate(["X", "Y", "Z"]):
+            ttk.Label(fixture_frame, text=f"{axis_label}:").grid(row=0, column=idx * 2, padx=(0, 2))
+            ttk.Entry(fixture_frame, textvariable=self.fixture_pos_vars[idx], width=8).grid(row=0, column=idx * 2 + 1, padx=(0, 6))
+
+        ttk.Label(spot_frame, text="Stage Origin (m)", style='Heading.TLabel').grid(row=1, column=0, sticky="w", pady=5)
+        origin_frame = ttk.Frame(spot_frame)
+        origin_frame.grid(row=1, column=1, sticky="w", pady=5)
+        self.spot_origin_vars = [tk.StringVar(value=str(rig_cfg.get("stage_origin_m", [0.0, 0.0, 0.0])[idx])) for idx in range(3)]
+        for idx, axis_label in enumerate(["X", "Y", "Z"]):
+            ttk.Label(origin_frame, text=f"{axis_label}:").grid(row=0, column=idx * 2, padx=(0, 2))
+            ttk.Entry(origin_frame, textvariable=self.spot_origin_vars[idx], width=8).grid(row=0, column=idx * 2 + 1, padx=(0, 6))
+
+        ttk.Label(spot_frame, text="Zero Angles (deg)", style='Heading.TLabel').grid(row=2, column=0, sticky="w", pady=5)
+        zero_frame = ttk.Frame(spot_frame)
+        zero_frame.grid(row=2, column=1, sticky="w", pady=5)
+        self.pan_zero_var = tk.StringVar(value=str(rig_cfg.get("pan_zero_angle_deg", 0.0)))
+        self.tilt_zero_var = tk.StringVar(value=str(rig_cfg.get("tilt_zero_angle_deg", -35.0)))
+        ttk.Label(zero_frame, text="Pan:").grid(row=0, column=0, padx=(0, 2))
+        ttk.Entry(zero_frame, textvariable=self.pan_zero_var, width=8).grid(row=0, column=1, padx=(0, 6))
+        ttk.Label(zero_frame, text="Tilt:").grid(row=0, column=2, padx=(0, 2))
+        ttk.Entry(zero_frame, textvariable=self.tilt_zero_var, width=8).grid(row=0, column=3)
+
+        ttk.Label(spot_frame, text="Pan Limits (deg)").grid(row=3, column=0, sticky="w", pady=5)
+        pan_limit_frame = ttk.Frame(spot_frame)
+        pan_limit_frame.grid(row=3, column=1, sticky="w", pady=5)
+        self.pan_limit_min_var = tk.StringVar(value=str(rig_cfg["pan_limits_deg"][0]))
+        self.pan_limit_max_var = tk.StringVar(value=str(rig_cfg["pan_limits_deg"][1]))
+        ttk.Label(pan_limit_frame, text="Min:").grid(row=0, column=0, padx=(0, 2))
+        ttk.Entry(pan_limit_frame, textvariable=self.pan_limit_min_var, width=8).grid(row=0, column=1, padx=(0, 6))
+        ttk.Label(pan_limit_frame, text="Max:").grid(row=0, column=2, padx=(0, 2))
+        ttk.Entry(pan_limit_frame, textvariable=self.pan_limit_max_var, width=8).grid(row=0, column=3)
+
+        ttk.Label(spot_frame, text="Tilt Limits (deg)").grid(row=4, column=0, sticky="w", pady=5)
+        tilt_limit_frame = ttk.Frame(spot_frame)
+        tilt_limit_frame.grid(row=4, column=1, sticky="w", pady=5)
+        self.tilt_limit_min_var = tk.StringVar(value=str(rig_cfg["tilt_limits_deg"][0]))
+        self.tilt_limit_max_var = tk.StringVar(value=str(rig_cfg["tilt_limits_deg"][1]))
+        ttk.Label(tilt_limit_frame, text="Min:").grid(row=0, column=0, padx=(0, 2))
+        ttk.Entry(tilt_limit_frame, textvariable=self.tilt_limit_min_var, width=8).grid(row=0, column=1, padx=(0, 6))
+        ttk.Label(tilt_limit_frame, text="Max:").grid(row=0, column=2, padx=(0, 2))
+        ttk.Entry(tilt_limit_frame, textvariable=self.tilt_limit_max_var, width=8).grid(row=0, column=3)
+
+        ttk.Label(spot_frame, text="Smoothing", style='Heading.TLabel').grid(row=5, column=0, sticky="w", pady=5)
+        smoothing_frame = ttk.Frame(spot_frame)
+        smoothing_frame.grid(row=5, column=1, sticky="w", pady=5)
+        self.pan_alpha_var = tk.StringVar(value=str(rig_cfg["smoothing"].get("pan_alpha", 0.2)))
+        self.tilt_alpha_var = tk.StringVar(value=str(rig_cfg["smoothing"].get("tilt_alpha", 0.25)))
+        ttk.Label(smoothing_frame, text="Pan α:").grid(row=0, column=0, padx=(0, 2))
+        ttk.Entry(smoothing_frame, textvariable=self.pan_alpha_var, width=8).grid(row=0, column=1, padx=(0, 6))
+        ttk.Label(smoothing_frame, text="Tilt α:").grid(row=0, column=2, padx=(0, 2))
+        ttk.Entry(smoothing_frame, textvariable=self.tilt_alpha_var, width=8).grid(row=0, column=3)
+
+        ttk.Label(spot_frame, text="DMX Settings", style='Heading.TLabel').grid(row=6, column=0, sticky="w", pady=5)
+        dmx_frame = ttk.Frame(spot_frame)
+        dmx_frame.grid(row=6, column=1, sticky="w", pady=5)
+        self.dmx_universe_var = tk.StringVar(value=str(dmx_cfg.get("universe", 1)))
+        self.dmx_pan_address_var = tk.StringVar(value=str(dmx_cfg.get("pan_address", 1)))
+        self.dmx_tilt_address_var = tk.StringVar(value=str(dmx_cfg.get("tilt_address", 3)))
+        self.dmx_pan_scale_var = tk.StringVar(value=str(dmx_cfg.get("pan_scale", 1.0)))
+        self.dmx_tilt_scale_var = tk.StringVar(value=str(dmx_cfg.get("tilt_scale", 1.0)))
+        self.dmx_transport_var = tk.StringVar(value=dmx_cfg.get("transport", "stub"))
+
+        ttk.Label(dmx_frame, text="Universe:").grid(row=0, column=0, padx=(0, 2))
+        ttk.Entry(dmx_frame, textvariable=self.dmx_universe_var, width=6).grid(row=0, column=1, padx=(0, 6))
+        ttk.Label(dmx_frame, text="Pan Addr:").grid(row=0, column=2, padx=(0, 2))
+        ttk.Entry(dmx_frame, textvariable=self.dmx_pan_address_var, width=6).grid(row=0, column=3, padx=(0, 6))
+        ttk.Label(dmx_frame, text="Tilt Addr:").grid(row=0, column=4, padx=(0, 2))
+        ttk.Entry(dmx_frame, textvariable=self.dmx_tilt_address_var, width=6).grid(row=0, column=5)
+
+        ttk.Label(dmx_frame, text="Pan Scale:").grid(row=1, column=0, padx=(0, 2), pady=5)
+        ttk.Entry(dmx_frame, textvariable=self.dmx_pan_scale_var, width=6).grid(row=1, column=1, padx=(0, 6), pady=5)
+        ttk.Label(dmx_frame, text="Tilt Scale:").grid(row=1, column=2, padx=(0, 2), pady=5)
+        ttk.Entry(dmx_frame, textvariable=self.dmx_tilt_scale_var, width=6).grid(row=1, column=3, padx=(0, 6), pady=5)
+        ttk.Label(dmx_frame, text="Transport:").grid(row=1, column=4, padx=(0, 2), pady=5)
+        ttk.Combobox(dmx_frame, textvariable=self.dmx_transport_var, values=["stub", "artnet", "sacn", "osc"], width=8).grid(row=1, column=5, pady=5)
+
+        spot_frame.columnconfigure(1, weight=1)
     
     def create_camera_panel(self, parent):
         """Create camera preview and calibration panel"""
@@ -494,6 +730,24 @@ class ReIDConfigurator:
             self.camera_angle_var.set(str(cam_config.get("angle",0)))
             self.camera_fov_var.set(str(cam_config.get("fov",60)))
             self.camera_focal_var.set(str(cam_config.get("focal_length",1000)))
+            extrinsics = cam_config.get("extrinsics", {})
+            if hasattr(self, "extrinsics_calibrated_var"):
+                self.extrinsics_calibrated_var.set(bool(extrinsics.get("calibrated", False)))
+                self.extrinsics_date_var.set(extrinsics.get("calibration_date") or "")
+                self.extrinsics_reference_var.set(extrinsics.get("reference_frame", "stage"))
+                rotation_matrix = extrinsics.get("rotation_matrix", [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+                for i in range(3):
+                    for j in range(3):
+                        self.rotation_vars[i][j].set(str(rotation_matrix[i][j]))
+                translation_vector = extrinsics.get("translation_vector", [0.0, 0.0, 0.0])
+                for idx in range(3):
+                    self.translation_vars[idx].set(str(translation_vector[idx]))
+            depth_cfg = cam_config.get("depth", {})
+            if hasattr(self, "depth_enabled_var"):
+                self.depth_enabled_var.set(bool(depth_cfg.get("enabled", True)))
+                self.depth_conf_floor_var.set(str(depth_cfg.get("confidence_floor", 0.4)))
+                self.depth_fallback_var.set(str(depth_cfg.get("fallback_height", 1.75)))
+                self.depth_smoothing_var.set(str(depth_cfg.get("smoothing_window", 5)))
             # Stage
             stage_config = self.config["stage_geometry"]
             self.stage_width_var.set(str(stage_config["width"]))
@@ -502,9 +756,38 @@ class ReIDConfigurator:
             self.stage_origin_x_var.set(str(stage_config["origin"][0]))
             self.stage_origin_y_var.set(str(stage_config["origin"][1]))
             self.stage_origin_z_var.set(str(stage_config["origin"][2]))
+
+            self._load_spotlight_to_gui()
         except Exception as e:
             messagebox.showwarning("Load Error", f"Error loading some configuration values: {e}")
     
+    def _load_spotlight_to_gui(self) -> None:
+        try:
+            rig_cfg = self.spotlight_config["rig"]
+            for idx, var in enumerate(self.fixture_pos_vars):
+                var.set(str(rig_cfg["fixture_position_m"][idx]))
+            for idx, var in enumerate(self.spot_origin_vars):
+                var.set(str(rig_cfg.get("stage_origin_m", [0.0, 0.0, 0.0])[idx]))
+            self.pan_zero_var.set(str(rig_cfg.get("pan_zero_angle_deg", 0.0)))
+            self.tilt_zero_var.set(str(rig_cfg.get("tilt_zero_angle_deg", -35.0)))
+            self.pan_limit_min_var.set(str(rig_cfg["pan_limits_deg"][0]))
+            self.pan_limit_max_var.set(str(rig_cfg["pan_limits_deg"][1]))
+            self.tilt_limit_min_var.set(str(rig_cfg["tilt_limits_deg"][0]))
+            self.tilt_limit_max_var.set(str(rig_cfg["tilt_limits_deg"][1]))
+            smoothing_cfg = rig_cfg.get("smoothing", {})
+            self.pan_alpha_var.set(str(smoothing_cfg.get("pan_alpha", 0.2)))
+            self.tilt_alpha_var.set(str(smoothing_cfg.get("tilt_alpha", 0.25)))
+
+            dmx_cfg = self.spotlight_config.get("dmx", {})
+            self.dmx_universe_var.set(str(dmx_cfg.get("universe", 1)))
+            self.dmx_pan_address_var.set(str(dmx_cfg.get("pan_address", 1)))
+            self.dmx_tilt_address_var.set(str(dmx_cfg.get("tilt_address", 3)))
+            self.dmx_pan_scale_var.set(str(dmx_cfg.get("pan_scale", 1.0)))
+            self.dmx_tilt_scale_var.set(str(dmx_cfg.get("tilt_scale", 1.0)))
+            self.dmx_transport_var.set(dmx_cfg.get("transport", "stub"))
+        except Exception as exc:
+            messagebox.showwarning("Spotlight Load", f"Failed to load spotlight config into UI: {exc}")
+
     def update_config_from_gui(self):
         """Update configuration dictionary from GUI values"""
         try:
@@ -516,6 +799,22 @@ class ReIDConfigurator:
             cam_config["angle"] = float(self.camera_angle_var.get())
             cam_config["fov"] = float(self.camera_fov_var.get())
             cam_config["focal_length"] = float(self.camera_focal_var.get())
+            extrinsics = cam_config.setdefault("extrinsics", {})
+            extrinsics["calibrated"] = bool(self.extrinsics_calibrated_var.get())
+            date_value = self.extrinsics_date_var.get().strip()
+            extrinsics["calibration_date"] = date_value or None
+            extrinsics["reference_frame"] = self.extrinsics_reference_var.get().strip() or "stage"
+            extrinsics["rotation_matrix"] = [
+                [float(self.rotation_vars[i][j].get()) for j in range(3)]
+                for i in range(3)
+            ]
+            extrinsics["translation_vector"] = [float(var.get()) for var in self.translation_vars]
+
+            depth_cfg = cam_config.setdefault("depth", {})
+            depth_cfg["enabled"] = bool(self.depth_enabled_var.get())
+            depth_cfg["confidence_floor"] = float(self.depth_conf_floor_var.get())
+            depth_cfg["fallback_height"] = float(self.depth_fallback_var.get())
+            depth_cfg["smoothing_window"] = int(self.depth_smoothing_var.get())
             # Stage geometry
             stage_config = self.config["stage_geometry"]
             stage_config["width"] = float(self.stage_width_var.get())
@@ -541,6 +840,8 @@ class ReIDConfigurator:
             fusion["reid_weight"] = self.reid_weight_var.get()
             fusion["ir_weight"] = self.ir_weight_var.get()
             fusion["time_sync_tolerance"] = float(self.time_sync_var.get())
+
+            self._update_spotlight_config_from_gui()
         except ValueError as e:
             messagebox.showerror("Configuration Error", f"Invalid value: {e}")
             return False
@@ -549,6 +850,34 @@ class ReIDConfigurator:
             return False
         
         return True
+
+    def _update_spotlight_config_from_gui(self) -> None:
+        rig_cfg = self.spotlight_config.setdefault("rig", {})
+        rig_cfg["fixture_position_m"] = [float(var.get()) for var in self.fixture_pos_vars]
+        rig_cfg["stage_origin_m"] = [float(var.get()) for var in self.spot_origin_vars]
+        rig_cfg["pan_zero_angle_deg"] = float(self.pan_zero_var.get())
+        rig_cfg["tilt_zero_angle_deg"] = float(self.tilt_zero_var.get())
+        rig_cfg["pan_limits_deg"] = [float(self.pan_limit_min_var.get()), float(self.pan_limit_max_var.get())]
+        rig_cfg["tilt_limits_deg"] = [float(self.tilt_limit_min_var.get()), float(self.tilt_limit_max_var.get())]
+        smoothing_cfg = rig_cfg.setdefault("smoothing", {})
+        smoothing_cfg["pan_alpha"] = float(self.pan_alpha_var.get())
+        smoothing_cfg["tilt_alpha"] = float(self.tilt_alpha_var.get())
+
+        dmx_cfg = self.spotlight_config.setdefault("dmx", {})
+        dmx_cfg["universe"] = int(self.dmx_universe_var.get())
+        dmx_cfg["pan_address"] = int(self.dmx_pan_address_var.get())
+        dmx_cfg["tilt_address"] = int(self.dmx_tilt_address_var.get())
+        dmx_cfg["pan_scale"] = float(self.dmx_pan_scale_var.get())
+        dmx_cfg["tilt_scale"] = float(self.dmx_tilt_scale_var.get())
+        dmx_cfg["transport"] = self.dmx_transport_var.get().strip() or "stub"
+
+    def open_calibration_doc(self) -> None:
+        """Open the calibration guide in the default viewer."""
+        doc_path = PROJECT_ROOT / "docs" / "front_camera_z_calibration.md"
+        if not doc_path.exists():
+            messagebox.showerror("Calibration Guide Missing", str(doc_path))
+            return
+        webbrowser.open(doc_path.resolve().as_uri())
     
     # Label update methods
     def update_confidence_label(self, *args):
@@ -732,6 +1061,7 @@ class ReIDConfigurator:
             try:
                 with open(file_path, 'r') as f:
                     self.config = json.load(f)
+                self._ensure_camera_defaults()
                 self.load_config_to_gui()
                 messagebox.showinfo("Configuration Loaded", f"Configuration loaded from:\n{file_path}")
             except Exception as e:
@@ -783,7 +1113,9 @@ class ReIDConfigurator:
         """Reset configuration to defaults"""
         if messagebox.askyesno("Reset Configuration", 
                               "Reset all settings to default values?\nThis cannot be undone."):
-            self.config = self.load_config().__class__.__dict__['load_config'](self)
+            self.config = self.load_config()
+            self._ensure_camera_defaults()
+            self.spotlight_config = self._ensure_spotlight_defaults({})
             self.load_config_to_gui()
             messagebox.showinfo("Reset Complete", "Configuration reset to defaults")
     

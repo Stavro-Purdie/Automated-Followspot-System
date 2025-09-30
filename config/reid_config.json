@@ -58,6 +58,39 @@
         1920,
         1080
       ],
+      "extrinsics": {
+        "rotation_matrix": [
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ],
+          [
+            0,
+            0,
+            1
+          ]
+        ],
+        "translation_vector": [
+          0,
+          0,
+          0
+        ],
+        "reference_frame": "stage",
+        "calibrated": false,
+        "calibration_date": null
+      },
+      "depth": {
+        "enabled": true,
+        "confidence_floor": 0.4,
+        "fallback_height": 1.75,
+        "smoothing_window": 5
+      },
       "calibration_matrix": [
         [
           1000,

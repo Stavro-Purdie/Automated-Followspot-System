@@ -21,6 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from camera_aggregator import MultiCameraManager
 from reid_runner import ReIDRunner
 from fusion.data_fusion import DataFusion
+from spotlight_controller import SpotlightController
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("fused_main")
@@ -41,7 +42,13 @@ class FusedController:
         # Data fusion uses front config for fusion params
         self.fusion = DataFusion(self.reid_runner.config)
 
+        # Spotlight controller handles pan/tilt computation
+        self.spotlight = SpotlightController()
+
         self.loop_running = False
+        self.latest_persons = {}
+        self.latest_positions: List[Dict] = []
+        self.latest_spotlight_command = None
 
     async def start(self):
         """Kick off camera connections and the ReID runner before entering the loop."""
@@ -92,11 +99,20 @@ class FusedController:
         # Fuse
         now = time.time()
         fused = self.fusion.update_fusion(reid_tracks, ir_beacons, now)
-        return fused
+        self.latest_persons = fused
+        self.latest_positions = self.fusion.get_person_positions()
+        self.latest_spotlight_command = self.spotlight.update_from_targets(self.latest_positions, now)
+        return self.latest_positions
 
     def get_positions(self):
         """Return fused person positions sorted by confidence"""
-        return self.fusion.get_person_positions()
+        if not self.latest_positions:
+            self.latest_positions = self.fusion.get_person_positions()
+        return self.latest_positions
+
+    def get_spotlight_command(self):
+        """Return the most recent pan/tilt command."""
+        return self.latest_spotlight_command
 
     def get_stats(self):
         """Return fusion statistics"""
@@ -109,9 +125,20 @@ async def main():
     logger.info("Fused controller started. Press Ctrl+C to stop.")
     try:
         while True:
-            fused = controller.step()
-            # Simple log output: number of persons
-            logger.info(f"Fused persons: {len(fused)}")
+            positions = controller.step()
+            logger.info("Fused persons: %s", len(positions))
+            if positions:
+                top = positions[0]
+                logger.info(
+                    "Top target XYZ=(%.2f, %.2f, %.2f) axis_conf=%s",
+                    top["x"],
+                    top["y"],
+                    top["z"],
+                    top["axis_confidence"],
+                )
+            if controller.latest_spotlight_command:
+                cmd = controller.latest_spotlight_command
+                logger.info("Spotlight pan=%.2f tilt=%.2f", cmd["pan_deg"], cmd["tilt_deg"])
             await asyncio.sleep(0.03)
     except KeyboardInterrupt:
         pass
