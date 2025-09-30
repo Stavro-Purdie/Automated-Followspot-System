@@ -863,17 +863,24 @@ class LauncherGUI:
                 self.launch_reid_configurator()
             return
 
-        script_path = Path(__file__).parent / "control" / "fused_main.py"
+        script_path = Path(__file__).parent / "control" / "main.py"
         if not script_path.exists():
-            messagebox.showerror("Error", "Fused controller script not found")
+            messagebox.showerror("Error", "Live control script not found")
             return
 
         self.log_to_terminal("Opening connection status window before live launch...")
+        def start_live_mode() -> None:
+            self.run_script(
+                script_path,
+                "Live Mode",
+                args=["--no-dialog", "--config", str(roof_config)],
+            )
+
         self.connection_status_window = ConnectionStatusWindow(
             launcher=self,
             roof_config_path=str(roof_config),
             front_config_path=str(front_config),
-            launch_callback=lambda: self.run_script(script_path, "Fused Live Mode"),
+            launch_callback=start_live_mode,
         )
     
     def repair_control(self):
