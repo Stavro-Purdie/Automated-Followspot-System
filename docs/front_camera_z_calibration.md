@@ -2,8 +2,7 @@
 
 A quick, projection-free workflow for calibrating the front ReID camera so it supplies reliable Z data for spotlight tilt.
 
-> **TL;DR:** Grab a tape measure and an inclinometer, enter the numbers into the configurator, then confirm the camera/stage axes agree. No checkerboards or projected targets required.
-
+> **TL;DR:** Grab a tape measure and an inclinometer (A phone level works fine), enter the numbers into the configurator, then confirm the camera/stage axes agree.
 ---
 
 ## 1. Prep the Stage (5 min)
