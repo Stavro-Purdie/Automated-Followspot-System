@@ -19,8 +19,9 @@ from datetime import datetime
 import queue
 import webbrowser
 import shutil
-from urllib.parse import urlparse
-from typing import Callable, Dict, Optional
+from urllib.parse import urlparse, urlsplit, urlunsplit
+from typing import Callable, Dict, Optional, List, Tuple, Any
+import urllib.request
 
 from update_manager import UpdateManager, UpdateError, CommitInfo
 
@@ -867,8 +868,13 @@ class LauncherGUI:
             messagebox.showerror("Error", "Fused controller script not found")
             return
 
-        self.log_to_terminal("Launching fused live mode (IR + ReID)...")
-        self.run_script(script_path, "Fused Live Mode")
+        self.log_to_terminal("Opening connection status window before live launch...")
+        self.connection_status_window = ConnectionStatusWindow(
+            launcher=self,
+            roof_config_path=str(roof_config),
+            front_config_path=str(front_config),
+            launch_callback=lambda: self.run_script(script_path, "Fused Live Mode"),
+        )
     
     def repair_control(self):
         """Repair control stack installation"""
@@ -1310,6 +1316,438 @@ class LauncherGUI:
         """Start the GUI application"""
         self.root.mainloop()
 
+
+class ConnectionStatusWindow:
+    """Modal window that checks camera connectivity before launching live mode."""
+
+    def __init__(
+        self,
+        launcher: "LauncherGUI",
+        roof_config_path: str,
+        front_config_path: str,
+        launch_callback: Callable[[], None],
+    ) -> None:
+        self.launcher = launcher
+        self.roof_config_path = Path(roof_config_path)
+        self.front_config_path = Path(front_config_path)
+        self.launch_callback = launch_callback
+
+        self.window = tk.Toplevel(self.launcher.root)
+        self.window.title("Camera Connection Status")
+        self.window.geometry("1000x700")
+        self.window.transient(self.launcher.root)
+        self.window.grab_set()
+        self.window.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+        self.override_var = tk.BooleanVar(value=False)
+        self.summary_var = tk.StringVar(value="Checking camera connections…")
+        self.refresh_interval = 3.0
+        self.refresh_event = threading.Event()
+        self.status_queue = queue.Queue()
+        self.running = True
+        self.flash_state = False
+        self.tile_width = 180
+        self.tile_height = 135
+        self.offline_rects: set[int] = set()
+
+        self.roof_entries: List[Dict[str, Any]] = []
+        self.front_entry: Optional[Dict[str, Any]] = None
+        self.cameras: List[Dict[str, Any]] = self._load_cameras()
+
+        if not self.cameras:
+            messagebox.showinfo(
+                "No Cameras Configured",
+                "No enabled cameras were found. Live mode will launch without checks.",
+            )
+            self._cleanup()
+            self.launch_callback()
+            return
+
+        self._build_ui()
+
+        self.worker_thread = threading.Thread(target=self._poll_status_loop, daemon=True)
+        self.worker_thread.start()
+        self.window.after(150, self._process_queue)
+        self.window.after(500, self._toggle_flash)
+
+    def _load_cameras(self) -> List[Dict[str, Any]]:
+        cameras: List[Dict[str, Any]] = []
+        self.roof_grid_cols = 1
+        try:
+            with self.roof_config_path.open("r", encoding="utf-8") as handle:
+                roof_cfg = json.load(handle)
+            grid_cfg = roof_cfg.get("grid_config", {}) if isinstance(roof_cfg, dict) else {}
+            self.roof_grid_cols = max(1, int(grid_cfg.get("cameras_per_row", 1)))
+            for idx, camera in enumerate(roof_cfg.get("cameras", []) if isinstance(roof_cfg, dict) else []):
+                if not isinstance(camera, dict) or not camera.get("enabled", True):
+                    continue
+                position = camera.get("position")
+                if (
+                    not isinstance(position, (list, tuple))
+                    or len(position) != 2
+                ):
+                    position = [idx % self.roof_grid_cols, idx // self.roof_grid_cols]
+                entry_id = str(camera.get("camera_id", f"cam_{idx + 1}"))
+                label = str(camera.get("display_name") or entry_id)
+                url = str(camera.get("server_url", ""))
+                entry = {
+                    "id": entry_id,
+                    "label": label,
+                    "type": "Roof",
+                    "url": url,
+                    "position": (int(position[0]), int(position[1])),
+                    "status": "checking",
+                    "detail": "",
+                    "requires_connection": True,
+                }
+                cameras.append(entry)
+                self.roof_entries.append(entry)
+        except Exception as exc:
+            messagebox.showerror("Configuration Error", f"Unable to load roof configuration:\n{exc}")
+            return []
+
+        self.roof_rows = (
+            (len(self.roof_entries) + self.roof_grid_cols - 1) // self.roof_grid_cols
+            if self.roof_entries
+            else 0
+        )
+
+        try:
+            with self.front_config_path.open("r", encoding="utf-8") as handle:
+                front_cfg = json.load(handle)
+            front_cam = (
+                front_cfg.get("camera", {}).get("front_camera", {})
+                if isinstance(front_cfg, dict)
+                else {}
+            )
+            if front_cam:
+                entry_id = str(front_cam.get("camera_id", "front"))
+                label = str(front_cam.get("display_name") or "Front ReID")
+                url = str(front_cam.get("server_url", ""))
+                entry = {
+                    "id": entry_id,
+                    "label": label,
+                    "type": "Front",
+                    "url": url,
+                    "position": None,
+                    "status": "checking",
+                    "detail": "",
+                    "requires_connection": True,
+                }
+                self.front_entry = entry
+                cameras.append(entry)
+        except Exception as exc:
+            messagebox.showwarning(
+                "Configuration Warning",
+                f"Unable to load front camera configuration:\n{exc}",
+            )
+
+        return cameras
+
+    def _build_ui(self) -> None:
+        header = ttk.Frame(self.window, padding="10")
+        header.pack(fill=tk.X)
+        ttk.Label(header, text="Camera Connection Status", style="Title.TLabel").pack(
+            side=tk.LEFT
+        )
+        ttk.Label(header, textvariable=self.summary_var).pack(side=tk.RIGHT)
+
+        content = ttk.Frame(self.window, padding="10")
+        content.pack(fill=tk.BOTH, expand=True)
+
+        status_frame = ttk.LabelFrame(content, text="Per-Camera Status", padding="10")
+        status_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        columns = ("camera", "type", "url", "status")
+        self.tree = ttk.Treeview(status_frame, columns=columns, show="headings", height=12)
+        for col, label in zip(columns, ["Camera", "Type", "URL", "Status"]):
+            self.tree.heading(col, text=label)
+            stretch = tk.YES if col != "type" else tk.NO
+            width = 220 if col == "url" else 140 if col == "status" else 120
+            self.tree.column(col, width=width, stretch=stretch)
+        tree_scroll = ttk.Scrollbar(status_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scroll.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        visual_frame = ttk.LabelFrame(content, text="Composite View", padding="10")
+        visual_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        cols = max(1, self.roof_grid_cols if self.roof_rows else 1)
+        canvas_width = cols * self.tile_width
+        canvas_height = max(self.roof_rows * self.tile_height, self.tile_height)
+        if self.front_entry:
+            canvas_height += self.tile_height + 40
+
+        self.canvas = tk.Canvas(
+            visual_frame,
+            width=canvas_width,
+            height=canvas_height,
+            background="#111111",
+            highlightthickness=0,
+        )
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        for entry in self.roof_entries:
+            col, row = entry.get("position", (0, 0))
+            col = max(0, min(cols - 1, int(col)))
+            row = max(0, int(row))
+            x1 = col * self.tile_width
+            y1 = row * self.tile_height
+            x2 = x1 + self.tile_width
+            y2 = y1 + self.tile_height
+            rect = self.canvas.create_rectangle(
+                x1,
+                y1,
+                x2,
+                y2,
+                fill="#444444",
+                outline="#888888",
+                width=2,
+            )
+            text = self.canvas.create_text(
+                x1 + self.tile_width / 2,
+                y1 + self.tile_height / 2,
+                text=f"{entry['label']}\nChecking…",
+                fill="white",
+                font=("Arial", 12, "bold"),
+            )
+            entry["canvas_rect"] = int(rect)
+            entry["canvas_text"] = int(text)
+
+        if self.front_entry:
+            base_y = self.roof_rows * self.tile_height + 40
+            rect = self.canvas.create_rectangle(
+                0,
+                base_y,
+                canvas_width,
+                base_y + self.tile_height,
+                fill="#333333",
+                outline="#888888",
+                width=2,
+            )
+            text = self.canvas.create_text(
+                canvas_width / 2,
+                base_y + self.tile_height / 2,
+                text="Front ReID\nChecking…",
+                fill="white",
+                font=("Arial", 12, "bold"),
+            )
+            self.front_entry["canvas_rect"] = int(rect)
+            self.front_entry["canvas_text"] = int(text)
+
+        for entry in self.cameras:
+            label = str(entry.get("label", ""))
+            entry["label"] = label
+            entry["type"] = str(entry.get("type", ""))
+            entry["url"] = str(entry.get("url", ""))
+            entry_id = str(entry.get("id", label))
+            entry["id"] = entry_id
+            tree_id = self.tree.insert(
+                "",
+                tk.END,
+                iid=entry_id,
+                values=(label, entry["type"], entry["url"], "Checking…"),
+            )
+            entry["tree_item"] = entry_id
+
+        button_row = ttk.Frame(self.window, padding="10")
+        button_row.pack(fill=tk.X)
+
+        self.override_check = ttk.Checkbutton(
+            button_row,
+            text="Override offline cameras",
+            variable=self.override_var,
+            command=self._update_start_button_state,
+        )
+        self.override_check.pack(side=tk.LEFT)
+
+        ttk.Button(button_row, text="Refresh Now", command=self._trigger_manual_refresh).pack(
+            side=tk.LEFT, padx=(10, 0)
+        )
+
+        ttk.Button(button_row, text="Cancel", command=self._on_cancel).pack(side=tk.RIGHT)
+
+        self.start_button = ttk.Button(
+            button_row,
+            text="Start Live Mode",
+            command=self._on_start,
+            state=tk.DISABLED,
+        )
+        self.start_button.pack(side=tk.RIGHT, padx=(0, 10))
+
+        self._update_summary()
+        self._update_start_button_state()
+
+    def _poll_status_loop(self) -> None:
+        while self.running:
+            results = []
+            for entry in self.cameras:
+                if not self.running:
+                    break
+                status, detail = self._check_camera(entry)
+                results.append((entry["id"], status, detail))
+            if results and self.running:
+                self.status_queue.put(("status", results))
+            if not self.running:
+                break
+            self.refresh_event.wait(self.refresh_interval)
+            self.refresh_event.clear()
+
+    def _process_queue(self) -> None:
+        try:
+            while True:
+                msg_type, payload = self.status_queue.get_nowait()
+                if msg_type == "status":
+                    for cam_id, status, detail in payload:  # type: ignore[assignment]
+                        self._apply_status(cam_id, status, detail)
+        except queue.Empty:
+            pass
+        if self.running:
+            self.window.after(150, self._process_queue)
+
+    def _toggle_flash(self) -> None:
+        if not self.running:
+            return
+        self.flash_state = not self.flash_state
+        color = "#ff4c4c" if self.flash_state else "#8b0000"
+        for rect_id in list(self.offline_rects):
+            self.canvas.itemconfig(rect_id, fill=color, outline="#aa2222")
+        self.window.after(500, self._toggle_flash)
+
+    def _apply_status(self, cam_id: str, status: str, detail: str) -> None:
+        entry = next((c for c in self.cameras if c["id"] == cam_id), None)
+        if not entry:
+            return
+        entry["status"] = status
+        entry["detail"] = detail or ""
+
+        detail_text = detail or ""
+        if detail_text and len(detail_text) > 24:
+            detail_text = detail_text[:24] + "…"
+
+        display = status.capitalize()
+        if detail_text:
+            display = f"{display} ({detail_text})"
+
+        label = str(entry.get("label", ""))
+        entry_type = str(entry.get("type", ""))
+        url = str(entry.get("url", ""))
+        tree_id = entry.get("tree_item")
+        if isinstance(tree_id, str):
+            self.tree.item(tree_id, values=(label, entry_type, url, display))
+
+        text_id = entry.get("canvas_text")
+        if isinstance(text_id, int):
+            lines = [label, status.upper()]
+            if detail_text:
+                lines.append(detail_text)
+            self.canvas.itemconfig(text_id, text="\n".join(lines))
+
+        rect_handle = entry.get("canvas_rect")
+        if isinstance(rect_handle, int):
+            if status == "online":
+                self.canvas.itemconfig(rect_handle, fill="#1b5e20", outline="#0f3d14")
+                self.offline_rects.discard(rect_handle)
+            else:
+                self.offline_rects.add(rect_handle)
+                color = "#ff4c4c" if self.flash_state else "#8b0000"
+                self.canvas.itemconfig(rect_handle, fill=color, outline="#aa2222")
+
+        self._update_summary()
+        self._update_start_button_state()
+
+    def _check_camera(self, entry: Dict[str, object]) -> Tuple[str, str]:
+        raw_url = str(entry.get("url") or "")
+        if not raw_url:
+            return "offline", "No URL configured"
+
+        parsed = urlsplit(raw_url)
+        if not parsed.scheme:
+            parsed = urlsplit(f"http://{raw_url}")
+
+        if parsed.scheme not in ("http", "https"):
+            return "offline", f"Unsupported protocol: {parsed.scheme}"
+
+        normalized = self._normalize_url(parsed)
+        if not normalized:
+            return "offline", "Invalid URL"
+
+        request = urllib.request.Request(normalized, method="GET")
+        start = time.time()
+        try:
+            with urllib.request.urlopen(request, timeout=3.0) as response:
+                latency_ms = (time.time() - start) * 1000.0
+                if 200 <= response.status < 500:
+                    return "online", f"{latency_ms:.0f} ms"
+                return "offline", f"HTTP {response.status}"
+        except Exception as exc:
+            message = str(exc).split("\n")[0]
+            if len(message) > 40:
+                message = message[:40] + "…"
+            return "offline", message
+
+    @staticmethod
+    def _normalize_url(parsed) -> Optional[str]:
+        if not parsed.netloc:
+            return None
+        path = parsed.path or "/"
+        if path.endswith("/offer"):
+            path = path[: -len("/offer")] or "/"
+        return urlunsplit((parsed.scheme, parsed.netloc, path or "/", "", ""))
+
+    def _trigger_manual_refresh(self) -> None:
+        self.refresh_event.set()
+
+    def _update_summary(self) -> None:
+        total = len(self.cameras)
+        online = sum(1 for entry in self.cameras if entry.get("status") == "online")
+        self.summary_var.set(f"{online}/{total} cameras online")
+
+    def _update_start_button_state(self) -> None:
+        all_online = all(
+            entry.get("status") == "online"
+            for entry in self.cameras
+            if entry.get("requires_connection", True)
+        )
+        if all_online or self.override_var.get():
+            self.start_button.config(state=tk.NORMAL)
+        else:
+            self.start_button.config(state=tk.DISABLED)
+
+    def _cleanup(self) -> None:
+        self.running = False
+        self.refresh_event.set()
+        try:
+            self.window.grab_release()
+        except Exception:
+            pass
+
+    def _on_cancel(self) -> None:
+        self._cleanup()
+        self.window.destroy()
+
+    def _on_start(self) -> None:
+        offline = [entry for entry in self.cameras if entry.get("status") != "online"]
+        if offline and not self.override_var.get():
+            messagebox.showwarning(
+                "Connections Pending", "Some cameras are still offline. Enable override to continue."
+            )
+            return
+
+        if offline and self.override_var.get():
+            names = ", ".join(str(entry.get("label", "")) for entry in offline)
+            proceed = messagebox.askyesno(
+                "Override Offline Cameras",
+                f"The following cameras are offline: {names}\nLaunch live mode anyway?",
+            )
+            if not proceed:
+                return
+
+        self.launcher.log_to_terminal("Launching live mode…")
+        self._cleanup()
+        self.window.destroy()
+        self.launch_callback()
 
 class InstallerWindow:
     """GUI installer window for control or node stack"""
