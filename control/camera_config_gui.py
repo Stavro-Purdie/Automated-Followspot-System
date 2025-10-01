@@ -25,6 +25,43 @@ import asyncio
 import aiohttp
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
+try:
+    from launcher_gui import ensure_window_fits_content
+except Exception:
+    def ensure_window_fits_content(
+        window: tk.Toplevel | tk.Tk,
+        *,
+        min_width: int = 800,
+        min_height: int = 600,
+        padding: int = 48,
+        center: bool = True,
+    ) -> None:
+        """Best-effort fallback if launcher helper isn't available."""
+
+        try:
+            window.update_idletasks()
+        except Exception:
+            return
+
+        width = max(min_width, window.winfo_reqwidth() + padding)
+        height = max(min_height, window.winfo_reqheight() + padding)
+
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+
+        width = min(width, max(320, screen_width - 80))
+        height = min(height, max(240, screen_height - 80))
+
+        if center:
+            x = max(0, (screen_width - width) // 2)
+            y = max(0, (screen_height - height) // 2)
+            geometry = f"{int(width)}x{int(height)}+{int(x)}+{int(y)}"
+        else:
+            geometry = f"{int(width)}x{int(height)}"
+
+        window.geometry(geometry)
+        window.minsize(int(width), int(height))
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -76,6 +113,13 @@ class CameraConfigGUI:
         
         # Setup GUI
         self.setup_gui()
+        ensure_window_fits_content(
+            self.root,
+            min_width=1400,
+            min_height=900,
+            padding=80,
+            center=True,
+        )
         
         # Update GUI with loaded configuration
         self.refresh_gui_from_config()
@@ -877,6 +921,14 @@ class CameraDialog:
         
         ttk.Button(button_frame, text="OK", command=self.ok_clicked).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=self.cancel_clicked).pack(side=tk.LEFT, padx=5)
+        
+        ensure_window_fits_content(
+            self.dialog,
+            min_width=420,
+            min_height=220,
+            padding=36,
+            center=False,
+        )
         
         # Focus on first entry
         camera_id_entry.focus()

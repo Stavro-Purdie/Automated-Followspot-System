@@ -25,6 +25,44 @@ import urllib.request
 
 from update_manager import UpdateManager, UpdateError, CommitInfo
 
+
+def ensure_window_fits_content(
+    window: tk.Toplevel | tk.Tk,
+    *,
+    min_width: int = 800,
+    min_height: int = 600,
+    padding: int = 48,
+    center: bool = True,
+) -> None:
+    """Resize a window so its content fits comfortably without manual resizing."""
+
+    try:
+        window.update_idletasks()
+    except Exception:
+        return
+
+    requested_width = window.winfo_reqwidth() + padding
+    requested_height = window.winfo_reqheight() + padding
+
+    width = max(min_width, requested_width)
+    height = max(min_height, requested_height)
+
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+
+    width = min(width, max(320, screen_width - 80))
+    height = min(height, max(240, screen_height - 80))
+
+    if center:
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+        geometry = f"{int(width)}x{int(height)}+{int(x)}+{int(y)}"
+    else:
+        geometry = f"{int(width)}x{int(height)}"
+
+    window.geometry(geometry)
+    window.minsize(int(width), int(height))
+
 class LauncherGUI:
     """High-level coordinator for the launcher window and its helper dialogs."""
     def __init__(self):
@@ -50,6 +88,7 @@ class LauncherGUI:
         self.create_widgets()
         self.build_common_menubar(self.root)
         self.update_ui_state()
+        ensure_window_fits_content(self.root, min_width=920, min_height=720, padding=60, center=True)
         self.root.after(2000, lambda: self.check_updates(auto_triggered=True))
         
         # Start periodic checks
@@ -800,6 +839,7 @@ class LauncherGUI:
         except Exception as exc:
             text_widget.insert(tk.END, f"Failed to read log file: {exc}")
         text_widget.config(state=tk.DISABLED)
+        ensure_window_fits_content(viewer, min_width=760, min_height=540, padding=48, center=True)
     
     # Installation methods
     def install_control_stack(self):
@@ -1471,6 +1511,13 @@ class ConnectionStatusWindow:
             return
 
         self._build_ui()
+        ensure_window_fits_content(
+            self.window,
+            min_width=1024 if self.allow_launch else 900,
+            min_height=720,
+            padding=72,
+            center=True,
+        )
 
         if self.modal:
             try:
@@ -1715,6 +1762,8 @@ class ConnectionStatusWindow:
 
         self._update_summary()
         self._update_start_button_state()
+        if not self.allow_launch:
+            self.summary_var.set("Connection status monitor – close when finished")
 
     def _poll_status_loop(self) -> None:
         while self.running:
@@ -1944,6 +1993,7 @@ class InstallerWindow:
         menubar.add_cascade(label="Actions", menu=actions_menu)
         
         self.setup_installer_ui()
+        ensure_window_fits_content(self.window, min_width=780, min_height=560, padding=64, center=True)
     
     def setup_installer_ui(self):
         """Setup installer UI"""
@@ -2102,17 +2152,11 @@ class StatusWindow:
         
         self.window = tk.Toplevel()
         self.window.title("System Status - Automated Followspot System")
-        self.window.geometry("800x600")
         self.window.resizable(True, True)
         self.parent.build_common_menubar(self.window)
         
-        # Center the window
-        self.window.update_idletasks()
-        x = (self.window.winfo_screenwidth() // 2) - (800 // 2)
-        y = (self.window.winfo_screenheight() // 2) - (600 // 2)
-        self.window.geometry(f"800x600+{x}+{y}")
-        
         self.setup_ui()
+        ensure_window_fits_content(self.window, min_width=920, min_height=720, padding=64, center=True)
     
     def setup_ui(self):
         """Setup status window UI"""
@@ -2532,6 +2576,7 @@ class DiagnosticsWindow:
         menubar.add_cascade(label="Diagnostics", menu=diagnostics_menu)
         
         self.setup_ui()
+        ensure_window_fits_content(self.window, min_width=780, min_height=560, padding=64, center=True)
     
     def setup_ui(self):
         """Setup diagnostics UI"""
@@ -2635,6 +2680,7 @@ class AboutWindow:
         self.parent.build_common_menubar(self.window)
         
         self.setup_ui()
+        ensure_window_fits_content(self.window, min_width=560, min_height=460, padding=48, center=True)
     
     def setup_ui(self):
         """Setup about UI"""
@@ -2711,6 +2757,7 @@ class SettingsWindow:
         ]
         
         self.setup_ui()
+        ensure_window_fits_content(self.window, min_width=820, min_height=880, padding=72, center=True)
     
     def setup_ui(self):
         """Setup settings UI"""

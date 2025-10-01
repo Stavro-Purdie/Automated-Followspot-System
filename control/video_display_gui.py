@@ -27,6 +27,43 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+def ensure_window_fits_content(
+    window: tk.Toplevel | tk.Tk,
+    *,
+    min_width: int = 900,
+    min_height: int = 600,
+    padding: int = 48,
+    center: bool = True,
+) -> None:
+    """Resize a window so that all widgets are visible without manual resizing."""
+
+    try:
+        window.update_idletasks()
+    except Exception:
+        return
+
+    requested_width = window.winfo_reqwidth() + padding
+    requested_height = window.winfo_reqheight() + padding
+
+    width = max(min_width, requested_width)
+    height = max(min_height, requested_height)
+
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+
+    width = min(width, max(320, screen_width - 80))
+    height = min(height, max(240, screen_height - 80))
+
+    if center:
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+        geometry = f"{int(width)}x{int(height)}+{int(x)}+{int(y)}"
+    else:
+        geometry = f"{int(width)}x{int(height)}"
+
+    window.geometry(geometry)
+    window.minsize(int(width), int(height))
+
 try:
     # Data fusion for IR + ReID
     from fusion.data_fusion import DataFusion  # type: ignore
@@ -278,6 +315,7 @@ class VideoDisplayGUI:
         
         # Status bar (bottom)
         self.setup_status_bar(main_frame)
+        ensure_window_fits_content(self.root, min_width=1200, min_height=820, padding=80, center=True)
         
     def setup_control_panel(self, parent):
         """Layout the tactile controls operators reach for during a show."""
@@ -952,14 +990,7 @@ Performance:
         close_button = ttk.Button(main_frame, text="Close", 
                                  command=self.help_window.destroy)
         close_button.grid(row=2, column=0, pady=(20, 0), sticky=tk.E)
-        
-        # Center window on screen initially
-        self.help_window.update_idletasks()
-        x = (self.help_window.winfo_screenwidth() // 2) - (500 // 2)
-        y = (self.help_window.winfo_screenheight() // 2) - (600 // 2)
-        self.help_window.geometry(f"500x600+{x}+{y}")
-        
-        # Focus on help window
+        ensure_window_fits_content(self.help_window, min_width=640, min_height=720, padding=56, center=True)
         self.help_window.focus_set()
     
     def show_about(self):
