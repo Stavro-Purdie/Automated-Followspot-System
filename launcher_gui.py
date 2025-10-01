@@ -1762,8 +1762,6 @@ class ConnectionStatusWindow:
 
         self._update_summary()
         self._update_start_button_state()
-        if not self.allow_launch:
-            self.summary_var.set("Connection status monitor – close when finished")
 
     def _poll_status_loop(self) -> None:
         while self.running:
