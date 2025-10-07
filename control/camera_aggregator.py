@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
-# Multi-Camera WebRTC Client
-# Processes multiple camera feeds and combines them into a single stream for IR beacon detection.
+'''
+Multi-Camera WebRTC Client
+Processes multiple camera feeds and combines them into a single stream for IR beacon detection.
+'''
 
 import asyncio
 import json
@@ -13,7 +15,7 @@ from queue import Queue, Empty
 import argparse
 import time
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 import aiohttp
@@ -23,14 +25,24 @@ from aiortc import RTCPeerConnection, RTCSessionDescription
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("multi_camera_client")
 
-# Import demo mode and connection dialog
+# Import demo mode support; connection dialog is optional
 try:
     from demo_mode import DemoCameraManager
-    from connection_dialog import show_connection_dialog
     DEMO_MODE_AVAILABLE = True
 except ImportError as e:
+    DemoCameraManager = None  # type: ignore[misc]
     logger.warning(f"Demo mode not available: {e}")
     DEMO_MODE_AVAILABLE = False
+
+_show_connection_dialog: Optional[Callable[..., str]] = None
+try:
+    from connection_dialog import show_connection_dialog as _imported_connection_dialog  # type: ignore[import]
+except ImportError:
+    logger.debug("Connection dialog not available; proceeding without GUI prompts.")
+else:
+    _show_connection_dialog = _imported_connection_dialog
+
+show_connection_dialog = _show_connection_dialog
 
 @dataclass
 class CameraConfig:
@@ -105,13 +117,13 @@ class MultiCameraManager:
             
         except Exception as e:
             logger.error(f"Error loading configuration: {e}")
-    
+
     def init_demo_mode(self):
         """Initialize demo mode with simulated cameras"""
-        if not DEMO_MODE_AVAILABLE:
+        if not DEMO_MODE_AVAILABLE or DemoCameraManager is None:
             logger.error("Demo mode not available - required modules not found")
             return
-        
+
         logger.info("Initializing demo mode...")
         self.demo_manager = DemoCameraManager(self.cameras)
     
@@ -525,9 +537,12 @@ async def run_multi_camera_client(config_file: str, dry_run: bool = False):
     """Main multi-camera client with connection retry and demo mode support"""
     retry_count = 0
     max_retries = 3
+    manager: Optional[MultiCameraManager] = None
+    display_thread: Optional[Thread] = None
     
     while retry_count <= max_retries:
         manager = MultiCameraManager(config_file, demo_mode=False)
+        assert manager is not None
         
         if not manager.cameras:
             logger.error("No cameras configured. Please run camera_config_gui.py first to configure cameras.")
@@ -567,13 +582,13 @@ async def run_multi_camera_client(config_file: str, dry_run: bool = False):
             break
         elif successful_connections > 0:
             # Partial success - let user choose
-            if DEMO_MODE_AVAILABLE and not dry_run:
+            if show_connection_dialog and not dry_run:
                 choice = show_connection_dialog(
                     failed_cameras=failed_cameras,
                     total_cameras=len(enabled_cameras)
                 )
             else:
-                choice = "continue"  # In dry-run mode, just continue
+                choice = "continue"  # Without dialog just continue
             
             if choice == "continue":
                 logger.info(f"Continuing with {successful_connections} connected camera(s)")
@@ -584,7 +599,8 @@ async def run_multi_camera_client(config_file: str, dry_run: bool = False):
                     logger.info(f"Retrying connections (attempt {retry_count}/{max_retries})...")
                     manager.running = False
                     await cleanup_connections(manager)
-                    display_thread.join(timeout=2.0)
+                    if display_thread:
+                        display_thread.join(timeout=2.0)
                     continue
                 else:
                     logger.error("Maximum retry attempts reached")
@@ -594,7 +610,8 @@ async def run_multi_camera_client(config_file: str, dry_run: bool = False):
                 logger.info("Entering demo mode...")
                 manager.running = False
                 await cleanup_connections(manager)
-                display_thread.join(timeout=2.0)
+                if display_thread:
+                    display_thread.join(timeout=2.0)
                 return await run_demo_mode(config_file, dry_run)
             elif choice == "exit":
                 logger.info("User chose to exit")
@@ -603,13 +620,13 @@ async def run_multi_camera_client(config_file: str, dry_run: bool = False):
                 return
         else:
             # No connections successful
-            if DEMO_MODE_AVAILABLE and not dry_run:
+            if show_connection_dialog and not dry_run:
                 choice = show_connection_dialog(
                     failed_cameras=failed_cameras,
                     total_cameras=len(enabled_cameras)
                 )
             else:
-                choice = "exit"  # In dry-run mode, just exit if no connections
+                choice = "exit"  # Without dialog fall back to exiting
             
             if choice == "retry":
                 retry_count += 1
@@ -617,7 +634,8 @@ async def run_multi_camera_client(config_file: str, dry_run: bool = False):
                     logger.info(f"Retrying connections (attempt {retry_count}/{max_retries})...")
                     manager.running = False
                     await cleanup_connections(manager)
-                    display_thread.join(timeout=2.0)
+                    if display_thread:
+                        display_thread.join(timeout=2.0)
                     continue
                 else:
                     logger.error("Maximum retry attempts reached")
@@ -627,7 +645,8 @@ async def run_multi_camera_client(config_file: str, dry_run: bool = False):
                 logger.info("Entering demo mode...")
                 manager.running = False
                 await cleanup_connections(manager)
-                display_thread.join(timeout=2.0)
+                if display_thread:
+                    display_thread.join(timeout=2.0)
                 return await run_demo_mode(config_file, dry_run)
             else:
                 logger.error("Failed to connect to any cameras.")
@@ -636,6 +655,9 @@ async def run_multi_camera_client(config_file: str, dry_run: bool = False):
                 return
     
     # Keep running with successful connections
+    if manager is None or display_thread is None:
+        return
+
     try:
         while manager.running:
             await asyncio.sleep(1)

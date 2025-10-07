@@ -1,3 +1,3 @@
-"""Data fusion helpers for combining IR and ReID tracking."""
+# Easy way to expose data fusion helpers
 
 from .data_fusion import DataFusion  # noqa: F401

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic camera feeds used for demos, rehearsals, and test rigs.
 
-This script generates  IR beacons that bounce around so the rest of the
-pipeline can be tested with no hardware connected.
+glorified bouncing DVD logo at this point
 """
 
 import cv2

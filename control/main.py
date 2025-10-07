@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Command-line entry point for the multi-camera followspot control room.
-
-It decides whether we boot into live mode, spin up the camera configurator, or
+"""
+Decides whether we boot into live mode, spin up the camera configurator, or
 launch the demos. 
 """
 

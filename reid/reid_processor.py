@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""Real-time ReID engine that keeps pace with a live followspot show.
-
-This module juggles model loading, identity gallery lookups, and platform quirks
-while trying to stay under ~55 ms per frame.
+"""Real-time ReID engine.
+tries to stay under ~55ms latency
 """
 
 import cv2

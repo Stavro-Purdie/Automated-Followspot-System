@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """
 Data fusion helpers for blending vision tracking with beacon telemetry.
-
-This file glues together two very different data sources, the computer-vision
-ReID pipeline that recognises people and the hardware IR beacon network that is
-great at spotting precise stage positions.
 """
 
 import numpy as np

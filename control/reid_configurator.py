@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-Guide operators through tuning the ReID camera and stage measurements.
-This window is where you pick camera devices, tweak calibration points, and keep the front
-array's metrics in sync with reality.
+Guides operators through tuning the ReID camera and stage measurements.
 """
 
 import tkinter as tk

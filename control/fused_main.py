@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Tie the roof IR rig and the front ReID camera into one feedback loop.
-
-This script is often run by engineers while tuning the fusion pipeline
+"""
+Tie the roof IR rig and the front ReID camera into one feedback loop.
 """
 
 import asyncio

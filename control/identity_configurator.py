@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
-"""Curates the performer roster—with photos, metadata, and quick edits.
-
-The identity configurator gives creative teams a comfortable UI for keeping the
-gallery in sync: update costume codes, drop in new headshots, or retire old
-performers without hand-editing JSON.
+"""
+Curates the performer roster—with photos, metadata, and quick edits.
 """
 
 from __future__ import annotations

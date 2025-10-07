@@ -2,7 +2,7 @@
 """
 GUI Launcher for Automated Followspot System
 This launcher wraps every maintenance task—installing updates, opening the
-control suite, peeking at logs—into one approachable window.
+control suite, logs, into one semi-approachable window.
 """
 
 import tkinter as tk

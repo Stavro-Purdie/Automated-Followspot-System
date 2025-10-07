@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""Interactive control room for wrangling every camera in the rig.
-
-This GUI is the operator's playground: they can tune crops, rearrange the grid,
-and sanity-check WebRTC connections without touching JSON by hand.
+"""
+Interactive control room for wrangling every camera in the rig.
 """
 
 import sys

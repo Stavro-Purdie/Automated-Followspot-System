@@ -9,9 +9,9 @@
     "control_stack": {
       "installed": true,
       "version": "1.0.0",
-      "install_date": "2025-09-17T11:45:02.046067",
+      "install_date": "2025-10-08T11:15:33.834688",
       "dependencies_verified": false,
-      "last_dependency_check": "2025-10-02 09:48:19"
+      "last_dependency_check": "2025-10-08 11:15:33"
     },
     "node_stack": {
       "installed": false,

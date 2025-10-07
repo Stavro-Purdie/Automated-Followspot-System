@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Keep tabs on performers by blending ReID signals with geometry and timing.
-
-This tracker is the glue between raw detections and the fused followspot view.
+glue between raw detections and the fused followspot view.
 """
 
 import numpy as np

@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """
 Operator-facing dashboard for the live multi-camera followspot feed.
-
-This window is central to the system. It streams the stitched video
-wall, layers tracking overlays, and gives the operator quick controls for
-screenshots, thresholds, and diagnostic panels.
 """
 
 import tkinter as tk
