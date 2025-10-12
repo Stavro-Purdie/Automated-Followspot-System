@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 GUI Launcher for Automated Followspot System
-Provides graphical interface for installation, configuration, and management of Control and Node stacks.
+This launcher wraps every maintenance task—installing updates, opening the
+control suite, logs, into one semi-approachable window.
 """
 
 import tkinter as tk
@@ -14,28 +15,81 @@ import threading
 import time
 import platform
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import queue
 import webbrowser
+import shutil
+from urllib.parse import urlparse, urlsplit, urlunsplit
+from typing import Callable, Dict, Optional, List, Tuple, Any
+import urllib.request
+
+from update_manager import UpdateManager, UpdateError, CommitInfo
+
+
+def ensure_window_fits_content(
+    window: tk.Toplevel | tk.Tk,
+    *,
+    min_width: int = 800,
+    min_height: int = 600,
+    padding: int = 48,
+    center: bool = True,
+) -> None:
+    """Resize a window so its content fits comfortably without manual resizing."""
+
+    try:
+        window.update_idletasks()
+    except Exception:
+        return
+
+    requested_width = window.winfo_reqwidth() + padding
+    requested_height = window.winfo_reqheight() + padding
+
+    width = max(min_width, requested_width)
+    height = max(min_height, requested_height)
+
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+
+    width = min(width, max(320, screen_width - 80))
+    height = min(height, max(240, screen_height - 80))
+
+    if center:
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+        geometry = f"{int(width)}x{int(height)}+{int(x)}+{int(y)}"
+    else:
+        geometry = f"{int(width)}x{int(height)}"
+
+    window.geometry(geometry)
+    window.minsize(int(width), int(height))
 
 class LauncherGUI:
+    """High-level coordinator for the launcher window and its helper dialogs."""
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Automated Followspot System Launcher")
         self.root.geometry("900x700")
         self.root.resizable(True, True)
+        self.project_root = Path(__file__).resolve().parent
+        self.update_check_in_progress = False
+        self.update_manager = UpdateManager(
+            "Stavro-Purdie", "Automated-Followspot-System", self.project_root
+        )
         
         # Initialize configuration
         self.config_file = "launcher_config.json"
         self.config = self.load_config()
-        
+
         # Terminal output queue for installations
         self.terminal_queue = queue.Queue()
         
         # Setup GUI
         self.setup_styles()
         self.create_widgets()
+        self.build_common_menubar(self.root)
         self.update_ui_state()
+        ensure_window_fits_content(self.root, min_width=920, min_height=720, padding=60, center=True)
+        self.root.after(2000, lambda: self.check_updates(auto_triggered=True))
         
         # Start periodic checks
         self.root.after(1000, self.periodic_checks)
@@ -64,6 +118,13 @@ class LauncherGUI:
                     "dependencies_verified": False,
                     "last_dependency_check": None,
                     "cron_enabled": False
+                },
+                "front_node_stack": {
+                    "installed": False,
+                    "version": None,
+                    "install_date": None,
+                    "dependencies_verified": False,
+                    "last_dependency_check": None
                 }
             },
             "settings": {
@@ -71,6 +132,28 @@ class LauncherGUI:
                 "check_interval_days": 7,
                 "allow_concurrent_stacks": False,
                 "debug_mode": False
+            },
+            "update_settings": {
+                "release_channel": "stable",
+                "auto_check": True,
+                "check_interval_hours": 12,
+                "auto_update_nodes": True,
+                "branches": {
+                    "main": {
+                        "last_remote": None,
+                        "last_prompted": None,
+                        "last_applied": None,
+                        "last_node_applied": None,
+                        "last_checked": None
+                    },
+                    "testing": {
+                        "last_remote": None,
+                        "last_prompted": None,
+                        "last_applied": None,
+                        "last_node_applied": None,
+                        "last_checked": None
+                    }
+                }
             }
         }
         
@@ -86,6 +169,13 @@ class LauncherGUI:
                         for subkey in default_config[key]:
                             if subkey not in config[key]:
                                 config[key][subkey] = default_config[key][subkey]
+                        if key == "update_settings":
+                            branch_defaults = default_config["update_settings"].get("branches", {})
+                            branches = config[key].setdefault("branches", {})
+                            for branch_name, state_defaults in branch_defaults.items():
+                                branch_state = branches.setdefault(branch_name, {})
+                                for state_key, state_value in state_defaults.items():
+                                    branch_state.setdefault(state_key, state_value)
                 return config
             except Exception as e:
                 messagebox.showerror("Configuration Error", f"Failed to load config: {e}")
@@ -102,21 +192,10 @@ class LauncherGUI:
             messagebox.showerror("Configuration Error", f"Failed to save config: {e}")
     
     def setup_styles(self):
-        """Setup custom styles for the GUI"""
+        """Setup basic styles while keeping the system theme"""
         self.style = ttk.Style()
-        self.style.theme_use('clam')
-        
-        # Define custom colors
-        self.colors = {
-            'primary': '#2E86AB',
-            'secondary': '#A23B72',
-            'success': '#F18F01',
-            'warning': '#C73E1D',
-            'background': '#F5F5F5',
-            'text': '#333333'
-        }
-        
-        # Configure styles
+
+        # Configure typography similar to other tools in the suite
         self.style.configure('Title.TLabel', font=('Arial', 16, 'bold'))
         self.style.configure('Subtitle.TLabel', font=('Arial', 12, 'bold'))
         self.style.configure('Status.TLabel', font=('Arial', 10))
@@ -124,187 +203,399 @@ class LauncherGUI:
     
     def create_widgets(self):
         """Create the main GUI widgets"""
-        # Main container
         main_frame = ttk.Frame(self.root, padding="20")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Configure grid weights
+        main_frame.grid(row=0, column=0, sticky="nsew")
+
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
-        
-        # Title
+        for col in range(3):
+            main_frame.columnconfigure(col, weight=1)
+
         title_label = ttk.Label(main_frame, text="Automated Followspot System", style='Title.TLabel')
         title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
-        
-        # System status frame
+
         self.create_status_frame(main_frame)
-        
-        # Installation options frame
         self.create_installation_frame(main_frame)
-        
-        # Control options frame (shown when control stack is installed)
         self.create_control_frame(main_frame)
-        
-        # Node options frame (shown when node stack is installed)
         self.create_node_frame(main_frame)
-        
-        # General options frame
         self.create_general_frame(main_frame)
-        
-        # Terminal output frame
         self.create_terminal_frame(main_frame)
+
+    def build_common_menubar(
+        self,
+        window,
+        *,
+        save_command: Optional[Callable[[], None]] = None,
+        close_command: Optional[Callable[[], None]] = None,
+    ) -> tk.Menu:
+        """Attach and return a standard menubar for launcher-related windows."""
+
+        menubar = tk.Menu(window)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Settings…", command=self.show_settings)
+        file_menu.add_command(
+            label="Check for Updates",
+            command=lambda: self.check_updates(auto_triggered=False),
+        )
+        if save_command:
+            file_menu.add_separator()
+            file_menu.add_command(label="Save", command=save_command)
+
+        if close_command is None:
+            if window is self.root:
+                close_action: Callable[[], None] = self.root.quit
+            else:
+                close_action = window.destroy  # type: ignore[assignment]
+        else:
+            close_action = close_command
+
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Exit" if window is self.root else "Close",
+            command=close_action,
+        )
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(
+            label="Roof Array Configuration",
+            command=self.launch_configuration,
+        )
+        tools_menu.add_command(
+            label="ReID Configuration",
+            command=self.launch_reid_configurator,
+        )
+        tools_menu.add_command(
+            label="Identity Configurator",
+            command=self.launch_identity_configurator,
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Connection Status",
+            command=self.node_diagnostics,
+        )
+        tools_menu.add_command(
+            label="Open Settings",
+            command=self.show_settings,
+        )
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(
+            label="System Status Dashboard",
+            command=self.show_status_window,
+        )
+        help_menu.add_separator()
+        help_menu.add_command(label="About", command=self.show_about)
+        help_menu.add_command(label="Report Issue", command=self.report_bug)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        window.config(menu=menubar)
+        return menubar
     
     def create_status_frame(self, parent):
         """Create system status display"""
         status_frame = ttk.LabelFrame(parent, text="System Status", padding="10")
-        status_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        
-        # Control stack status
-        self.control_status_label = ttk.Label(status_frame, text="Control Stack: Not Installed", style='Status.TLabel')
-        self.control_status_label.grid(row=0, column=0, sticky=(tk.W), padx=(0, 20))
-        
-        # Node stack status
-        self.node_status_label = ttk.Label(status_frame, text="Node Stack: Not Installed", style='Status.TLabel')
-        self.node_status_label.grid(row=0, column=1, sticky=(tk.W), padx=(0, 20))
-        
-        # Dependencies status
-        self.deps_status_label = ttk.Label(status_frame, text="Dependencies: Checking...", style='Status.TLabel')
-        self.deps_status_label.grid(row=1, column=0, sticky=(tk.W), padx=(0, 20))
-        
-        # Last check time
+        status_frame.grid(row=1, column=0, columnspan=3, sticky="we", pady=(0, 10))
+
+        self.control_status_label = ttk.Label(
+            status_frame,
+            text="Control Stack: Not Installed",
+            style='Status.TLabel',
+        )
+        self.control_status_label.grid(row=0, column=0, sticky="w", padx=(0, 20))
+
+        self.node_status_label = ttk.Label(
+            status_frame,
+            text="Node Stack: Not Installed",
+            style='Status.TLabel',
+        )
+        self.node_status_label.grid(row=0, column=1, sticky="w", padx=(0, 20))
+
+        self.front_node_status_label = ttk.Label(
+            status_frame,
+            text="Front Node (ReID): Not Installed",
+            style='Status.TLabel',
+        )
+        self.front_node_status_label.grid(row=0, column=2, sticky="w", padx=(0, 20))
+
+        self.deps_status_label = ttk.Label(
+            status_frame,
+            text="Dependencies: Checking...",
+            style='Status.TLabel',
+        )
+        self.deps_status_label.grid(row=1, column=0, sticky="w", padx=(0, 20))
+
         self.check_time_label = ttk.Label(status_frame, text="Last Check: Never", style='Status.TLabel')
-        self.check_time_label.grid(row=1, column=1, sticky=(tk.W))
+        self.check_time_label.grid(row=1, column=1, sticky="w")
     
     def create_installation_frame(self, parent):
         """Create installation options (shown when no stacks are installed)"""
         self.install_frame = ttk.LabelFrame(parent, text="Installation Options", padding="10")
-        self.install_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        
-        # Installation buttons
-        ttk.Button(self.install_frame, text="Install Control Stack", 
-                  command=self.install_control_stack, style='Primary.TButton').grid(row=0, column=0, padx=(0, 10))
-        
-        ttk.Button(self.install_frame, text="Install Node Stack", 
-                  command=self.install_node_stack, style='Primary.TButton').grid(row=0, column=1, padx=(0, 10))
-        
-        # Info labels
-        ttk.Label(self.install_frame, text="Control Stack: Camera management and tracking interface").grid(row=1, column=0, sticky=(tk.W), pady=(5, 0))
-        ttk.Label(self.install_frame, text="Node Stack: Camera server for streaming and capture").grid(row=1, column=1, sticky=(tk.W), pady=(5, 0))
+        self.install_frame.grid(row=2, column=0, columnspan=3, sticky="we", pady=(0, 10))
+
+        self.install_frame.columnconfigure(0, weight=1)
+        self.install_frame.columnconfigure(1, weight=1)
+        self.install_frame.columnconfigure(2, weight=1)
+
+        ttk.Button(
+            self.install_frame,
+            text="Install Control Stack",
+            command=self.install_control_stack,
+            style='Primary.TButton',
+        ).grid(row=0, column=0, padx=(0, 10), sticky="ew")
+
+        ttk.Button(
+            self.install_frame,
+            text="Install Node Stack",
+            command=self.install_node_stack,
+            style='Primary.TButton',
+        ).grid(row=0, column=1, padx=(0, 10), sticky="ew")
+
+        ttk.Button(
+            self.install_frame,
+            text="Install Front Node (ReID)",
+            command=self.install_front_node_stack,
+            style='Primary.TButton',
+        ).grid(row=0, column=2, padx=(0, 10), sticky="ew")
+
+        ttk.Label(
+            self.install_frame,
+            text="Control Stack: Roof array fusion UI and operators' console",
+        ).grid(row=1, column=0, sticky="w", pady=(5, 0))
+        ttk.Label(
+            self.install_frame,
+            text="Node Stack: Roof camera streaming server",
+        ).grid(row=1, column=1, sticky="w", pady=(5, 0))
+        ttk.Label(
+            self.install_frame,
+            text="Front Node: ReID camera streaming server",
+        ).grid(row=1, column=2, sticky="w", pady=(5, 0))
     
     def create_control_frame(self, parent):
         """Create control stack options"""
         self.control_frame = ttk.LabelFrame(parent, text="Control Stack", padding="10")
-        self.control_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
-        
-        # Operation buttons
-        ttk.Button(self.control_frame, text="Launch Configuration", 
-                  command=self.launch_configuration).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.control_frame, text="Offline Mode", 
-                  command=self.launch_offline_mode).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.control_frame, text="Live Mode", 
-                  command=self.launch_live_mode).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        # Maintenance options
-        ttk.Separator(self.control_frame, orient='horizontal').grid(row=3, column=0, sticky=(tk.W, tk.E), pady=10)
-        
-        ttk.Button(self.control_frame, text="Repair Installation", 
-                  command=self.repair_control).grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.control_frame, text="Uninstall", 
-                  command=self.uninstall_control).grid(row=5, column=0, sticky=(tk.W, tk.E))
-        
+        self.control_frame.grid(row=3, column=0, sticky="nsew", padx=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Roof Array Configuration (IR Beacon Tracking)",
+            command=self.launch_configuration,
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Front Array Configuration (ReID Tracking)",
+            command=self.launch_reid_configurator,
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Offline Mode",
+            command=self.launch_offline_mode,
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Live Mode",
+            command=self.launch_live_mode,
+        ).grid(row=3, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Separator(self.control_frame, orient='horizontal').grid(row=4, column=0, sticky="ew", pady=10)
+
+        ttk.Button(
+            self.control_frame,
+            text="Repair Installation",
+            command=self.repair_control,
+        ).grid(row=5, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.control_frame,
+            text="Uninstall",
+            command=self.uninstall_control,
+        ).grid(row=6, column=0, sticky="ew")
+
         self.control_frame.columnconfigure(0, weight=1)
     
     def create_node_frame(self, parent):
         """Create node stack options"""
-        self.node_frame = ttk.LabelFrame(parent, text="Node Stack", padding="10")
-        self.node_frame.grid(row=3, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0))
-        
-        # Status and control
-        self.node_running_label = ttk.Label(self.node_frame, text="Status: Stopped")
-        self.node_running_label.grid(row=0, column=0, sticky=(tk.W), pady=(0, 10))
-        
-        ttk.Button(self.node_frame, text="Start Node Server", 
-                  command=self.start_node_server).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.node_frame, text="Stop Node Server", 
-                  command=self.stop_node_server).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        # Cron job management
-        ttk.Separator(self.node_frame, orient='horizontal').grid(row=3, column=0, sticky=(tk.W, tk.E), pady=10)
-        
-        self.cron_var = tk.BooleanVar()
-        self.cron_checkbox = ttk.Checkbutton(self.node_frame, text="Start at Boot (Cron)", 
-                                           variable=self.cron_var, command=self.toggle_cron)
-        self.cron_checkbox.grid(row=4, column=0, sticky=(tk.W), pady=(0, 5))
-        
-        # Maintenance options
-        ttk.Button(self.node_frame, text="Diagnostics", 
-                  command=self.node_diagnostics).grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.node_frame, text="Repair Installation", 
-                  command=self.repair_node).grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.node_frame, text="Reinstall", 
-                  command=self.reinstall_node).grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(self.node_frame, text="Uninstall", 
-                  command=self.uninstall_node).grid(row=8, column=0, sticky=(tk.W, tk.E))
-        
+        self.node_frame = ttk.LabelFrame(parent, text="Camera Servers", padding="10")
+        self.node_frame.grid(row=3, column=1, sticky="nsew", padx=(5, 0))
         self.node_frame.columnconfigure(0, weight=1)
+
+        self.roof_frame = ttk.LabelFrame(self.node_frame, text="Roof Node (IR)", padding="10")
+        self.roof_frame.grid(row=0, column=0, sticky="ew")
+        self.roof_frame.columnconfigure(0, weight=1)
+
+        self.node_running_label = ttk.Label(self.roof_frame, text="Status: Stopped")
+        self.node_running_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        ttk.Button(
+            self.roof_frame,
+            text="Start Node Server",
+            command=self.start_node_server,
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.roof_frame,
+            text="Stop Node Server",
+            command=self.stop_node_server,
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Separator(self.roof_frame, orient='horizontal').grid(row=3, column=0, sticky="ew", pady=10)
+
+        self.cron_var = tk.BooleanVar()
+        self.cron_checkbox = ttk.Checkbutton(
+            self.roof_frame,
+            text="Start at Boot (Cron)",
+            variable=self.cron_var,
+            command=self.toggle_cron,
+        )
+        self.cron_checkbox.grid(row=4, column=0, sticky="w", pady=(0, 5))
+
+        ttk.Button(
+            self.roof_frame,
+            text="Connection Status",
+            command=self.node_diagnostics,
+        ).grid(
+            row=5,
+            column=0,
+            sticky="ew",
+            pady=(0, 5),
+        )
+        ttk.Button(self.roof_frame, text="Repair Installation", command=self.repair_node).grid(
+            row=6,
+            column=0,
+            sticky="ew",
+            pady=(0, 5),
+        )
+        ttk.Button(self.roof_frame, text="Reinstall", command=self.reinstall_node).grid(
+            row=7,
+            column=0,
+            sticky="ew",
+            pady=(0, 5),
+        )
+        ttk.Button(self.roof_frame, text="Uninstall", command=self.uninstall_node).grid(row=8, column=0, sticky="ew")
+
+        self.front_node_frame = ttk.LabelFrame(self.node_frame, text="Front Node (ReID)", padding="10")
+        self.front_node_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        self.front_node_frame.columnconfigure(0, weight=1)
+
+        self.front_node_status_label = ttk.Label(self.front_node_frame, text="Status: Stopped")
+        self.front_node_status_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="Start Front Node",
+            command=self.start_front_node_stack,
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="Stop Front Node",
+            command=self.stop_front_node_stack,
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="View Front Node Log",
+            command=lambda: self.show_log("front_node"),
+        ).grid(row=3, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="Reinstall Front Node",
+            command=lambda: self.run_installer("front_node", reinstall_mode=True),
+        ).grid(row=4, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Button(
+            self.front_node_frame,
+            text="Uninstall Front Node",
+            command=self.uninstall_front_node,
+        ).grid(row=5, column=0, sticky="ew")
+
+        # Hide frames until stacks are detected as installed
+        self.node_frame.grid_remove()
+        self.front_node_frame.grid_remove()
     
     def create_general_frame(self, parent):
-        """Create general options"""
-        general_frame = ttk.LabelFrame(parent, text="General", padding="10")
-        general_frame.grid(row=3, column=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0))
-        
-        ttk.Button(general_frame, text="About", 
-                  command=self.show_about).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(general_frame, text="Report Bug", 
-                  command=self.report_bug).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(general_frame, text="Check Updates", 
-                  command=self.check_updates).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Button(general_frame, text="Settings", 
-                  command=self.show_settings).grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        
-        ttk.Separator(general_frame, orient='horizontal').grid(row=4, column=0, sticky=(tk.W, tk.E), pady=10)
-        
-        ttk.Button(general_frame, text="Exit", 
-                  command=self.root.quit).grid(row=5, column=0, sticky=(tk.W, tk.E))
-        
+        """Create general tools and quick links."""
+        general_frame = ttk.LabelFrame(parent, text="Tools", padding="10")
+        general_frame.grid(row=3, column=2, sticky="nsew", padx=(5, 0))
         general_frame.columnconfigure(0, weight=1)
+
+        identity_frame = ttk.LabelFrame(general_frame, text="Identity Gallery", padding="8")
+        identity_frame.grid(row=0, column=0, sticky="ew")
+        identity_frame.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            identity_frame,
+            text="Manage performers and photos in the dedicated configurator.",
+            wraplength=260,
+            justify="left",
+        ).grid(row=0, column=0, sticky="w")
+
+        ttk.Button(
+            identity_frame,
+            text="Open Identity Configurator",
+            command=self.launch_identity_configurator,
+            style='Primary.TButton',
+        ).grid(row=1, column=0, sticky="ew", pady=(6, 0))
+
+        tools_frame = ttk.LabelFrame(general_frame, text="General Tools", padding="8")
+        tools_frame.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        tools_frame.columnconfigure(0, weight=1)
+
+        ttk.Button(tools_frame, text="About", command=self.show_about).grid(
+            row=0, column=0, sticky="ew", pady=(0, 5)
+        )
+        ttk.Button(tools_frame, text="Report Bug", command=self.report_bug).grid(
+            row=1, column=0, sticky="ew", pady=(0, 5)
+        )
+        ttk.Button(tools_frame, text="Check Updates", command=self.check_updates).grid(
+            row=2, column=0, sticky="ew", pady=(0, 5)
+        )
+        ttk.Button(tools_frame, text="Settings", command=self.show_settings).grid(
+            row=3, column=0, sticky="ew", pady=(0, 5)
+        )
+
+        ttk.Separator(tools_frame, orient='horizontal').grid(row=4, column=0, sticky="ew", pady=10)
+
+        ttk.Button(tools_frame, text="Exit", command=self.root.quit).grid(row=5, column=0, sticky="ew")
     
     def create_terminal_frame(self, parent):
         """Create terminal output display"""
         terminal_frame = ttk.LabelFrame(parent, text="Terminal Output", padding="10")
-        terminal_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(10, 0))
-        
-        # Terminal text widget
-        self.terminal_text = scrolledtext.ScrolledText(terminal_frame, height=15, width=80, 
-                                                       font=('Consolas', 9), bg='black', fg='white')
-        self.terminal_text.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Terminal controls
-        ttk.Button(terminal_frame, text="Clear", 
-                  command=self.clear_terminal).grid(row=1, column=0, sticky=(tk.W), pady=(5, 0))
-        
-        ttk.Button(terminal_frame, text="Save Log", 
-                  command=self.save_terminal_log).grid(row=1, column=1, sticky=(tk.E), pady=(5, 0))
-        
+        terminal_frame.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
+
+        self.terminal_text = scrolledtext.ScrolledText(
+            terminal_frame,
+            height=15,
+            width=80,
+            font=('Consolas', 9),
+            bg='black',
+            fg='white',
+        )
+        self.terminal_text.grid(row=0, column=0, columnspan=2, sticky="nsew")
+
+        ttk.Button(terminal_frame, text="Clear", command=self.clear_terminal).grid(
+            row=1, column=0, sticky="w", pady=(5, 0)
+        )
+        ttk.Button(terminal_frame, text="Save Log", command=self.save_terminal_log).grid(
+            row=1, column=1, sticky="e", pady=(5, 0)
+        )
+
         terminal_frame.columnconfigure(0, weight=1)
         terminal_frame.rowconfigure(0, weight=1)
         parent.rowconfigure(4, weight=1)
     
     def update_ui_state(self):
         """Update UI state based on current configuration"""
-        control_installed = self.config['installations']['control_stack']['installed']
-        node_installed = self.config['installations']['node_stack']['installed']
+        installations = self.config.get('installations', {})
+        control_installed = installations.get('control_stack', {}).get('installed', False)
+        node_installed = installations.get('node_stack', {}).get('installed', False)
+        front_node_installed = installations.get('front_node_stack', {}).get('installed', False)
         
         # Update status labels
         if control_installed:
@@ -314,28 +605,48 @@ class LauncherGUI:
             self.control_status_label.config(text="Control Stack: Not Installed")
         
         if node_installed:
-            version = self.config['installations']['node_stack'].get('version', 'Unknown')
+            version = installations.get('node_stack', {}).get('version', 'Unknown')
             self.node_status_label.config(text=f"Node Stack: Installed (v{version})")
         else:
             self.node_status_label.config(text="Node Stack: Not Installed")
+
+        if front_node_installed:
+            version = installations.get('front_node_stack', {}).get('version', 'Unknown')
+            self.front_node_status_label.config(text=f"Front Node (ReID): Installed (v{version})")
+        else:
+            self.front_node_status_label.config(text="Front Node (ReID): Not Installed")
         
         # Show/hide appropriate frames
-        if not control_installed and not node_installed:
+        if not control_installed and not node_installed and not front_node_installed:
             self.install_frame.grid()
             self.control_frame.grid_remove()
             self.node_frame.grid_remove()
+            self.front_node_frame.grid_remove()
         else:
             self.install_frame.grid_remove()
             if control_installed:
                 self.control_frame.grid()
             else:
                 self.control_frame.grid_remove()
-            if node_installed:
+            if node_installed or front_node_installed:
                 self.node_frame.grid()
-                # Update cron checkbox
-                self.cron_var.set(self.config['installations']['node_stack'].get('cron_enabled', False))
             else:
                 self.node_frame.grid_remove()
+
+            if node_installed:
+                self.roof_frame.grid()
+                self.cron_var.set(installations.get('node_stack', {}).get('cron_enabled', False))
+                self.node_running_label.config(text="Status: Ready")
+            else:
+                self.roof_frame.grid_remove()
+                self.node_running_label.config(text="Status: Not Installed")
+
+            if front_node_installed:
+                self.front_node_frame.grid()
+                self.front_node_status_label.config(text="Status: Ready")
+            else:
+                self.front_node_frame.grid_remove()
+                self.front_node_status_label.config(text="Status: Not Installed")
         
         # Update dependencies status
         self.check_dependencies_async()
@@ -355,9 +666,15 @@ class LauncherGUI:
                     node_deps = self.check_dependencies('node')
                 else:
                     node_deps = True
+
+                # Check front node dependencies
+                if self.config['installations'].get('front_node_stack', {}).get('installed'):
+                    front_deps = self.check_dependencies('front_node')
+                else:
+                    front_deps = True
                 
                 # Update UI
-                self.root.after(0, self.update_deps_status, control_deps and node_deps)
+                self.root.after(0, self.update_deps_status, control_deps and node_deps and front_deps)
                 
             except Exception as e:
                 self.log_to_terminal(f"Error checking dependencies: {e}")
@@ -368,10 +685,14 @@ class LauncherGUI:
     def check_dependencies(self, stack_type):
         """Check if dependencies are installed for given stack"""
         try:
+            base_path = Path(__file__).parent
             if stack_type == 'control':
-                requirements_file = Path(__file__).parent / "control" / "requirements.txt"
+                requirements_file = base_path / "control" / "requirements.txt"
+            elif stack_type == 'front_node':
+                # Front node currently shares dependencies with node stack
+                requirements_file = base_path / "node" / "requirements.txt"
             else:
-                requirements_file = Path(__file__).parent / "node" / "requirements.txt"
+                requirements_file = base_path / "node" / "requirements.txt"
             
             if not requirements_file.exists():
                 return False
@@ -394,7 +715,7 @@ class LauncherGUI:
                         # Skip picamera2 on non-Pi systems
                         if not self.is_raspberry_pi():
                             continue
-                        import picamera2
+                        import picamera2  # type: ignore[import]
                     else:
                         __import__(package_name.replace('-', '_'))
                 except ImportError:
@@ -427,10 +748,11 @@ class LauncherGUI:
         self.check_time_label.config(text=f"Last Check: {now}")
         
         # Update config
-        for stack in ['control_stack', 'node_stack']:
-            if self.config['installations'][stack]['installed']:
-                self.config['installations'][stack]['dependencies_verified'] = deps_ok
-                self.config['installations'][stack]['last_dependency_check'] = now
+        for stack in ['control_stack', 'node_stack', 'front_node_stack']:
+            stack_info = self.config['installations'].get(stack)
+            if stack_info and stack_info.get('installed'):
+                stack_info['dependencies_verified'] = deps_ok
+                stack_info['last_dependency_check'] = now
         
         self.save_config()
     
@@ -438,7 +760,7 @@ class LauncherGUI:
         """Perform periodic system checks"""
         if self.config['settings']['auto_dependency_check']:
             last_check = None
-            for stack in ['control_stack', 'node_stack']:
+            for stack in ['control_stack', 'node_stack', 'front_node_stack']:
                 if self.config['installations'][stack]['installed']:
                     check_date = self.config['installations'][stack].get('last_dependency_check')
                     if check_date:
@@ -452,6 +774,20 @@ class LauncherGUI:
             # Check if we need to run dependency check
             if last_check is None or (datetime.now() - last_check).days >= self.config['settings']['check_interval_days']:
                 self.check_dependencies_async()
+
+        update_settings = self.config.get("update_settings", {})
+        if update_settings.get("auto_check", True) and not self.update_check_in_progress:
+            branch = self.update_manager.channel_to_branch(
+                update_settings.get("release_channel", "stable")
+            )
+            branch_state = self._get_branch_state(branch)
+            last_checked = self._parse_iso_datetime(branch_state.get("last_checked"))
+            interval_hours = max(1, int(update_settings.get("check_interval_hours", 12)))
+            if (
+                last_checked is None
+                or (datetime.now() - last_checked).total_seconds() >= interval_hours * 3600
+            ):
+                self.check_updates(auto_triggered=True)
         
         # Schedule next check
         self.root.after(60000, self.periodic_checks)  # Check every minute
@@ -480,6 +816,30 @@ class LauncherGUI:
                 messagebox.showinfo("Success", f"Log saved to {filename}")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save log: {e}")
+
+    def show_log(self, log_type: str):
+        """Display a saved log file in a simple viewer"""
+        logs_dir = Path(__file__).parent / "logs"
+        log_file = logs_dir / f"{log_type}.log"
+        display_name = log_type.replace('_', ' ').title()
+
+        if not log_file.exists():
+            messagebox.showinfo("Log Viewer", f"No log file found for {display_name}.")
+            return
+
+        viewer = tk.Toplevel(self.root)
+        viewer.title(f"{display_name} Log")
+        viewer.geometry("700x500")
+        self.build_common_menubar(viewer)
+
+        text_widget = scrolledtext.ScrolledText(viewer, wrap=tk.WORD, font=('Consolas', 10))
+        text_widget.pack(fill=tk.BOTH, expand=True)
+        try:
+            text_widget.insert(tk.END, log_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            text_widget.insert(tk.END, f"Failed to read log file: {exc}")
+        text_widget.config(state=tk.DISABLED)
+        ensure_window_fits_content(viewer, min_width=760, min_height=540, padding=48, center=True)
     
     # Installation methods
     def install_control_stack(self):
@@ -489,10 +849,19 @@ class LauncherGUI:
     def install_node_stack(self):
         """Install node stack with GUI installer"""
         self.run_installer("node")
+
+    def install_front_node_stack(self):
+        """Install front node stack with GUI installer"""
+        self.run_installer("front_node")
     
-    def run_installer(self, stack_type):
+    def run_installer(self, stack_type, repair_mode=False, reinstall_mode=False):
         """Run installer for specified stack type"""
-        installer_window = InstallerWindow(self, stack_type)
+        installer_window = InstallerWindow(
+            self,
+            stack_type,
+            repair_mode=repair_mode,
+            reinstall_mode=reinstall_mode,
+        )
         installer_window.show()
     
     # Control stack methods
@@ -501,6 +870,19 @@ class LauncherGUI:
         script_path = Path(__file__).parent / "control" / "camera_config_gui.py"
         self.run_script(script_path, "Camera Configuration")
     
+    def launch_reid_configurator(self):
+        """Launch ReID camera configurator"""
+        script_path = Path(__file__).parent / "control" / "reid_configurator.py"
+        self.run_script(script_path, "ReID Camera Configurator")
+    
+    def launch_identity_configurator(self):
+        """Launch standalone identity configurator"""
+        script_path = Path(__file__).parent / "control" / "identity_configurator.py"
+        if not script_path.exists():
+            messagebox.showerror("Error", "Identity configurator script not found")
+            return
+        self.run_script(script_path, "Identity Configurator")
+
     def launch_offline_mode(self):
         """Launch control stack in offline/demo mode"""
         script_path = Path(__file__).parent / "control" / "main.py"
@@ -508,17 +890,79 @@ class LauncherGUI:
     
     def launch_live_mode(self):
         """Launch control stack in live mode"""
-        # Check if configuration exists
-        config_path = Path(__file__).parent / "camera_config.json"
-        if not config_path.exists():
-            if messagebox.askyesno("Configuration Missing", 
-                                 "No camera configuration found. Would you like to configure cameras first?"):
+        configs_dir = Path(__file__).parent / "config"
+        roof_config = configs_dir / "roof_array_config.json"
+        front_config = configs_dir / "front_array_config.json"
+
+        if not roof_config.exists():
+            if messagebox.askyesno(
+                "Roof Configuration Missing",
+                "No roof array configuration found. Configure now?",
+            ):
                 self.launch_configuration()
-                return
-        
+            return
+
+        if not front_config.exists():
+            if messagebox.askyesno(
+                "Front Configuration Missing",
+                "No front array configuration found. Configure now?",
+            ):
+                self.launch_reid_configurator()
+            return
+
         script_path = Path(__file__).parent / "control" / "main.py"
-        self.run_script(script_path, "Live Mode")
+        if not script_path.exists():
+            messagebox.showerror("Error", "Live control script not found")
+            return
+
+        self.log_to_terminal("Opening connection status window before live launch...")
+        def start_live_mode() -> None:
+            self.run_script(
+                script_path,
+                "Live Mode",
+                args=["--no-dialog", "--config", str(roof_config)],
+            )
+
+        self.connection_status_window = ConnectionStatusWindow(
+            launcher=self,
+            roof_config_path=str(roof_config),
+            front_config_path=str(front_config),
+            launch_callback=start_live_mode,
+        )
     
+    def show_connection_status_monitor(self) -> None:
+        """Open the connection status window in monitor mode (non-blocking)."""
+        configs_dir = Path(__file__).parent / "config"
+        roof_config = configs_dir / "roof_array_config.json"
+        front_config = configs_dir / "front_array_config.json"
+
+        if not roof_config.exists():
+            if messagebox.askyesno(
+                "Roof Configuration Missing",
+                "No roof array configuration found. Configure now?",
+            ):
+                self.launch_configuration()
+            return
+
+        existing = getattr(self, "connection_status_window", None)
+        window_obj = getattr(existing, "window", None)
+        if window_obj is not None:
+            try:
+                if window_obj.winfo_exists():
+                    window_obj.lift()
+                    return
+            except Exception:
+                pass
+
+        self.connection_status_window = ConnectionStatusWindow(
+            launcher=self,
+            roof_config_path=str(roof_config),
+            front_config_path=str(front_config),
+            launch_callback=None,
+            modal=False,
+            allow_launch=False,
+        )
+
     def repair_control(self):
         """Repair control stack installation"""
         if messagebox.askyesno("Repair Control Stack", 
@@ -547,6 +991,40 @@ class LauncherGUI:
         # This would need process management to track and stop the server
         self.log_to_terminal("Stop node server functionality not yet implemented")
     
+    def start_front_node_stack(self):
+        """Start front (ReID) node server"""
+        script_path = Path(__file__).parent / "node" / "server.py"
+        if not script_path.exists():
+            messagebox.showerror("Error", "Front node server script not found")
+            return
+
+        port = 8000
+        config_path = Path(__file__).parent / "config" / "front_array_config.json"
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            server_url = cfg.get("camera", {}).get("front_camera", {}).get("server_url")
+            if server_url:
+                parsed = urlparse(server_url)
+                if parsed.port:
+                    port = parsed.port
+        except Exception as exc:
+            self.log_to_terminal(f"Using default front node port ({port}) due to config error: {exc}")
+
+        self.front_node_status_label.config(text=f"Status: Starting on port {port}...")
+        self.run_script(
+            script_path,
+            "Front Node Server",
+            args=["--port", str(port)],
+            background=True,
+        )
+        self.front_node_status_label.config(text=f"Status: Running on port {port}")
+
+    def stop_front_node_stack(self):
+        """Stop front node server"""
+        self.log_to_terminal("Stop front node server functionality not yet implemented")
+        self.front_node_status_label.config(text="Status: Stop requested")
+
     def toggle_cron(self):
         """Toggle cron job for node server"""
         enabled = self.cron_var.get()
@@ -559,8 +1037,8 @@ class LauncherGUI:
         # TODO: Implement actual cron job management
     
     def node_diagnostics(self):
-        """Run node diagnostics"""
-        DiagnosticsWindow(self, "node").show()
+        """Open the connection status window without blocking other tools."""
+        self.show_connection_status_monitor()
     
     def repair_node(self):
         """Repair node stack installation"""
@@ -585,23 +1063,292 @@ class LauncherGUI:
             self.save_config()
             self.update_ui_state()
             self.log_to_terminal("Node stack uninstalled")
+
+    def uninstall_front_node(self):
+        """Uninstall front node stack"""
+        if messagebox.askyesno(
+            "Uninstall Front Node",
+            "This will remove the front node installation metadata. Continue?",
+        ):
+            front_cfg = self.config['installations'].setdefault('front_node_stack', {})
+            front_cfg['installed'] = False
+            front_cfg['version'] = None
+            front_cfg['install_date'] = None
+            front_cfg['dependencies_verified'] = False
+            front_cfg['last_dependency_check'] = None
+            self.save_config()
+            self.update_ui_state()
+            self.front_node_status_label.config(text="Status: Not Installed")
+            self.log_to_terminal("Front node stack uninstalled")
     
     # General methods
     def show_about(self):
         """Show about dialog"""
         AboutWindow(self).show()
     
+    def show_status_window(self):
+        """Open the system status dashboard."""
+        StatusWindow(self).show()
+
     def report_bug(self):
         """Open bug report URL"""
         url = "https://github.com/Stavro-Purdie/Automated-Followspot-System/issues"
         webbrowser.open(url)
         self.log_to_terminal(f"Opened bug report URL: {url}")
     
-    def check_updates(self):
-        """Check for system updates"""
-        self.log_to_terminal("Checking for updates...")
-        # TODO: Implement update checking
-        messagebox.showinfo("Updates", "Update checking not yet implemented")
+    def check_updates(self, auto_triggered: bool = False):
+        """Check for updates on the configured release channel."""
+        if self.update_check_in_progress:
+            return
+
+        update_settings = self.config.setdefault("update_settings", {})
+        channel = update_settings.get("release_channel", "stable")
+        branch = self.update_manager.channel_to_branch(channel)
+        branch_state = self._get_branch_state(branch)
+        fallback_commit = branch_state.get("last_applied")
+
+        self.update_check_in_progress = True
+        self.log_to_terminal(f"Checking for {channel} updates (branch: {branch})...")
+
+        def worker():
+            try:
+                result = self.update_manager.check_for_update(
+                    branch, last_known_commit=fallback_commit
+                )
+                result["branch"] = branch
+            except UpdateError as exc:
+                result = {"error": str(exc), "branch": branch}
+            except Exception as exc:  # pragma: no cover - defensive
+                result = {"error": str(exc), "branch": branch}
+            self.root.after(
+                0, lambda: self._handle_update_check(result, auto_triggered)
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_update_check(self, result, auto_triggered: bool) -> None:
+        self.update_check_in_progress = False
+
+        if result.get("error"):
+            error_text = str(result["error"])
+            branch = result.get("branch", "")
+            if "Release branch" in error_text:
+                self._handle_missing_release_branch(branch, error_text, auto_triggered)
+                return
+
+            message = f"Update check failed: {error_text}"
+            self.log_to_terminal(message)
+            if not auto_triggered:
+                messagebox.showerror("Update Check Failed", message)
+            return
+
+        branch: str = result.get("branch", "")  # type: ignore[assignment]
+        latest = result.get("latest")
+        branch_state = self._get_branch_state(branch)
+        branch_state["last_checked"] = datetime.now().isoformat()
+        if isinstance(latest, CommitInfo):
+            branch_state["last_remote"] = latest.sha
+        self.save_config()
+
+        if not result.get("update_available"):
+            self.log_to_terminal("No updates available.")
+            if not auto_triggered:
+                messagebox.showinfo("Updates", "You are already on the latest version.")
+            return
+
+        latest_sha = latest.sha if isinstance(latest, CommitInfo) else ""
+
+        if (
+            auto_triggered
+            and latest_sha
+            and branch_state.get("last_prompted") == latest_sha
+            and branch_state.get("last_applied") != latest_sha
+        ):
+            # Already prompted for this commit during automatic checks
+            return
+
+        update_settings = self.config.setdefault("update_settings", {})
+        if (
+            latest_sha
+            and self.config["installations"]["node_stack"].get("installed")
+            and update_settings.get("auto_update_nodes", True)
+            and branch_state.get("last_node_applied") != latest_sha
+        ):
+            self._apply_node_update(branch, latest_sha)
+
+        commit_summary = latest_sha[:7] if latest_sha else "unknown"
+        commit_date = latest.timestamp if isinstance(latest, CommitInfo) else "unknown"
+        prompt_text = (
+            f"A new update is available on branch '{branch}'.\n\n"
+            f"Latest commit: {commit_summary}\n"
+            f"Date: {commit_date}\n\n"
+            "Would you like to download and apply it now?"
+        )
+        apply_update = messagebox.askyesno("Update Available", prompt_text)
+        if apply_update and latest_sha:
+            self._apply_control_update(branch, latest_sha)
+        else:
+            branch_state["last_prompted"] = latest_sha
+            self.save_config()
+
+    def _apply_control_update(self, branch: str, commit_sha: str) -> None:
+        self.log_to_terminal(
+            f"Applying control update from {branch} ({commit_sha[:7]})..."
+        )
+
+        def worker():
+            try:
+                info = self.update_manager.apply_update(
+                    branch,
+                    preserve={"config", "identity_gallery", "logs", "updates", "backups"},
+                )
+                self.root.after(
+                    0,
+                    lambda: self._on_control_update_success(branch, commit_sha, info),
+                )
+            except UpdateError as exc:
+                self.root.after(
+                    0, lambda: self._on_control_update_failure(str(exc))
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                self.root.after(
+                    0, lambda: self._on_control_update_failure(str(exc))
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_control_update_success(
+        self, branch: str, commit_sha: str, info: Dict[str, object]
+    ) -> None:
+        branch_state = self._get_branch_state(branch)
+        branch_state["last_applied"] = commit_sha
+        branch_state["last_prompted"] = commit_sha
+        self.config.setdefault("system_info", {})["last_updated"] = datetime.now().isoformat()
+        self.save_config()
+
+        backup_path = info.get("backup_path", "unknown")
+        self.log_to_terminal(
+            f"Control update applied successfully (commit {commit_sha[:7]}). Backup: {backup_path}"
+        )
+        messagebox.showinfo(
+            "Update Complete",
+            "The control stack has been updated successfully.\n"
+            f"Backup created at: {backup_path}",
+        )
+        self.update_ui_state()
+
+    def _handle_missing_release_branch(
+        self, branch: str, error_text: str, auto_triggered: bool
+    ) -> None:
+        update_cfg = self.config.setdefault("update_settings", {})
+        current_channel = update_cfg.get("release_channel", "stable")
+
+        note = (
+            "Beta release channel is unavailable; reverting to Stable and retrying."
+            if current_channel != "stable"
+            else f"Update check failed: {error_text}"
+        )
+
+        if current_channel != "stable":
+            update_cfg["release_channel"] = "stable"
+            self.save_config()
+            self.log_to_terminal(
+                f"{error_text} Switching back to stable channel and retrying."
+            )
+            if not auto_triggered:
+                messagebox.showinfo(
+                    "Update Channel",
+                    "Beta updates are unavailable right now. Switched to the Stable channel and will retry.",
+                )
+            # Retry the update check on the new channel
+            self.root.after(500, lambda: self.check_updates(auto_triggered=auto_triggered))
+        else:
+            self.log_to_terminal(note)
+            if not auto_triggered:
+                messagebox.showerror("Update Check Failed", note)
+
+    def _on_control_update_failure(self, error_message: str) -> None:
+        self.log_to_terminal(f"Control update failed: {error_message}")
+        messagebox.showerror("Update Failed", f"Control update failed:\n{error_message}")
+
+    def _apply_node_update(self, branch: str, commit_sha: str) -> None:
+        self.log_to_terminal(
+            f"Auto-updating node stack from {branch} ({commit_sha[:7]})..."
+        )
+
+        def worker():
+            try:
+                info = self.update_manager.apply_update(
+                    branch,
+                    components=["node"],
+                    preserve={"config", "identity_gallery", "logs", "updates", "backups"},
+                )
+                self.root.after(
+                    0,
+                    lambda: self._on_node_update_result(
+                        branch, commit_sha, info, error=None
+                    ),
+                )
+            except UpdateError as exc:
+                self.root.after(
+                    0,
+                    lambda: self._on_node_update_result(
+                        branch, commit_sha, None, error=str(exc)
+                    ),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                self.root.after(
+                    0,
+                    lambda: self._on_node_update_result(
+                        branch, commit_sha, None, error=str(exc)
+                    ),
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_node_update_result(
+        self,
+        branch: str,
+        commit_sha: str,
+        info: Optional[Dict[str, object]],
+        error: Optional[str],
+    ) -> None:
+        if error:
+            self.log_to_terminal(f"Node auto-update failed: {error}")
+            return
+
+        branch_state = self._get_branch_state(branch)
+        branch_state["last_node_applied"] = commit_sha
+        self.save_config()
+
+        backup_path = info.get("backup_path") if info else "unknown"
+        self.log_to_terminal(
+            f"Node stack updated automatically to commit {commit_sha[:7]}. Backup: {backup_path}"
+        )
+
+    def _get_branch_state(self, branch: str) -> Dict[str, Optional[str]]:
+        update_cfg = self.config.setdefault("update_settings", {})
+        branches = update_cfg.setdefault("branches", {})
+        state = branches.setdefault(
+            branch,
+            {
+                "last_remote": None,
+                "last_prompted": None,
+                "last_applied": None,
+                "last_node_applied": None,
+                "last_checked": None,
+            },
+        )
+        return state
+
+    @staticmethod
+    def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
     
     def show_settings(self):
         """Show settings dialog"""
@@ -637,8 +1384,9 @@ class LauncherGUI:
                             universal_newlines=True
                         )
                         
-                        for line in process.stdout:
-                            self.root.after(0, self.log_to_terminal, line.strip())
+                        if process.stdout:
+                            for line in process.stdout:
+                                self.root.after(0, self.log_to_terminal, line.strip())
                         
                         process.wait()
                         self.root.after(0, self.log_to_terminal, f"{description} completed with exit code {process.returncode}")
@@ -656,6 +1404,569 @@ class LauncherGUI:
         self.root.mainloop()
 
 
+class HoverTooltip:
+    """Simple tooltip helper that tracks the mouse and shows contextual text."""
+
+    def __init__(self, parent: tk.Toplevel | tk.Tk) -> None:
+        self.parent = parent
+        self.tipwindow: Optional[tk.Toplevel] = None
+        self.current_text: Optional[str] = None
+
+    def show(self, text: str, x: int, y: int) -> None:
+        clean_text = (text or "").strip()
+        if not clean_text:
+            self.hide()
+            return
+
+        if len(clean_text) > 280:
+            clean_text = clean_text[:277] + "…"
+
+        if self.tipwindow and self.current_text == clean_text:
+            self.tipwindow.wm_geometry(f"+{x}+{y}")
+            return
+
+        self.hide()
+
+        self.tipwindow = tk.Toplevel(self.parent)
+        self.tipwindow.wm_overrideredirect(True)
+        try:
+            self.tipwindow.wm_attributes("-topmost", True)
+        except Exception:
+            pass
+        self.tipwindow.wm_geometry(f"+{x}+{y}")
+
+        label = ttk.Label(
+            self.tipwindow,
+            text=clean_text,
+            background="#ffffe0",
+            relief=tk.SOLID,
+            borderwidth=1,
+            padding=(8, 4),
+            justify=tk.LEFT,
+            wraplength=360,
+        )
+        label.pack()
+        self.current_text = clean_text
+
+    def hide(self) -> None:
+        if self.tipwindow is not None:
+            self.tipwindow.destroy()
+            self.tipwindow = None
+        self.current_text = None
+
+
+class ConnectionStatusWindow:
+    """Modal window that checks camera connectivity before launching live mode."""
+
+    def __init__(
+        self,
+        launcher: "LauncherGUI",
+        roof_config_path: str,
+        front_config_path: str,
+        launch_callback: Optional[Callable[[], None]] = None,
+        *,
+        modal: bool = True,
+        allow_launch: bool = True,
+    ) -> None:
+        self.launcher = launcher
+        self.roof_config_path = Path(roof_config_path)
+        self.front_config_path = Path(front_config_path)
+        self.launch_callback = launch_callback
+        self.modal = modal
+        self.allow_launch = allow_launch
+
+        self.window = tk.Toplevel(self.launcher.root)
+        self.window.title("Camera Connection Status")
+        self.window.geometry("1000x700")
+        self.window.transient(self.launcher.root)
+        self.window.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+        self.override_var = tk.BooleanVar(value=False)
+        self.summary_var = tk.StringVar(value="Checking camera connections…")
+        self.refresh_interval = 3.0
+        self.refresh_event = threading.Event()
+        self.status_queue = queue.Queue()
+        self.running = True
+        self.flash_state = False
+        self.tile_width = 180
+        self.tile_height = 135
+        self.offline_rects: set[int] = set()
+        self.tooltip = HoverTooltip(self.window)
+        self.start_button: Optional[ttk.Button] = None
+        self.override_check: Optional[ttk.Checkbutton] = None
+
+        self.roof_entries: List[Dict[str, Any]] = []
+        self.front_entry: Optional[Dict[str, Any]] = None
+        self.cameras: List[Dict[str, Any]] = self._load_cameras()
+
+        if not self.cameras:
+            messagebox.showinfo(
+                "No Cameras Configured",
+                "No enabled cameras were found. Live mode will launch without checks.",
+            )
+            self._cleanup()
+            self.window.destroy()
+            if self.launch_callback:
+                self.launch_callback()
+            return
+
+        self._build_ui()
+        ensure_window_fits_content(
+            self.window,
+            min_width=1024 if self.allow_launch else 900,
+            min_height=720,
+            padding=72,
+            center=True,
+        )
+
+        if self.modal:
+            try:
+                self.window.grab_set()
+            except Exception:
+                pass
+
+        self.worker_thread = threading.Thread(target=self._poll_status_loop, daemon=True)
+        self.worker_thread.start()
+        self.window.after(150, self._process_queue)
+        self.window.after(500, self._toggle_flash)
+
+    def _load_cameras(self) -> List[Dict[str, Any]]:
+        cameras: List[Dict[str, Any]] = []
+        self.roof_grid_cols = 1
+        try:
+            with self.roof_config_path.open("r", encoding="utf-8") as handle:
+                roof_cfg = json.load(handle)
+            grid_cfg = roof_cfg.get("grid_config", {}) if isinstance(roof_cfg, dict) else {}
+            self.roof_grid_cols = max(1, int(grid_cfg.get("cameras_per_row", 1)))
+            for idx, camera in enumerate(roof_cfg.get("cameras", []) if isinstance(roof_cfg, dict) else []):
+                if not isinstance(camera, dict) or not camera.get("enabled", True):
+                    continue
+                position = camera.get("position")
+                if (
+                    not isinstance(position, (list, tuple))
+                    or len(position) != 2
+                ):
+                    position = [idx % self.roof_grid_cols, idx // self.roof_grid_cols]
+                entry_id = str(camera.get("camera_id", f"cam_{idx + 1}"))
+                label = str(camera.get("display_name") or entry_id)
+                url = str(camera.get("server_url", ""))
+                entry = {
+                    "id": entry_id,
+                    "label": label,
+                    "type": "Roof",
+                    "url": url,
+                    "position": (int(position[0]), int(position[1])),
+                    "status": "checking",
+                    "detail": "",
+                    "requires_connection": True,
+                }
+                cameras.append(entry)
+                self.roof_entries.append(entry)
+        except Exception as exc:
+            messagebox.showerror("Configuration Error", f"Unable to load roof configuration:\n{exc}")
+            return []
+
+        self.roof_rows = (
+            (len(self.roof_entries) + self.roof_grid_cols - 1) // self.roof_grid_cols
+            if self.roof_entries
+            else 0
+        )
+
+        try:
+            with self.front_config_path.open("r", encoding="utf-8") as handle:
+                front_cfg = json.load(handle)
+            front_cam = (
+                front_cfg.get("camera", {}).get("front_camera", {})
+                if isinstance(front_cfg, dict)
+                else {}
+            )
+            if front_cam:
+                entry_id = str(front_cam.get("camera_id", "front"))
+                label = str(front_cam.get("display_name") or "Front ReID")
+                url = str(front_cam.get("server_url", ""))
+                entry = {
+                    "id": entry_id,
+                    "label": label,
+                    "type": "Front",
+                    "url": url,
+                    "position": None,
+                    "status": "checking",
+                    "detail": "",
+                    "requires_connection": True,
+                }
+                self.front_entry = entry
+                cameras.append(entry)
+        except Exception as exc:
+            messagebox.showwarning(
+                "Configuration Warning",
+                f"Unable to load front camera configuration:\n{exc}",
+            )
+
+        return cameras
+
+    def _build_ui(self) -> None:
+        header = ttk.Frame(self.window, padding="10")
+        header.pack(fill=tk.X)
+        ttk.Label(header, text="Camera Connection Status", style="Title.TLabel").pack(
+            side=tk.LEFT
+        )
+        ttk.Label(header, textvariable=self.summary_var).pack(side=tk.RIGHT)
+
+        content = ttk.Frame(self.window, padding="10")
+        content.pack(fill=tk.BOTH, expand=True)
+
+        status_frame = ttk.LabelFrame(content, text="Per-Camera Status", padding="10")
+        status_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        columns = ("camera", "type", "url", "status")
+        self.tree = ttk.Treeview(status_frame, columns=columns, show="headings", height=12)
+        for col, label in zip(columns, ["Camera", "Type", "URL", "Status"]):
+            self.tree.heading(col, text=label)
+            stretch = tk.YES if col != "type" else tk.NO
+            width = 220 if col == "url" else 140 if col == "status" else 120
+            self.tree.column(col, width=width, stretch=stretch)
+        tree_scroll = ttk.Scrollbar(status_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scroll.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.bind("<Motion>", self._on_tree_motion)
+        self.tree.bind("<Leave>", self._on_tree_leave)
+
+        visual_frame = ttk.LabelFrame(content, text="Composite View", padding="10")
+        visual_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        cols = max(1, self.roof_grid_cols if self.roof_rows else 1)
+        canvas_width = cols * self.tile_width
+        canvas_height = max(self.roof_rows * self.tile_height, self.tile_height)
+        if self.front_entry:
+            canvas_height += self.tile_height + 40
+
+        self.canvas = tk.Canvas(
+            visual_frame,
+            width=canvas_width,
+            height=canvas_height,
+            background="#111111",
+            highlightthickness=0,
+        )
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.bind("<Leave>", self._on_canvas_leave)
+
+        for entry in self.roof_entries:
+            col, row = entry.get("position", (0, 0))
+            col = max(0, min(cols - 1, int(col)))
+            row = max(0, int(row))
+            x1 = col * self.tile_width
+            y1 = row * self.tile_height
+            x2 = x1 + self.tile_width
+            y2 = y1 + self.tile_height
+            rect = self.canvas.create_rectangle(
+                x1,
+                y1,
+                x2,
+                y2,
+                fill="#444444",
+                outline="#888888",
+                width=2,
+            )
+            text = self.canvas.create_text(
+                x1 + self.tile_width / 2,
+                y1 + self.tile_height / 2,
+                text=f"{entry['label']}\nChecking…",
+                fill="white",
+                font=("Arial", 12, "bold"),
+            )
+            entry["canvas_rect"] = int(rect)
+            entry["canvas_text"] = int(text)
+            for handle in (entry["canvas_rect"], entry["canvas_text"]):
+                self.canvas.tag_bind(handle, "<Enter>", lambda e, ent=entry: self._on_canvas_hover(ent, e))
+                self.canvas.tag_bind(handle, "<Leave>", self._on_canvas_leave)
+                self.canvas.tag_bind(handle, "<Motion>", lambda e, ent=entry: self._on_canvas_hover(ent, e))
+
+        if self.front_entry:
+            base_y = self.roof_rows * self.tile_height + 40
+            rect = self.canvas.create_rectangle(
+                0,
+                base_y,
+                canvas_width,
+                base_y + self.tile_height,
+                fill="#333333",
+                outline="#888888",
+                width=2,
+            )
+            text = self.canvas.create_text(
+                canvas_width / 2,
+                base_y + self.tile_height / 2,
+                text="Front ReID\nChecking…",
+                fill="white",
+                font=("Arial", 12, "bold"),
+            )
+            self.front_entry["canvas_rect"] = int(rect)
+            self.front_entry["canvas_text"] = int(text)
+            for handle in (self.front_entry["canvas_rect"], self.front_entry["canvas_text"]):
+                self.canvas.tag_bind(handle, "<Enter>", lambda e, ent=self.front_entry: self._on_canvas_hover(ent, e))
+                self.canvas.tag_bind(handle, "<Leave>", self._on_canvas_leave)
+                self.canvas.tag_bind(handle, "<Motion>", lambda e, ent=self.front_entry: self._on_canvas_hover(ent, e))
+
+        for entry in self.cameras:
+            label = str(entry.get("label", ""))
+            entry["label"] = label
+            entry["type"] = str(entry.get("type", ""))
+            entry["url"] = str(entry.get("url", ""))
+            entry_id = str(entry.get("id", label))
+            entry["id"] = entry_id
+            tree_id = self.tree.insert(
+                "",
+                tk.END,
+                iid=entry_id,
+                values=(label, entry["type"], entry["url"], "Checking…"),
+            )
+            entry["tree_item"] = entry_id
+
+        button_row = ttk.Frame(self.window, padding="10")
+        button_row.pack(fill=tk.X)
+
+        if self.allow_launch:
+            self.override_check = ttk.Checkbutton(
+                button_row,
+                text="Override offline cameras",
+                variable=self.override_var,
+                command=self._update_start_button_state,
+            )
+            self.override_check.pack(side=tk.LEFT)
+            ttk.Button(
+                button_row,
+                text="Refresh Now",
+                command=self._trigger_manual_refresh,
+            ).pack(side=tk.LEFT, padx=(10, 0))
+        else:
+            self.override_check = None
+            ttk.Button(
+                button_row,
+                text="Refresh Now",
+                command=self._trigger_manual_refresh,
+            ).pack(side=tk.LEFT)
+
+        cancel_label = "Cancel" if self.allow_launch else "Close"
+        ttk.Button(button_row, text=cancel_label, command=self._on_cancel).pack(side=tk.RIGHT)
+
+        if self.allow_launch:
+            self.start_button = ttk.Button(
+                button_row,
+                text="Start Live Mode",
+                command=self._on_start,
+                state=tk.DISABLED,
+            )
+            self.start_button.pack(side=tk.RIGHT, padx=(0, 10))
+        else:
+            self.start_button = None
+
+        self._update_summary()
+        self._update_start_button_state()
+
+    def _poll_status_loop(self) -> None:
+        while self.running:
+            results = []
+            for entry in self.cameras:
+                if not self.running:
+                    break
+                status, detail = self._check_camera(entry)
+                results.append((entry["id"], status, detail))
+            if results and self.running:
+                self.status_queue.put(("status", results))
+            if not self.running:
+                break
+            self.refresh_event.wait(self.refresh_interval)
+            self.refresh_event.clear()
+
+    def _process_queue(self) -> None:
+        try:
+            while True:
+                msg_type, payload = self.status_queue.get_nowait()
+                if msg_type == "status":
+                    for cam_id, status, detail in payload:  # type: ignore[assignment]
+                        self._apply_status(cam_id, status, detail)
+        except queue.Empty:
+            pass
+        if self.running:
+            self.window.after(150, self._process_queue)
+
+    def _toggle_flash(self) -> None:
+        if not self.running:
+            return
+        self.flash_state = not self.flash_state
+        color = "#ff4c4c" if self.flash_state else "#8b0000"
+        for rect_id in list(self.offline_rects):
+            self.canvas.itemconfig(rect_id, fill=color, outline="#aa2222")
+        self.window.after(500, self._toggle_flash)
+
+    def _on_tree_motion(self, event: Any) -> None:
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            self.tooltip.hide()
+            return
+        entry = next((c for c in self.cameras if c["id"] == iid), None)
+        if not entry:
+            self.tooltip.hide()
+            return
+        detail = str(entry.get("detail", "")).strip()
+        if entry.get("status") != "online" and detail:
+            self.tooltip.show(detail, event.x_root + 12, event.y_root + 12)
+        else:
+            self.tooltip.hide()
+
+    def _on_tree_leave(self, _event: Any) -> None:
+        self.tooltip.hide()
+
+    def _on_canvas_hover(self, entry: Dict[str, Any], event: Any) -> None:
+        detail = str(entry.get("detail", "")).strip()
+        if entry.get("status") != "online" and detail:
+            self.tooltip.show(detail, event.x_root + 12, event.y_root + 12)
+        else:
+            self.tooltip.hide()
+
+    def _on_canvas_leave(self, _event: Any) -> None:
+        self.tooltip.hide()
+
+    def _apply_status(self, cam_id: str, status: str, detail: str) -> None:
+        entry = next((c for c in self.cameras if c["id"] == cam_id), None)
+        if not entry:
+            return
+        entry["status"] = status
+        entry["detail"] = detail or ""
+
+        display = status.capitalize()
+
+        label = str(entry.get("label", ""))
+        entry_type = str(entry.get("type", ""))
+        url = str(entry.get("url", ""))
+        tree_id = entry.get("tree_item")
+        if isinstance(tree_id, str):
+            self.tree.item(tree_id, values=(label, entry_type, url, display))
+
+        text_id = entry.get("canvas_text")
+        if isinstance(text_id, int):
+            lines = [label, status.upper()]
+            self.canvas.itemconfig(text_id, text="\n".join(lines))
+
+        rect_handle = entry.get("canvas_rect")
+        if isinstance(rect_handle, int):
+            if status == "online":
+                self.canvas.itemconfig(rect_handle, fill="#1b5e20", outline="#0f3d14")
+                self.offline_rects.discard(rect_handle)
+            else:
+                self.offline_rects.add(rect_handle)
+                color = "#ff4c4c" if self.flash_state else "#8b0000"
+                self.canvas.itemconfig(rect_handle, fill=color, outline="#aa2222")
+
+        self._update_summary()
+        self._update_start_button_state()
+
+    def _check_camera(self, entry: Dict[str, object]) -> Tuple[str, str]:
+        raw_url = str(entry.get("url") or "")
+        if not raw_url:
+            return "offline", "No URL configured"
+
+        parsed = urlsplit(raw_url)
+        if not parsed.scheme:
+            parsed = urlsplit(f"http://{raw_url}")
+
+        if parsed.scheme not in ("http", "https"):
+            return "offline", f"Unsupported protocol: {parsed.scheme}"
+
+        normalized = self._normalize_url(parsed)
+        if not normalized:
+            return "offline", "Invalid URL"
+
+        request = urllib.request.Request(normalized, method="GET")
+        start = time.time()
+        try:
+            with urllib.request.urlopen(request, timeout=3.0) as response:
+                latency_ms = (time.time() - start) * 1000.0
+                if 200 <= response.status < 500:
+                    return "online", f"{latency_ms:.0f} ms"
+                return "offline", f"HTTP {response.status}"
+        except Exception as exc:
+            message = str(exc).split("\n")[0]
+            if len(message) > 40:
+                message = message[:40] + "…"
+            return "offline", message
+
+    @staticmethod
+    def _normalize_url(parsed) -> Optional[str]:
+        if not parsed.netloc:
+            return None
+        path = parsed.path or "/"
+        if path.endswith("/offer"):
+            path = path[: -len("/offer")] or "/"
+        return urlunsplit((parsed.scheme, parsed.netloc, path or "/", "", ""))
+
+    def _trigger_manual_refresh(self) -> None:
+        self.refresh_event.set()
+
+    def _update_summary(self) -> None:
+        total = len(self.cameras)
+        online = sum(1 for entry in self.cameras if entry.get("status") == "online")
+        self.summary_var.set(f"{online}/{total} cameras online")
+
+    def _update_start_button_state(self) -> None:
+        if not self.allow_launch or self.start_button is None:
+            return
+        all_online = all(
+            entry.get("status") == "online"
+            for entry in self.cameras
+            if entry.get("requires_connection", True)
+        )
+        if all_online or self.override_var.get():
+            self.start_button.config(state=tk.NORMAL)
+        else:
+            self.start_button.config(state=tk.DISABLED)
+
+    def _cleanup(self) -> None:
+        self.running = False
+        self.refresh_event.set()
+        self.tooltip.hide()
+        try:
+            self.window.grab_release()
+        except Exception:
+            pass
+        try:
+            if getattr(self.launcher, "connection_status_window", None) is self:
+                setattr(self.launcher, "connection_status_window", None)
+        except Exception:
+            pass
+
+    def _on_cancel(self) -> None:
+        self._cleanup()
+        self.window.destroy()
+
+    def _on_start(self) -> None:
+        if not self.allow_launch:
+            self._cleanup()
+            self.window.destroy()
+            return
+
+        offline = [entry for entry in self.cameras if entry.get("status") != "online"]
+        if offline and not self.override_var.get():
+            messagebox.showwarning(
+                "Connections Pending", "Some cameras are still offline. Enable override to continue."
+            )
+            return
+
+        if offline and self.override_var.get():
+            names = ", ".join(str(entry.get("label", "")) for entry in offline)
+            proceed = messagebox.askyesno(
+                "Override Offline Cameras",
+                f"The following cameras are offline: {names}\nLaunch live mode anyway?",
+            )
+            if not proceed:
+                return
+
+        self.launcher.log_to_terminal("Launching live mode…")
+        self._cleanup()
+        self.window.destroy()
+        if self.launch_callback:
+            self.launch_callback()
+
 class InstallerWindow:
     """GUI installer window for control or node stack"""
     
@@ -664,14 +1975,23 @@ class InstallerWindow:
         self.stack_type = stack_type
         self.repair_mode = repair_mode
         self.reinstall_mode = reinstall_mode
+        self.stack_display = stack_type.replace('_', ' ').title()
         
         self.window = tk.Toplevel(parent.root)
-        self.window.title(f"Install {stack_type.title()} Stack")
+        self.window.title(f"Install {self.stack_display} Stack")
         self.window.geometry("700x500")
         self.window.transient(parent.root)
         self.window.grab_set()
+        menubar = self.parent.build_common_menubar(
+            self.window,
+            close_command=self.close_window,
+        )
+        actions_menu = tk.Menu(menubar, tearoff=0)
+        actions_menu.add_command(label="Start Installation", command=self.start_installation)
+        menubar.add_cascade(label="Actions", menu=actions_menu)
         
         self.setup_installer_ui()
+        ensure_window_fits_content(self.window, min_width=780, min_height=560, padding=64, center=True)
     
     def setup_installer_ui(self):
         """Setup installer UI"""
@@ -679,7 +1999,8 @@ class InstallerWindow:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Title
-        title = f"{'Repair' if self.repair_mode else 'Reinstall' if self.reinstall_mode else 'Install'} {self.stack_type.title()} Stack"
+        action = "Repair" if self.repair_mode else "Reinstall" if self.reinstall_mode else "Install"
+        title = f"{action} {self.stack_display} Stack"
         ttk.Label(main_frame, text=title, font=('Arial', 14, 'bold')).pack(pady=(0, 20))
         
         # Progress bar
@@ -722,6 +2043,8 @@ class InstallerWindow:
                 # Install dependencies
                 if self.stack_type == "control":
                     requirements_file = Path(__file__).parent / "control" / "requirements.txt"
+                elif self.stack_type == "front_node":
+                    requirements_file = Path(__file__).parent / "node" / "requirements.txt"
                 else:
                     requirements_file = Path(__file__).parent / "node" / "requirements.txt"
                 
@@ -738,8 +2061,9 @@ class InstallerWindow:
                         universal_newlines=True
                     )
                     
-                    for line in process.stdout:
-                        self.window.after(0, self.log, line.strip())
+                    if process.stdout:
+                        for line in process.stdout:
+                            self.window.after(0, self.log, line.strip())
                     
                     process.wait()
                     
@@ -749,6 +2073,28 @@ class InstallerWindow:
                         self.window.after(0, self.log, f"Dependency installation failed with code {process.returncode}")
                         self.window.after(0, self.installation_failed)
                         return
+
+                # Ensure SSL certificates are available for update checks
+                self.window.after(0, self.log, "Ensuring SSL certificate bundle (certifi) is installed...")
+                certifi_cmd = [sys.executable, "-m", "pip", "install", "certifi"]
+                certifi_process = subprocess.Popen(
+                    certifi_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    universal_newlines=True,
+                )
+
+                if certifi_process.stdout:
+                    for line in certifi_process.stdout:
+                        self.window.after(0, self.log, line.strip())
+
+                certifi_process.wait()
+
+                if certifi_process.returncode == 0:
+                    self.window.after(0, self.log, "Certificate bundle verified.")
+                else:
+                    self.window.after(0, self.log, "Warning: Unable to install certifi automatically. SSL-secured features may fail.")
                 
                 # Mark as installed
                 self.window.after(0, lambda: self.status_label.config(text="Finalizing installation..."))
@@ -804,16 +2150,11 @@ class StatusWindow:
         
         self.window = tk.Toplevel()
         self.window.title("System Status - Automated Followspot System")
-        self.window.geometry("800x600")
         self.window.resizable(True, True)
-        
-        # Center the window
-        self.window.update_idletasks()
-        x = (self.window.winfo_screenwidth() // 2) - (800 // 2)
-        y = (self.window.winfo_screenheight() // 2) - (600 // 2)
-        self.window.geometry(f"800x600+{x}+{y}")
+        self.parent.build_common_menubar(self.window)
         
         self.setup_ui()
+        ensure_window_fits_content(self.window, min_width=920, min_height=720, padding=64, center=True)
     
     def setup_ui(self):
         """Setup status window UI"""
@@ -876,10 +2217,12 @@ class StatusWindow:
         status_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Overall health indicator
-        control_installed = config.get("installations", {}).get("control_stack", {}).get("installed", False)
-        node_installed = config.get("installations", {}).get("node_stack", {}).get("installed", False)
+        installations = config.get("installations", {})
+        control_installed = installations.get("control_stack", {}).get("installed", False)
+        node_installed = installations.get("node_stack", {}).get("installed", False)
+        front_installed = installations.get("front_node_stack", {}).get("installed", False)
         
-        if control_installed or node_installed:
+        if control_installed or node_installed or front_installed:
             status_color = "green"
             status_text = "System Ready"
             status_icon = "✅"
@@ -899,7 +2242,7 @@ class StatusWindow:
         if control_installed:
             ttk.Label(install_frame, text="✅ Control Stack: Installed", 
                      font=('Arial', 10)).pack(anchor=tk.W)
-            install_date = config.get("installations", {}).get("control_stack", {}).get("install_date")
+            install_date = installations.get("control_stack", {}).get("install_date")
             if install_date:
                 ttk.Label(install_frame, text=f"   Installed: {install_date[:10]}", 
                          font=('Arial', 9), foreground="gray").pack(anchor=tk.W)
@@ -910,12 +2253,23 @@ class StatusWindow:
         if node_installed:
             ttk.Label(install_frame, text="✅ Node Stack: Installed", 
                      font=('Arial', 10)).pack(anchor=tk.W)
-            install_date = config.get("installations", {}).get("node_stack", {}).get("install_date")
+            install_date = installations.get("node_stack", {}).get("install_date")
             if install_date:
                 ttk.Label(install_frame, text=f"   Installed: {install_date[:10]}", 
                          font=('Arial', 9), foreground="gray").pack(anchor=tk.W)
         else:
             ttk.Label(install_frame, text="❌ Node Stack: Not Installed", 
+                     font=('Arial', 10)).pack(anchor=tk.W)
+
+        if front_installed:
+            ttk.Label(install_frame, text="✅ Front Node (ReID): Installed", 
+                     font=('Arial', 10)).pack(anchor=tk.W)
+            install_date = installations.get("front_node_stack", {}).get("install_date")
+            if install_date:
+                ttk.Label(install_frame, text=f"   Installed: {install_date[:10]}", 
+                         font=('Arial', 9), foreground="gray").pack(anchor=tk.W)
+        else:
+            ttk.Label(install_frame, text="❌ Front Node (ReID): Not Installed", 
                      font=('Arial', 10)).pack(anchor=tk.W)
         
         # Quick Actions
@@ -934,8 +2288,14 @@ class StatusWindow:
         if node_installed:
             ttk.Button(action_buttons_frame, text="Launch Node Stack",
                       command=lambda: self.launch_stack('node')).pack(side=tk.LEFT, padx=(0, 10))
+        if front_installed:
+            ttk.Button(
+                action_buttons_frame,
+                text="Front Node Log",
+                command=lambda: self.parent.show_log("front_node"),
+            ).pack(side=tk.LEFT, padx=(0, 10))
         
-        if not (control_installed or node_installed):
+        if not (control_installed or node_installed or front_installed):
             ttk.Button(action_buttons_frame, text="Run Installation Wizard",
                       command=self.launch_installer_wizard).pack(side=tk.LEFT, padx=(0, 10))
         
@@ -1168,7 +2528,8 @@ class StatusWindow:
             import sys
             launcher_script = Path(__file__).parent / "launcher.py"
             subprocess.Popen([sys.executable, str(launcher_script), stack_type])
-            messagebox.showinfo("Launch", f"{stack_type.title()} stack launched successfully!")
+            display_name = stack_type.replace('_', ' ').title()
+            messagebox.showinfo("Launch", f"{display_name} stack launched successfully!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to launch {stack_type} stack: {e}")
     
@@ -1198,21 +2559,33 @@ class DiagnosticsWindow:
     def __init__(self, parent, stack_type):
         self.parent = parent
         self.stack_type = stack_type
+        self.stack_display = stack_type.replace('_', ' ').title()
         
         self.window = tk.Toplevel(parent.root)
-        self.window.title(f"{stack_type.title()} Stack Diagnostics")
+        self.window.title(f"{self.stack_display} Stack Diagnostics")
         self.window.geometry("600x400")
         self.window.transient(parent.root)
+        menubar = self.parent.build_common_menubar(
+            self.window,
+            close_command=self.window.destroy,
+        )
+        diagnostics_menu = tk.Menu(menubar, tearoff=0)
+        diagnostics_menu.add_command(label="Run Diagnostics", command=self.run_diagnostics)
+        menubar.add_cascade(label="Diagnostics", menu=diagnostics_menu)
         
         self.setup_ui()
+        ensure_window_fits_content(self.window, min_width=780, min_height=560, padding=64, center=True)
     
     def setup_ui(self):
         """Setup diagnostics UI"""
         main_frame = ttk.Frame(self.window, padding="20")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        ttk.Label(main_frame, text=f"{self.stack_type.title()} Stack Diagnostics", 
-                 font=('Arial', 14, 'bold')).pack(pady=(0, 20))
+        ttk.Label(
+            main_frame,
+            text=f"{self.stack_display} Stack Diagnostics",
+            font=('Arial', 14, 'bold'),
+        ).pack(pady=(0, 20))
         
         # Results area
         self.results_text = scrolledtext.ScrolledText(main_frame, height=20, font=('Consolas', 9))
@@ -1237,7 +2610,7 @@ class DiagnosticsWindow:
     def run_diagnostics(self):
         """Run diagnostic tests"""
         self.results_text.delete(1.0, tk.END)
-        self.log(f"Running {self.stack_type} stack diagnostics...\n")
+        self.log(f"Running {self.stack_display} stack diagnostics...\n")
         
         # Check if stack is installed
         if not self.parent.config['installations'][f'{self.stack_type}_stack']['installed']:
@@ -1302,8 +2675,10 @@ class AboutWindow:
         self.window.geometry("500x400")
         self.window.transient(parent.root)
         self.window.resizable(False, False)
+        self.parent.build_common_menubar(self.window)
         
         self.setup_ui()
+        ensure_window_fits_content(self.window, min_width=560, min_height=460, padding=48, center=True)
     
     def setup_ui(self):
         """Setup about UI"""
@@ -1357,10 +2732,30 @@ class SettingsWindow:
         
         self.window = tk.Toplevel(parent.root)
         self.window.title("Settings")
-        self.window.geometry("400x300")
+        self.window.geometry("760x860")
+        self.window.minsize(720, 820)
+        self.parent.build_common_menubar(
+            self.window,
+            save_command=self.save_settings,
+            close_command=self.window.destroy,
+        )
         self.window.transient(parent.root)
+        self.project_root = Path(__file__).resolve().parent
+        self.reid_config_path = self.project_root / "config" / "reid_config.json"
+        self.reid_config = self.load_reid_config()
+        self.coreml_unit_choices = [
+            ("Automatic (CPU + GPU + ANE)", "ALL"),
+            ("Neural Engine (ANE)", "CPU_AND_NE"),
+            ("GPU (Metal)", "CPU_AND_GPU"),
+            ("CPU Only", "CPU_ONLY"),
+        ]
+        self.channel_options = [
+            ("Stable (Main Branch)", "stable"),
+            ("Beta (Testing Branch)", "beta"),
+        ]
         
         self.setup_ui()
+        ensure_window_fits_content(self.window, min_width=820, min_height=880, padding=72, center=True)
     
     def setup_ui(self):
         """Setup settings UI"""
@@ -1383,6 +2778,101 @@ class SettingsWindow:
         self.debug_var = tk.BooleanVar(value=self.parent.config['settings']['debug_mode'])
         ttk.Checkbutton(main_frame, text="Debug mode", 
                        variable=self.debug_var).pack(anchor=tk.W, pady=(0, 20))
+
+        ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=(10, 15))
+
+        accel_frame = ttk.LabelFrame(main_frame, text="ReID Acceleration (Apple Silicon)", padding="12")
+        accel_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        accel_frame.columnconfigure(1, weight=1)
+
+        optimization_cfg = self.reid_config.setdefault("optimization", {})
+
+        self.coreml_enabled_var = tk.BooleanVar(value=bool(optimization_cfg.get("coreml_reid_enabled", False)))
+        ttk.Checkbutton(
+            accel_frame,
+            text="Enable Core ML ReID (Neural Engine)",
+            variable=self.coreml_enabled_var
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        ttk.Label(accel_frame, text="Core ML model (.mlpackage):").grid(row=1, column=0, sticky="w")
+        self.coreml_path_var = tk.StringVar(value=str(optimization_cfg.get("coreml_model_path", "")))
+        path_entry = ttk.Entry(accel_frame, textvariable=self.coreml_path_var, width=40)
+        path_entry.grid(row=2, column=0, columnspan=2, sticky="we", pady=(0, 5))
+        ttk.Button(accel_frame, text="Browse", command=self.browse_coreml_model).grid(row=3, column=0, sticky="w")
+
+        ttk.Label(accel_frame, text="Accelerator preference:").grid(row=4, column=0, sticky="w", pady=(10, 0))
+        current_unit_value = str(optimization_cfg.get("coreml_compute_unit", "ALL"))
+        default_unit_label = self._unit_value_to_label(current_unit_value)
+        self.coreml_unit_var = tk.StringVar(value=default_unit_label)
+        ttk.Combobox(
+            accel_frame,
+            textvariable=self.coreml_unit_var,
+            values=[label for label, _ in self.coreml_unit_choices],
+            state="readonly"
+        ).grid(row=5, column=0, columnspan=2, sticky="we", pady=(0, 10))
+
+        self.skip_torch_var = tk.BooleanVar(value=bool(optimization_cfg.get("coreml_skip_torch", True)))
+        ttk.Checkbutton(
+            accel_frame,
+            text="Skip Torch ReID when Core ML is enabled",
+            variable=self.skip_torch_var
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 5))
+
+        self.half_precision_var = tk.BooleanVar(value=bool(optimization_cfg.get("use_half_precision", False)))
+        ttk.Checkbutton(
+            accel_frame,
+            text="Use half precision (FP16) on CUDA GPUs",
+            variable=self.half_precision_var
+        ).grid(row=7, column=0, columnspan=2, sticky="w")
+
+        ttk.Label(
+            accel_frame,
+            text="Core ML acceleration requires a converted ReID model. Choose whether to favour\nNeural Engine, GPU, CPU, or let Core ML use everything available.",
+            wraplength=420,
+            foreground="#555555"
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
+        ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=(10, 15))
+
+        update_cfg = self.parent.config.setdefault("update_settings", {})
+        updates_frame = ttk.LabelFrame(main_frame, text="Update Settings", padding="12")
+        updates_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        updates_frame.columnconfigure(1, weight=1)
+
+        self.release_channel_var = tk.StringVar(
+            value=self._channel_value_to_display(update_cfg.get("release_channel", "stable"))
+        )
+        ttk.Label(updates_frame, text="Release channel:").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(
+            updates_frame,
+            textvariable=self.release_channel_var,
+            values=[label for label, _ in self.channel_options],
+            state="readonly",
+        ).grid(row=0, column=1, sticky="we", pady=(0, 5))
+
+        self.update_auto_check_var = tk.BooleanVar(value=update_cfg.get("auto_check", True))
+        ttk.Checkbutton(
+            updates_frame,
+            text="Automatically check for updates",
+            variable=self.update_auto_check_var,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 5))
+
+        ttk.Label(updates_frame, text="Update check interval (hours):").grid(row=2, column=0, sticky="w")
+        self.update_interval_var = tk.IntVar(value=int(update_cfg.get("check_interval_hours", 12)))
+        ttk.Spinbox(
+            updates_frame,
+            from_=1,
+            to=168,
+            textvariable=self.update_interval_var,
+            width=10,
+        ).grid(row=2, column=1, sticky="w")
+
+        self.auto_update_nodes_var = tk.BooleanVar(value=update_cfg.get("auto_update_nodes", True))
+        ttk.Checkbutton(
+            updates_frame,
+            text="Automatically update node stacks when new builds are detected",
+            variable=self.auto_update_nodes_var,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
@@ -1396,7 +2886,46 @@ class SettingsWindow:
         self.parent.config['settings']['auto_dependency_check'] = self.auto_check_var.get()
         self.parent.config['settings']['check_interval_days'] = self.interval_var.get()
         self.parent.config['settings']['debug_mode'] = self.debug_var.get()
+
+        update_cfg = self.parent.config.setdefault("update_settings", {})
+        update_cfg["release_channel"] = self._channel_display_to_value(self.release_channel_var.get())
+        update_cfg["auto_check"] = self.update_auto_check_var.get()
+        update_cfg["check_interval_hours"] = max(1, int(self.update_interval_var.get()))
+        update_cfg["auto_update_nodes"] = self.auto_update_nodes_var.get()
+
+        optimization_cfg = self.reid_config.setdefault("optimization", {})
+        coreml_enabled = self.coreml_enabled_var.get()
+        coreml_path = self.coreml_path_var.get().strip()
+
+        if coreml_enabled and not coreml_path:
+            messagebox.showerror(
+                "Settings",
+                "Please specify a Core ML model path (.mlpackage) or disable Core ML ReID."
+            )
+            return
+
+        if coreml_path:
+            path_obj = Path(coreml_path)
+            if not path_obj.is_absolute():
+                # allow relative paths as-is
+                normalized_path = str(path_obj)
+            else:
+                try:
+                    normalized_path = str(path_obj.relative_to(self.project_root))
+                except ValueError:
+                    normalized_path = str(path_obj)
+            optimization_cfg["coreml_model_path"] = normalized_path
+        else:
+            optimization_cfg["coreml_model_path"] = ""
+
+        optimization_cfg["coreml_reid_enabled"] = coreml_enabled
+        optimization_cfg["coreml_compute_unit"] = self._unit_label_to_value(self.coreml_unit_var.get())
+        optimization_cfg["coreml_skip_torch"] = self.skip_torch_var.get()
+        optimization_cfg["use_half_precision"] = self.half_precision_var.get()
         
+        if not self.save_reid_config():
+            return
+
         self.parent.save_config()
         self.parent.log_to_terminal("Settings saved")
         self.window.destroy()
@@ -1404,6 +2933,82 @@ class SettingsWindow:
     def show(self):
         """Show the settings window"""
         self.window.deiconify()
+
+    def _unit_label_to_value(self, label: str) -> str:
+        for display, value in self.coreml_unit_choices:
+            if display == label:
+                return value
+        return self.coreml_unit_choices[0][1]
+
+    def _unit_value_to_label(self, value: str) -> str:
+        normalized = (value or "ALL").upper()
+        for display, stored_value in self.coreml_unit_choices:
+            if stored_value == normalized:
+                return display
+        return self.coreml_unit_choices[0][0]
+
+    def _channel_display_to_value(self, label: str) -> str:
+        for display, value in self.channel_options:
+            if display == label:
+                return value
+        return "stable"
+
+    def _channel_value_to_display(self, value: str) -> str:
+        normalized = (value or "stable").lower()
+        for display, stored in self.channel_options:
+            if stored == normalized:
+                return display
+        return self.channel_options[0][0]
+
+    def load_reid_config(self) -> dict:
+        try:
+            with open(self.reid_config_path, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except FileNotFoundError:
+            messagebox.showwarning(
+                "ReID Configuration Missing",
+                f"Could not find reid_config.json at {self.reid_config_path}. Default settings will be used."
+            )
+            return {}
+        except json.JSONDecodeError as exc:
+            messagebox.showerror(
+                "ReID Configuration Error",
+                f"Failed to parse reid_config.json: {exc}"
+            )
+            return {}
+        except Exception as exc:
+            messagebox.showerror(
+                "ReID Configuration Error",
+                f"Unexpected error loading reid_config.json: {exc}"
+            )
+            return {}
+
+    def save_reid_config(self) -> bool:
+        try:
+            with open(self.reid_config_path, "w", encoding="utf-8") as handle:
+                json.dump(self.reid_config, handle, indent=2)
+            return True
+        except Exception as exc:
+            messagebox.showerror(
+                "Settings",
+                f"Failed to save ReID configuration: {exc}"
+            )
+            return False
+
+    def browse_coreml_model(self):
+        file_path = filedialog.askopenfilename(
+            title="Select Core ML model",
+            filetypes=[("Core ML Packages", "*.mlpackage"), ("All Files", "*.*")]
+        )
+        if not file_path:
+            return
+
+        path_obj = Path(file_path)
+        try:
+            relative_path = path_obj.relative_to(self.project_root)
+            self.coreml_path_var.set(str(relative_path))
+        except ValueError:
+            self.coreml_path_var.set(str(path_obj))
 
 
 def main():

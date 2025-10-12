@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Main launcher for the Multi-Camera IR Beacon Tracker GUI
+Decides whether we boot into live mode, spin up the camera configurator, or
+launch the demos. 
 """
+
 
 import sys
 import os
@@ -13,9 +15,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("main")
 
 def main():
+    """Parse CLI flags, present the mode chooser, and start the requested tools."""
     parser = argparse.ArgumentParser(description="Multi-Camera IR Beacon Tracker")
-    parser.add_argument("--config", type=str, default="../config/camera_config.json",
-                        help="Configuration file path (default: ../config/camera_config.json)")
+    parser.add_argument("--config", type=str, default="../config/roof_array_config.json",
+                        help="Configuration file path (default: ../config/roof_array_config.json)")
     parser.add_argument("--demo", action="store_true",
                         help="Run in demo mode with simulated cameras")
     parser.add_argument("--configure", action="store_true",

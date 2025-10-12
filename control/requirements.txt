@@ -10,7 +10,15 @@ aiortc>=1.3.0
 # GUI dependencies  
 pillow>=8.0.0
 
+# ReID and Deep Learning Dependencies
+torch
+torchvision
+ultralytics
+torchreid
+scipy
+
 # Optional dependencies for better performance
 # Uncomment if needed:
 # opencv-contrib-python>=4.5.0  # Additional OpenCV features
 # av>=8.0.0  # Audio/Video processing
+# coremltools==6.4  # Apple Neural Engine acceleration (optional)

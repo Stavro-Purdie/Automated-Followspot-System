@@ -155,7 +155,109 @@ Configuration includes:
 - Grid layout and positioning
 - IR detection parameters
 
-### Example Configuration File (`camera_config.json`):
+## Front Camera Calibration (Complete Guide)
+
+Accurate XYZ tracking and spotlight tilt depend on a precise calibration of the front ReID camera. Follow the end-to-end workflow below whenever you install the system in a new venue or move the camera rig.
+
+### 1. Understand the Coordinate System
+
+- **Stage origin**: The point $(0, 0, 0)$ sits on the stage floor. By default, the $+X$ axis runs to stage right, $+Y$ toward upstage (away from the audience), and $+Z$ points upward.
+- **Camera frame**: The ReID camera reports detections in its own 3D frame. Calibration computes a rotation matrix and translation vector that map those detections into stage coordinates.
+- **Spotlight rig**: The spotlight controller assumes the same stage origin, so camera misalignment directly affects pan/tilt accuracy.
+
+### 2. Gather Tools and Measurements
+
+| Item | Purpose |
+| --- | --- |
+| Tape measure or laser rangefinder | Measure camera height and offsets from stage origin |
+| Inclinometer or protractor | Measure camera tilt if you are not running the automated calibration |
+| Laptop with the configurator | Enter values and capture calibration points |
+| Clearly marked stage corners | Improve click accuracy during calibration |
+
+Record the following before you open the configurator:
+
+- Stage width, depth, and height
+- Desired stage origin (often center front edge or downstage-left corner)
+- Camera position relative to the origin (X/Y on the floor plane, Z for height)
+- Approximate camera pitch (tilt downward). Note the yaw (rotation around Z) if it is not facing straight downstage.
+
+### 3. Enter Stage Geometry
+
+1. Launch the front camera configurator:
+  ```bash
+  python launcher.py --configure
+  ```
+2. Open the **Stage Geometry** tab.
+3. Fill in the stage width, depth, and height in meters.
+4. Set the origin coordinates to the physical point you chose. If you want the origin at the front-center of the stage, use `X = 0`, `Y = 0`, and `Z = 0`. For a downstage-left corner origin, set `X = -width/2`, `Y = 0`, `Z = 0`, etc.
+5. Click **Save Configuration** to persist the updated stage definition.
+
+### 4. Capture Stage Corners (2D Reference)
+
+1. In the **Camera Preview** panel, start the camera feed (or load a still image if you have one captured from the same pose).
+2. Press **Calibrate**. You will be prompted to click the four stage corners in this order:
+  1. Front-left (downstage left)
+  2. Front-right (downstage right)
+  3. Back-right (upstage right)
+  4. Back-left (upstage left)
+3. Click carefully; the pixel selections establish the homography used for downstream alignment.
+4. When all four points are selected, the configurator timestamps the run and marks `calibration.calibrated = true` in `front_array_config.json`.
+
+### 5. Solve the Camera Extrinsics (3D Pose)
+
+Two options give you the Z alignment the fusion pipeline needs:
+
+#### A. Quick Manual Entry
+
+1. Still in **Front Node Settings**, locate **Camera Position (X, Y, Z m)**. Enter the measured offsets from the stage origin.
+2. Set **Camera Angle (deg)** to the measured pitch. Positive values tip the camera toward the stage.
+3. If the camera is yawed (rotated left/right), update the yaw inside the **Rotation Matrix** (see table below for help editing matrices manually).
+
+This approach is suitable when you only need approximate Z values or you have highly accurate measurements from rigging drawings.
+
+#### B. Calibration Matrix Workflow (Recommended)
+
+1. After recording the stage corners, measure three or more distinct reference points on the stage (for example, known marks or spike strips) and note their stage coordinates.
+2. Enter each reference point in the **Calibration** panel of the configurator (under `calibration.reference_points`).
+3. Use the guidance in `docs/front_camera_z_calibration.md` to run the projection solver. The solver updates `camera.front_camera.extrinsics.rotation_matrix` and `translation_vector`, and marks the set as calibrated.
+4. Press **Save Configuration** once the solver completes. The fusion layer will now treat the extrinsics as authoritative and ignore the simple `angle` field.
+
+### 6. Verify Depth in the Fusion View
+
+1. Launch the fused control loop (`python control/fused_main.py`) or start the system via the launcher.
+2. Watch the fused person coordinates. A performer centered at stage origin should report `X ≈ 0`, `Y ≈ 0`. When they walk upstage, the Y value should increase. A tall performer and a short performer should produce sensible Z differences (around their actual height).
+3. If the Z value is mirrored or sign-flipped, revisit the rotation matrix—swap axes or adjust signs until upstage/downstage behave correctly.
+
+### 7. Align the Spotlight Rig
+
+Once the camera pose is correct, open the **Spotlight Rig** tab in the configurator:
+
+1. Enter the fixture position, stage origin repeat, and zero angles as measured.
+2. Set the same origin reference you used for the camera so both systems align.
+3. Save the configuration; `config/spotlight_config.json` is written alongside `front_array_config.json`.
+
+### 8. Final Checklist
+
+- [ ] `front_array_config.json` contains the measured stage geometry and extrinsics with `calibrated: true`.
+- [ ] `spotlight_config.json` matches the same stage origin so pan/tilt math is consistent.
+- [ ] Operators can run **Test System** in the configurator to ensure configuration sanity before a show.
+- [ ] Optional: keep a copy of the JSON files in `backups/` once calibration is verified.
+
+### Reference: Editing the Rotation Matrix Manually
+
+The rotation matrix follows the standard right-handed convention. If you need to adjust it manually:
+
+| Desired effect | Matrix edit |
+| --- | --- |
+| Tilt camera down by angle θ | Multiply the first row/column by the rotation matrix $R_x(θ)$ |
+| Yaw camera toward audience left | Apply $R_z(+θ)$ |
+| Roll camera clockwise | Apply $R_y(-θ)$ |
+
+Combine rotations by multiplying the matrices (order matters). The solver described above automates this, so manual edits are typically only necessary for quick tweaks.
+
+For a printable, no-fiducial walkthrough see `docs/front_camera_z_calibration.md`. That guide also covers an optional high-precision photogrammetry workflow if you ever need to step up from the tape-measure method.
+
+### Example Configuration File (`roof_array_config.json`):
 ```json
 {
   "cameras": [
@@ -255,6 +357,40 @@ python launcher.py --node
 - **Node Stack**: Linux (optimized for Raspberry Pi)
 - **Launcher**: Cross-platform GUI and CLI
 
+## Apple Silicon Acceleration
+
+The control stack now detects Apple Silicon hardware automatically, and the launcher's **Settings → ReID Acceleration** panel lets you toggle these options without editing JSON files:
+
+- **Metal (MPS)**: When PyTorch is installed with MPS support, all detector and ReID models run on the GPU without any configuration changes.
+- **Neural Engine (Core ML)**: For the lowest power draw, you can supply a Core ML version of the ReID embedding model and enable it in `config/reid_config.json`:
+
+  Available accelerator modes:
+  - **Neural Engine (ANE)** → `CPU_AND_NE`
+  - **GPU (Metal)** → `CPU_AND_GPU`
+  - **CPU only** → `CPU_ONLY`
+  - **Automatic (All accelerators)** → `ALL`
+
+  ```json
+  "optimization": {
+    "coreml_reid_enabled": true,
+    "coreml_model_path": "reid/models/osnet_x0_5.mlpackage",
+    "coreml_compute_unit": "CPU_AND_NE",
+    "coreml_skip_torch": true
+  }
+  ```
+
+  1. Install Core ML tooling (optional, only needed to use the Neural Engine):
+
+     ```bash
+     pip install coremltools==6.4
+     ```
+
+  2. Convert your ReID PyTorch checkpoint to Core ML (for example, with `coremltools.convert` or a custom script) and place the produced `.mlpackage` in `reid/models/`.
+
+  3. Toggle `coreml_reid_enabled` to `true`. You can do this visually from the launcher or by editing the JSON directly. The loader will verify the model on startup and fall back to the Torch backend if anything goes wrong.
+
+When Core ML is active, Torch-based ReID inference can be skipped entirely (`coreml_skip_torch: true`) so the pipeline uses only the Neural Engine for embeddings while the detector continues to run on MPS.
+
 ## Troubleshooting
 
 ### Common Issues
@@ -301,7 +437,9 @@ Automated-Followspot-System/
 ├── launcher_gui.py          # GUI launcher
 ├── setup.py                # Dependency installer
 ├── launcher_config.json    # System configuration
-├── camera_config.json      # Camera configuration
+├── config/
+│   ├── roof_array_config.json   # Roof array camera configuration (primary)
+│   └── front_array_config.json  # Front array camera configuration (placeholder)
 ├── control/                # Control stack
 │   ├── main.py
 │   ├── camera_aggregator.py

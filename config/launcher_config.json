@@ -9,9 +9,9 @@
     "control_stack": {
       "installed": true,
       "version": "1.0.0",
-      "install_date": "2025-08-06T12:45:00.450802",
+      "install_date": "2025-08-11T10:32:05.287187",
       "dependencies_verified": true,
-      "last_dependency_check": "2025-08-08 16:53:19"
+      "last_dependency_check": "2025-09-17 11:12:26"
     },
     "node_stack": {
       "installed": false,
@@ -26,6 +26,6 @@
     "auto_dependency_check": true,
     "check_interval_days": 7,
     "allow_concurrent_stacks": false,
-    "debug_mode": false
+    "debug_mode": true
   }
 }

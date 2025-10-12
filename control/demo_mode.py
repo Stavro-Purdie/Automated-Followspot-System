@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""
-Demo Mode for Multi-Camera System
-Generates simulated video feeds with IR beacons for demonstration purposes.
+"""Synthetic camera feeds used for demos, rehearsals, and test rigs.
+
+glorified bouncing DVD logo at this point
 """
 
 import cv2
@@ -16,7 +16,7 @@ from typing import Dict, List, Tuple, Optional
 logger = logging.getLogger("demo_mode")
 
 class DemoVideoGenerator:
-    """Generates simulated video feeds with moving IR beacons"""
+    """Build a stream of frames so operators can practise without cameras."""
     
     def __init__(self, width: int = 640, height: int = 480):
         self.width = width
@@ -125,7 +125,21 @@ class DemoCameraManager:
                 crop_rect = config.crop_rect
                 width = crop_rect[2] if crop_rect[2] > 0 else 640
                 height = crop_rect[3] if crop_rect[3] > 0 else 480
-                
+
+                # Extremely small crops create invalid demo beacon ranges; fall back to a minimum size
+                min_width, min_height = 120, 120
+                if width < min_width or height < min_height:
+                    logger.warning(
+                        "Camera %s crop %dx%d too small for demo mode, using fallback %dx%d",
+                        camera_id,
+                        width,
+                        height,
+                        max(width, min_width),
+                        max(height, min_height),
+                    )
+                    width = max(width, min_width)
+                    height = max(height, min_height)
+
                 self.generators[camera_id] = DemoVideoGenerator(width, height)
         
         # Start generation threads
