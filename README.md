@@ -46,6 +46,13 @@ python setup.py  # Choose option 2
 python launcher.py --install-deps node
 ```
 
+For the front truss node (IMX477/RS485 build):
+```bash
+python launcher.py --install-deps front-node
+```
+
+During either node installation you'll be prompted for static IP, hostname, camera device, and port information. The launcher captures those values, writes network setup notes, and provisions a user-level systemd service so the node boots automatically.
+
 ### 3. Quick Launch Options
 
 ```bash
@@ -53,8 +60,8 @@ python launcher.py --install-deps node
 python launcher.py
 ./followspot
 
-# Use command-line interface
-python launcher.py --cli
+# Use industrial command-line launcher
+python launcher.py --cli   # or -cli
 ./followspot --cli
 
 # Launch camera configuration
@@ -72,6 +79,9 @@ python launcher.py --run
 # Check system status
 python launcher.py --status
 ./followspot --status
+
+# Install the front truss node stack headlessly
+python launcher.py --install-deps front-node
 
 # Start node server
 python launcher.py --node
@@ -109,11 +119,27 @@ The node stack runs on camera devices (typically Raspberry Pi) to stream video:
 - `node/server.py` - Camera streaming server
 - `node/README.md` - Node-specific documentation
 
+Run the front truss node on a Raspberry Pi with the HQ (IMX477) camera and RS485 HAT using the dedicated profile:
+
+```bash
+python node/server.py --profile front_truss --port 8000
+```
+
+The DMX endpoint (`/dmx`) is wired but returns a placeholder response until RS485 output is ready.
+
+On headless deployments, launch the industrial CLI to provision any stack—including the front truss node—without a desktop session:
+
+```bash
+python launcher.py --cli
+```
+
+Follow the on-screen menu or run `python launcher.py --install-deps front-node` directly for unattended scripts.
+
 ### Launcher System
 Unified management interface for both stacks:
 
 - **GUI Launcher** (`launcher_gui.py`): Full graphical management interface
-- **CLI Launcher** (`launcher.py`): Command-line interface and interactive menus
+- **CLI Launcher** (`launcher.py`): Industrial text console for headless installs
 - **Setup Script** (`setup.py`): Dependency installation utility
 - **Configuration** (`launcher_config.json`): System state tracking
 
@@ -433,7 +459,7 @@ Terminal output can be saved from the GUI launcher for debugging.
 ### Project Structure
 ```
 Automated-Followspot-System/
-├── launcher.py              # CLI launcher
+├── launcher.py              # Industrial CLI launcher
 ├── launcher_gui.py          # GUI launcher
 ├── setup.py                # Dependency installer
 ├── launcher_config.json    # System configuration

@@ -24,6 +24,7 @@ from typing import Callable, Dict, Optional, List, Tuple, Any
 import urllib.request
 
 from update_manager import UpdateManager, UpdateError, CommitInfo
+from node import setup_utils
 
 
 def ensure_window_fits_content(
@@ -1976,6 +1977,7 @@ class InstallerWindow:
         self.repair_mode = repair_mode
         self.reinstall_mode = reinstall_mode
         self.stack_display = stack_type.replace('_', ' ').title()
+        self.node_setup_data = None  # type: Optional[Dict[str, Any]]
         
         self.window = tk.Toplevel(parent.root)
         self.window.title(f"Install {self.stack_display} Stack")
@@ -2033,11 +2035,22 @@ class InstallerWindow:
     
     def start_installation(self):
         """Start the installation process"""
+        if self.stack_type in {"node", "front_node"} and self.node_setup_data is None:
+            stack_key = f"{self.stack_type}_stack"
+            defaults = self.parent.config.get("installations", {}).get(stack_key, {}).get("node_setup", {})
+            dialog = NodeSetupDialog(self.parent.root, self.stack_type, defaults)
+            data = dialog.show()
+            if data is None:
+                self.install_button.config(state=tk.NORMAL)
+                return
+            self.node_setup_data = data
+
         self.install_button.config(state=tk.DISABLED)
         self.progress.start()
         
         def install_process():
             try:
+                stack_key = f"{self.stack_type}_stack"
                 self.window.after(0, lambda: self.status_label.config(text="Installing dependencies..."))
                 
                 # Install dependencies
@@ -2100,11 +2113,38 @@ class InstallerWindow:
                 self.window.after(0, lambda: self.status_label.config(text="Finalizing installation..."))
                 
                 install_date = datetime.now().isoformat()
-                self.parent.config['installations'][f'{self.stack_type}_stack']['installed'] = True
-                self.parent.config['installations'][f'{self.stack_type}_stack']['version'] = "1.0.0"
-                self.parent.config['installations'][f'{self.stack_type}_stack']['install_date'] = install_date
-                self.parent.config['installations'][f'{self.stack_type}_stack']['dependencies_verified'] = True
-                self.parent.config['installations'][f'{self.stack_type}_stack']['last_dependency_check'] = install_date
+                install_entry = self.parent.config.setdefault('installations', {}).setdefault(stack_key, {})
+                install_entry['installed'] = True
+                install_entry['version'] = "1.0.0"
+                install_entry['install_date'] = install_date
+                install_entry['dependencies_verified'] = True
+                install_entry['last_dependency_check'] = install_date
+
+                if self.stack_type in {"node", "front_node"} and self.node_setup_data:
+                    setup_data = dict(self.node_setup_data)
+                    profile = "front_truss" if self.stack_type == "front_node" else "roof_array"
+                    setup_data["profile"] = profile
+                    setup_data["configured_at"] = install_date
+                    setup_summary = setup_utils.finalize_node_setup(
+                        stack_slug="front-node" if self.stack_type == "front_node" else "node",
+                        project_root=Path(__file__).parent,
+                        python_exec=sys.executable,
+                        setup=setup_data,
+                    )
+                    install_entry['node_setup'] = setup_data
+                    install_entry['autostart'] = setup_summary
+                    service_info = setup_summary.get("service", {})
+                    if service_info.get("enabled"):
+                        self.window.after(0, self.log, f"Autostart enabled ({service_info.get('service_name')})")
+                    elif service_info.get("enable_error"):
+                        self.window.after(0, self.log, f"Autostart enable error: {service_info['enable_error']}")
+                    hostname_info = setup_summary.get("hostname", {})
+                    if hostname_info.get("requested") and not hostname_info.get("applied"):
+                        message = hostname_info.get("message") or "Hostname change requires sudo"
+                        self.window.after(0, self.log, f"Hostname update not applied: {message}")
+                    notes = setup_summary.get("static_ip_notes", {}).get("notes_file")
+                    if notes:
+                        self.window.after(0, self.log, f"Static IP guidance saved to {notes}")
                 
                 self.parent.save_config()
                 
@@ -2140,6 +2180,101 @@ class InstallerWindow:
     def show(self):
         """Show the installer window"""
         self.window.deiconify()
+
+
+class NodeSetupDialog:
+    """Modal dialog to gather node network and hardware settings."""
+
+    def __init__(self, parent: tk.Tk, stack_type: str, defaults: Optional[Dict[str, Any]] = None):
+        self.parent = parent
+        self.stack_type = stack_type
+        self.defaults = defaults or {}
+        self.result: Optional[Dict[str, Any]] = None
+
+        self.window = tk.Toplevel(parent)
+        self.window.title("Node Setup Configuration")
+        self.window.transient(parent)
+        self.window.grab_set()
+
+        profile_defaults = {
+            "node": {"camera_device": "imx219", "port": 8080},
+            "front_node": {"camera_device": "imx477", "port": 8000},
+        }
+        prof = profile_defaults.get(stack_type, {"camera_device": "", "port": 8080})
+
+        frame = ttk.Frame(self.window, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Static IP (leave blank to skip)").grid(row=0, column=0, sticky="w")
+        self.static_ip_var = tk.StringVar(value=self.defaults.get("static_ip", ""))
+        ttk.Entry(frame, textvariable=self.static_ip_var, width=30).grid(row=0, column=1, sticky="ew")
+
+        ttk.Label(frame, text="Hostname (leave blank to skip)").grid(row=1, column=0, sticky="w")
+        self.hostname_var = tk.StringVar(value=self.defaults.get("hostname", ""))
+        ttk.Entry(frame, textvariable=self.hostname_var, width=30).grid(row=1, column=1, sticky="ew")
+
+        ttk.Label(frame, text="Camera Device").grid(row=2, column=0, sticky="w")
+        default_camera = self.defaults.get("camera_device") or prof.get("camera_device", "")
+        self.camera_var = tk.StringVar(value=default_camera)
+        ttk.Entry(frame, textvariable=self.camera_var, width=30).grid(row=2, column=1, sticky="ew")
+
+        ttk.Label(frame, text="Network Interface").grid(row=3, column=0, sticky="w")
+        self.interface_var = tk.StringVar(value=self.defaults.get("interface", "eth0"))
+        ttk.Entry(frame, textvariable=self.interface_var, width=20).grid(row=3, column=1, sticky="ew")
+
+        ttk.Label(frame, text="Default Gateway").grid(row=4, column=0, sticky="w")
+        self.gateway_var = tk.StringVar(value=self.defaults.get("gateway", ""))
+        ttk.Entry(frame, textvariable=self.gateway_var, width=30).grid(row=4, column=1, sticky="ew")
+
+        ttk.Label(frame, text="DNS Servers (space separated)").grid(row=5, column=0, sticky="w")
+        self.dns_var = tk.StringVar(value=self.defaults.get("dns", ""))
+        ttk.Entry(frame, textvariable=self.dns_var, width=30).grid(row=5, column=1, sticky="ew")
+
+        ttk.Label(frame, text="Service Port").grid(row=6, column=0, sticky="w")
+        port_default = self.defaults.get("port") or prof.get("port", 8080)
+        try:
+            self.port_default = int(port_default)
+        except (TypeError, ValueError):
+            self.port_default = 8080
+        self.port_var = tk.StringVar(value=str(self.port_default))
+        ttk.Entry(frame, textvariable=self.port_var, width=10).grid(row=6, column=1, sticky="w")
+
+        frame.columnconfigure(1, weight=1)
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=7, column=0, columnspan=2, pady=(20, 0), sticky="e")
+
+        ttk.Button(button_frame, text="Cancel", command=self.on_cancel).pack(side=tk.RIGHT, padx=(10, 0))
+        ttk.Button(button_frame, text="Save", command=self.on_save).pack(side=tk.RIGHT)
+
+        ensure_window_fits_content(self.window, min_width=500, min_height=320, padding=40, center=True)
+
+    def on_save(self):
+        port_text = self.port_var.get().strip()
+        try:
+            port_value = int(port_text) if port_text else self.port_default
+        except ValueError:
+            messagebox.showerror("Invalid Port", "Please enter a valid numeric port.")
+            return
+
+        self.result = {
+            "static_ip": self.static_ip_var.get().strip() or None,
+            "hostname": self.hostname_var.get().strip() or None,
+            "camera_device": self.camera_var.get().strip() or None,
+            "interface": self.interface_var.get().strip() or "eth0",
+            "gateway": self.gateway_var.get().strip() or None,
+            "dns": self.dns_var.get().strip() or None,
+            "port": port_value,
+        }
+        self.window.destroy()
+
+    def on_cancel(self):
+        self.result = None
+        self.window.destroy()
+
+    def show(self) -> Optional[Dict[str, Any]]:
+        self.window.wait_window()
+        return self.result
 
 
 class StatusWindow:
