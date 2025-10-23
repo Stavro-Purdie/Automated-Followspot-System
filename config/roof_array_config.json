@@ -1,7 +1,7 @@
 {
   "grid_config": {
-    "cameras_per_row": 2,
-    "total_cameras": 4,
+    "cameras_per_row": 4,
+    "total_cameras": 16,
     "cell_width": 320,
     "cell_height": 240,
     "auto_arrange": true
@@ -10,56 +10,90 @@
     {
       "server_url": "http://192.168.1.100:8080",
       "crop_rect": [
-        279,
-        164,
-        13,
+        107,
+        50,
+        0,
+        0
+      ],
+      "position": [
+        0,
+        0
+      ],
+      "camera_id": "Cam 1",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        1,
+        0
+      ],
+      "camera_id": "Cam 2",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        0,
+        1
+      ],
+      "camera_id": "Cam 3",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        1,
+        1
+      ],
+      "camera_id": "Cam 4",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        0,
         2
       ],
-      "position": [
-        0,
-        0
-      ],
-      "camera_id": "cam_1",
+      "camera_id": "Cam 5",
       "enabled": true,
       "auto_crop": true,
       "overlap_threshold": 0.1
     },
     {
-      "server_url": "http://192.168.1.101:8080",
-      "crop_rect": [
-        69,
-        40,
-        0,
-        0
-      ],
-      "position": [
-        1,
-        0
-      ],
-      "camera_id": "cam_2",
-      "enabled": true,
-      "auto_crop": true,
-      "overlap_threshold": 0.1
-    },
-    {
-      "server_url": "http://192.168.1.102:8080",
-      "crop_rect": [
-        0,
-        0,
-        320,
-        240
-      ],
-      "position": [
-        0,
-        1
-      ],
-      "camera_id": "cam_3",
-      "enabled": true,
-      "auto_crop": true,
-      "overlap_threshold": 0.1
-    },
-    {
-      "server_url": "http://192.168.1.103:8080",
+      "server_url": "http://192.168.1.100:8080",
       "crop_rect": [
         0,
         0,
@@ -68,9 +102,179 @@
       ],
       "position": [
         1,
-        1
+        2
       ],
-      "camera_id": "cam_4",
+      "camera_id": "Cam 6",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        0,
+        3
+      ],
+      "camera_id": "Cam 7",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        1,
+        3
+      ],
+      "camera_id": "Cam 8",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        0,
+        4
+      ],
+      "camera_id": "Cam 9",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        1,
+        4
+      ],
+      "camera_id": "Cam 10",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        0,
+        5
+      ],
+      "camera_id": "Cam 11",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        1,
+        5
+      ],
+      "camera_id": "Cam 12",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        0,
+        3
+      ],
+      "camera_id": "Cam 13",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "192.",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        1,
+        3
+      ],
+      "camera_id": "Cam 14",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        2,
+        3
+      ],
+      "camera_id": "Cam 15",
+      "enabled": true,
+      "auto_crop": true,
+      "overlap_threshold": 0.1
+    },
+    {
+      "server_url": "http://192.168.1.100:8080",
+      "crop_rect": [
+        0,
+        0,
+        320,
+        240
+      ],
+      "position": [
+        3,
+        3
+      ],
+      "camera_id": "Cam 16",
       "enabled": true,
       "auto_crop": true,
       "overlap_threshold": 0.1

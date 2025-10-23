@@ -15,11 +15,17 @@ from queue import Queue, Empty
 import argparse
 import time
 import os
+import math
 from typing import Callable, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 import aiohttp
 from aiortc import RTCPeerConnection, RTCSessionDescription
+
+try:
+    from demo_stage_state import get_demo_stage_state
+except Exception:
+    get_demo_stage_state = None  # type: ignore[assignment]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -76,6 +82,9 @@ class MultiCameraManager:
         self.running = True
         self.ir_threshold = 200
         self.demo_manager = None
+        self._active_grid_cols = self.grid_config.cameras_per_row
+        self._active_grid_rows = max(1, math.ceil(self.grid_config.total_cameras / max(1, self._active_grid_cols)))
+        self.demo_stage_state = None
         
         # Legacy fallback support
         if not os.path.exists(self.config_file) and "roof_array_config.json" in self.config_file:
@@ -114,9 +123,73 @@ class MultiCameraManager:
                     self.cameras[camera.camera_id] = camera
             
             logger.info(f"Loaded {len(self.cameras)} cameras from {self.config_file}")
+            self._apply_auto_layout()
+            self._update_grid_dimensions()
             
         except Exception as e:
             logger.error(f"Error loading configuration: {e}")
+
+    def _apply_auto_layout(self) -> None:
+        """Ensure cameras have sane grid positions for large arrays."""
+        if not self.cameras:
+            return
+
+        per_row = max(1, self.grid_config.cameras_per_row)
+        ordered_cameras = list(self.cameras.values())
+
+        if self.grid_config.auto_arrange:
+            for idx, camera in enumerate(ordered_cameras):
+                col = idx % per_row
+                row = idx // per_row
+                if camera.position != (col, row):
+                    camera.position = (col, row)
+            logger.info(
+                "Auto-arranged %d cameras into %dx%d grid",
+                len(ordered_cameras),
+                per_row,
+                math.ceil(len(ordered_cameras) / per_row),
+            )
+        else:
+            # Warn if any positions fall outside the declared grid bounds
+            max_x = max(camera.position[0] for camera in ordered_cameras)
+            max_y = max(camera.position[1] for camera in ordered_cameras)
+            if max_x >= per_row:
+                logger.warning(
+                    "Camera layout exceeds configured cameras_per_row=%d (max column=%d). Consider enabling auto_arrange.",
+                    per_row,
+                    max_x,
+                )
+            expected_rows = math.ceil(len(ordered_cameras) / max(1, per_row))
+            if max_y + 1 > expected_rows:
+                logger.warning(
+                    "Camera layout uses %d rows but only %d expected from configuration. Composite size will expand automatically.",
+                    max_y + 1,
+                    expected_rows,
+                )
+
+        if len(ordered_cameras) != self.grid_config.total_cameras:
+            self.grid_config.total_cameras = len(ordered_cameras)
+
+    def _update_grid_dimensions(self, enabled_configs: Optional[List[CameraConfig]] = None) -> None:
+        """Recalculate the active grid size based on camera placement."""
+        if enabled_configs is None:
+            enabled_configs = [camera for camera in self.cameras.values() if camera.enabled]
+        else:
+            enabled_configs = [camera for camera in enabled_configs if camera.enabled]
+
+        if not enabled_configs:
+            self._active_grid_cols = max(1, self.grid_config.cameras_per_row)
+            self._active_grid_rows = 1
+            return
+
+        max_col = max(camera.position[0] for camera in enabled_configs)
+        max_row = max(camera.position[1] for camera in enabled_configs)
+
+        cols = max(max_col + 1, self.grid_config.cameras_per_row, 1)
+        rows = max(max_row + 1, math.ceil(len(enabled_configs) / cols))
+
+        self._active_grid_cols = cols
+        self._active_grid_rows = rows
 
     def init_demo_mode(self):
         """Initialize demo mode with simulated cameras"""
@@ -125,7 +198,9 @@ class MultiCameraManager:
             return
 
         logger.info("Initializing demo mode...")
-        self.demo_manager = DemoCameraManager(self.cameras)
+        if self.demo_stage_state is None and get_demo_stage_state is not None:
+            self.demo_stage_state = get_demo_stage_state()
+        self.demo_manager = DemoCameraManager(self.cameras, stage_state=self.demo_stage_state)
     
     def get_demo_frames(self) -> Dict[str, np.ndarray]:
         """Get frames from demo mode"""
@@ -148,10 +223,11 @@ class MultiCameraManager:
         
         if not frame_source:
             return None
-        
+
         # Calculate composite frame dimensions
-        composite_width = self.grid_config.cameras_per_row * self.grid_config.cell_width
-        composite_height = ((len(enabled_cameras) + self.grid_config.cameras_per_row - 1) // self.grid_config.cameras_per_row) * self.grid_config.cell_height
+        self._update_grid_dimensions(list(enabled_cameras.values()))
+        composite_width = self._active_grid_cols * self.grid_config.cell_width
+        composite_height = self._active_grid_rows * self.grid_config.cell_height
         
         # Create black canvas
         composite = np.zeros((composite_height, composite_width, 3), dtype=np.uint8)
@@ -285,16 +361,19 @@ class MultiCameraManager:
         
         return "unknown"
         
-    def apply_seamless_blending(self, composite_frame: np.ndarray) -> np.ndarray:
+    def apply_seamless_blending(self, composite_frame: np.ndarray) -> Optional[np.ndarray]:
         """Apply seamless blending to eliminate visible seams between cameras"""
         if composite_frame is None:
             return None
-        
+
+        self._update_grid_dimensions()
         blended = composite_frame.copy()
-        
+
         # Apply feathering at camera boundaries
         for camera_id, config in self.cameras.items():
-            if not config.enabled or camera_id not in self.latest_frames:
+            if not config.enabled:
+                continue
+            if not self.demo_mode and camera_id not in self.latest_frames:
                 continue
             
             grid_x, grid_y = config.position
@@ -304,7 +383,7 @@ class MultiCameraManager:
             end_y = start_y + self.grid_config.cell_height
             
             # Apply feathering on right edge (if not last column)
-            if grid_x < self.grid_config.cameras_per_row - 1:
+            if grid_x < self._active_grid_cols - 1:
                 feather_width = int(self.grid_config.cell_width * config.overlap_threshold)
                 if feather_width > 0:
                     for i in range(feather_width):
@@ -317,7 +396,7 @@ class MultiCameraManager:
                             ).astype(np.uint8)
             
             # Apply feathering on bottom edge (if not last row)
-            total_rows = (len([c for c in self.cameras.values() if c.enabled]) + self.grid_config.cameras_per_row - 1) // self.grid_config.cameras_per_row
+            total_rows = self._active_grid_rows
             if grid_y < total_rows - 1:
                 feather_height = int(self.grid_config.cell_height * config.overlap_threshold)
                 if feather_height > 0:
@@ -443,6 +522,7 @@ def process_and_display_composite(manager: MultiCameraManager, dry_run: bool = F
                 
                 # Apply seamless blending
                 blended_frame = manager.apply_seamless_blending(composite)
+                display_blend = blended_frame if blended_frame is not None else composite
                 
                 # Create hot/cold visualization
                 gray_composite = cv2.cvtColor(composite, cv2.COLOR_BGR2GRAY)
@@ -465,8 +545,8 @@ def process_and_display_composite(manager: MultiCameraManager, dry_run: bool = F
                     try:
                         cv2.imshow("Multi-Camera Composite", processed_frame)
                         cv2.imshow("IR Beacon Detection", hot_cold_colored)
-                        if blended_frame is not None:
-                            cv2.imshow("Seamless Blend", blended_frame)
+                        if display_blend is not None:
+                            cv2.imshow("Seamless Blend", display_blend)
                     except Exception as e:
                         logger.warning(f"Could not display frames: {e}")
                         dry_run = True
@@ -499,8 +579,8 @@ def process_and_display_composite(manager: MultiCameraManager, dry_run: bool = F
                     timestamp = int(time.time())
                     cv2.imwrite(f"composite_{timestamp}.jpg", processed_frame)
                     cv2.imwrite(f"composite_ir_{timestamp}.jpg", hot_cold_colored)
-                    if blended_frame is not None:
-                        cv2.imwrite(f"composite_blend_{timestamp}.jpg", blended_frame)
+                    if display_blend is not None:
+                        cv2.imwrite(f"composite_blend_{timestamp}.jpg", display_blend)
                     logger.info(f"Saved composite snapshots")
                 elif key == ord('r'):
                     # Reload configuration

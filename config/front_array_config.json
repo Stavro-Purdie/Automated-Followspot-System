@@ -4,18 +4,41 @@
       "camera_id": "front",
       "server_url": "http://192.168.0.50:8000",
       "protocol": "webrtc",
-      "position": [0, 0, 2.5],
-      "angle": 0,
-      "fov": 60,
-      "focal_length": 1000,
-      "resolution": [1920, 1080],
+      "position": [
+        0.0,
+        0.0,
+        2.5
+      ],
+      "angle": 0.0,
+      "fov": 60.0,
+      "focal_length": 1000.0,
+      "resolution": [
+        1280,
+        960
+      ],
       "extrinsics": {
         "rotation_matrix": [
-          [1, 0, 0],
-          [0, 1, 0],
-          [0, 0, 1]
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
         ],
-        "translation_vector": [0, 0, 0],
+        "translation_vector": [
+          0.0,
+          0.0,
+          0.0
+        ],
         "reference_frame": "stage",
         "calibrated": false,
         "calibration_date": null
@@ -27,23 +50,48 @@
         "smoothing_window": 5
       },
       "calibration_matrix": [
-        [1000, 0, 960],
-        [0, 1000, 540],
-        [0, 0, 1]
+        [
+          1000,
+          0,
+          960
+        ],
+        [
+          0,
+          1000,
+          540
+        ],
+        [
+          0,
+          0,
+          1
+        ]
       ],
-      "distortion_coeffs": [0, 0, 0, 0, 0]
+      "distortion_coeffs": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     }
   },
   "stage_geometry": {
-    "width": 10.0,
-    "depth": 8.0,
+    "width": 16.0,
+    "depth": 16.0,
     "height": 3.0,
-    "origin": [0, 0, 0],
+    "origin": [
+      0.0,
+      0.0,
+      0.0
+    ],
     "units": "meters"
   },
   "performance": {
     "target_fps": 15,
-    "detection_resolution": [1280, 720],
+    "detection_resolution": [
+      1280,
+      960
+    ],
     "max_persons": 10,
     "confidence_threshold": 0.6,
     "nms_threshold": 0.4
@@ -85,5 +133,5 @@
     "calibrated": false,
     "calibration_date": null
   },
-  "last_updated": null
+  "last_updated": "2025-10-21T13:43:18.296534"
 }

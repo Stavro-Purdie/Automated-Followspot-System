@@ -136,6 +136,8 @@ class VideoDisplayGUI:
                 except Exception:
                     self.reid_runner = None
 
+        self._start_reid_runner()
+
         # Initialize Data Fusion (uses front config)
         self.fusion = None
         try:
@@ -226,6 +228,17 @@ class VideoDisplayGUI:
 
         self.root.config(menu=menubar)
 
+    def _start_reid_runner(self) -> None:
+        runner = self.reid_runner
+        if runner is None:
+            return
+        start_fn = getattr(runner, "start", None)
+        if callable(start_fn):
+            try:
+                start_fn()
+            except Exception as exc:
+                logger.warning("Could not start ReID runner: %s", exc)
+
     def _launch_tool(self, script_name: str, description: str) -> None:
         script_path = Path(__file__).resolve().parent / script_name
         if not script_path.exists():
@@ -276,8 +289,9 @@ class VideoDisplayGUI:
         front_config = config_root / "front_array_config.json"
 
         try:
+            launcher_proxy: Any = _LauncherProxy(self.root)
             ConnectionStatusWindow(  # type: ignore[arg-type]
-                launcher=_LauncherProxy(self.root),
+                launcher=launcher_proxy,
                 roof_config_path=str(roof_config),
                 front_config_path=str(front_config),
                 launch_callback=None,
