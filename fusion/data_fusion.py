@@ -47,6 +47,9 @@ class Person:
     last_updated: float
     fusion_confidence: float
     axis_confidence: np.ndarray = field(default_factory=lambda: np.ones(3))
+    kalman_state: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    kalman_covariance: np.ndarray = field(default_factory=lambda: np.eye(6))
+    kalman_initialized: bool = False
 
 class DataFusion:
     """Orchestrates the reconciliation between camera tracks and IR beacons."""
@@ -100,6 +103,14 @@ class DataFusion:
         self.reid_weight = self.fusion_config["reid_weight"]
         self.ir_weight = self.fusion_config["ir_weight"]
         self.fusion_memory_time = self.fusion_config["fusion_memory_time"]
+        self.process_noise = float(self.fusion_config.get("process_noise", 1.0))
+        self.initial_state_variance = float(self.fusion_config.get("initial_state_variance", 1.0))
+        self.initial_velocity_variance = float(self.fusion_config.get("initial_velocity_variance", 1.0))
+        self.measurement_noise_floor = float(self.fusion_config.get("measurement_noise_floor", 1e-3))
+        self.reid_measurement_variance = float(self.fusion_config.get("reid_measurement_variance", 0.05))
+        self.reid_measurement_variance_z = float(self.fusion_config.get("reid_measurement_variance_z", 0.1))
+        self.ir_measurement_variance = float(self.fusion_config.get("ir_measurement_variance", 0.03))
+        self.ir_z_variance = float(self.fusion_config.get("ir_z_variance", 0.5))
         
         # Stage bounds for validation
         # A friendly guard-rail that stops us from reporting ghosts far outside
@@ -131,6 +142,13 @@ class DataFusion:
             "position_matches": 0,
             "position_mismatches": 0
         }
+
+        # Pre-compute matrices used by the Kalman filter
+        self._measurement_matrix = np.zeros((3, 6))
+        self._measurement_matrix[0, 0] = 1.0
+        self._measurement_matrix[1, 1] = 1.0
+        self._measurement_matrix[2, 2] = 1.0
+        self._identity6 = np.eye(6)
         
         logger.info("DataFusion initialized")
     
@@ -214,7 +232,7 @@ class DataFusion:
             
             positions[track_id] = Position3D(
                 x=stage_pos[0],
-                y=stage_pos[1], 
+                y=stage_pos[1],
                 z=stage_pos[2],
                 confidence=track["confidence"],
                 timestamp=track["last_update"],
@@ -381,88 +399,222 @@ class DataFusion:
         for reid_id, ir_id in matches:
             matched_reid_ids.add(reid_id)
             matched_ir_ids.add(ir_id)
-            
+
             reid_pos = reid_positions[reid_id]
             ir_pos = ir_positions[ir_id]
-            
-            # Find existing person or create new one
-            person = self._find_or_create_person(reid_id, ir_id)
-            
-            # Fuse positions using weighted average
-            weight_sum = (self.reid_weight + self.ir_weight)
-            fused_x = (reid_pos.x * self.reid_weight + ir_pos.x * self.ir_weight) / weight_sum
-            fused_y = (reid_pos.y * self.reid_weight + ir_pos.y * self.ir_weight) / weight_sum
-            fused_z = reid_pos.z  # ReID provides Z, IR typically doesn't
-            
-            # Combined confidence gives us a legible number to sort and filter on
-            fusion_confidence = (reid_pos.confidence * self.reid_weight + 
-                               ir_pos.confidence * self.ir_weight) / weight_sum
 
-            fused_axis_conf = np.array([
-                (reid_pos.axis_confidence[0] * self.reid_weight + ir_pos.axis_confidence[0] * self.ir_weight) / weight_sum,
-                (reid_pos.axis_confidence[1] * self.reid_weight + ir_pos.axis_confidence[1] * self.ir_weight) / weight_sum,
-                reid_pos.axis_confidence[2]
-            ])
-            fused_axis_conf = np.clip(fused_axis_conf, 0.0, 1.0)
-            
-            # Update person
-            old_pos = np.array([person.position.x, person.position.y, person.position.z])
-            new_pos = np.array([fused_x, fused_y, fused_z])
-            
-            # Calculate velocity
-            dt = timestamp - person.last_updated
-            if dt > 0:
-                person.velocity = (new_pos - old_pos) / dt
-            
-            person.position = Position3D(
-                x=fused_x, y=fused_y, z=fused_z,
-                confidence=fusion_confidence,
+            person = self._find_or_create_person(reid_id, ir_id)
+            measurement, meas_cov, axis_conf, fusion_confidence = self._build_fused_measurement(reid_pos, ir_pos)
+            self._apply_kalman_measurement(
+                person=person,
+                measurement=measurement,
+                measurement_cov=meas_cov,
                 timestamp=timestamp,
                 source=TrackingSource.FUSED,
-                axis_confidence=tuple(fused_axis_conf.tolist())
+                fusion_confidence=fusion_confidence,
+                axis_confidence=axis_conf,
+                reid_conf=reid_pos.confidence,
+                ir_conf=ir_pos.confidence,
             )
-            person.reid_confidence = reid_pos.confidence
-            person.ir_confidence = ir_pos.confidence
-            person.fusion_confidence = fusion_confidence
-            person.last_updated = timestamp
-            person.axis_confidence = fused_axis_conf
         
         # Update ReID-only persons
         for reid_id, reid_pos in reid_positions.items():
             if reid_id not in matched_reid_ids:
                 person = self._find_or_create_person(reid_id, None)
-                
-                old_pos = np.array([person.position.x, person.position.y, person.position.z])
-                new_pos = np.array([reid_pos.x, reid_pos.y, reid_pos.z])
-                
-                dt = timestamp - person.last_updated
-                if dt > 0:
-                    person.velocity = (new_pos - old_pos) / dt
-                
-                person.position = reid_pos
-                person.reid_confidence = reid_pos.confidence
-                person.fusion_confidence = reid_pos.confidence * 0.7  # Lower confidence without IR
-                person.last_updated = timestamp
-                person.axis_confidence = np.array(reid_pos.axis_confidence)
+                measurement, meas_cov, axis_conf, fusion_confidence = self._build_reid_measurement(reid_pos)
+                self._apply_kalman_measurement(
+                    person=person,
+                    measurement=measurement,
+                    measurement_cov=meas_cov,
+                    timestamp=timestamp,
+                    source=TrackingSource.REID_CAMERA,
+                    fusion_confidence=fusion_confidence,
+                    axis_confidence=axis_conf,
+                    reid_conf=reid_pos.confidence,
+                    ir_conf=None,
+                )
         
         # Update IR-only persons  
         for ir_id, ir_pos in ir_positions.items():
             if ir_id not in matched_ir_ids:
                 person = self._find_or_create_person(None, ir_id)
-                
-                old_pos = np.array([person.position.x, person.position.y, person.position.z])
-                new_pos = np.array([ir_pos.x, ir_pos.y, ir_pos.z])
-                
-                dt = timestamp - person.last_updated
-                if dt > 0:
-                    person.velocity = (new_pos - old_pos) / dt
-                
-                person.position = ir_pos
-                person.ir_confidence = ir_pos.confidence
-                person.fusion_confidence = ir_pos.confidence * 0.8  # Good X,Y but no Z
-                person.last_updated = timestamp
-                person.axis_confidence = np.array(ir_pos.axis_confidence)
+                measurement, meas_cov, axis_conf, fusion_confidence = self._build_ir_measurement(person, ir_pos)
+                self._apply_kalman_measurement(
+                    person=person,
+                    measurement=measurement,
+                    measurement_cov=meas_cov,
+                    timestamp=timestamp,
+                    source=TrackingSource.IR_BEACON,
+                    fusion_confidence=fusion_confidence,
+                    axis_confidence=axis_conf,
+                    reid_conf=None,
+                    ir_conf=ir_pos.confidence,
+                )
     
+    def _confidence_to_variance(self, confidence: float, base_variance: float) -> float:
+        confidence = float(confidence)
+        adjusted_conf = max(confidence, 0.05)
+        variance = base_variance / adjusted_conf
+        return max(variance, self.measurement_noise_floor)
+
+    @staticmethod
+    def _combine_variances(variances: List[float]) -> float:
+        valid = [v for v in variances if v > 0]
+        if not valid:
+            return 1.0
+        inv_sum = sum(1.0 / v for v in valid)
+        if inv_sum <= 0:
+            return max(valid)
+        return 1.0 / inv_sum
+
+    def _build_fused_measurement(
+        self,
+        reid_pos: Position3D,
+        ir_pos: Position3D,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+        weight_sum = self.reid_weight + self.ir_weight
+        fused_x = (reid_pos.x * self.reid_weight + ir_pos.x * self.ir_weight) / weight_sum
+        fused_y = (reid_pos.y * self.reid_weight + ir_pos.y * self.ir_weight) / weight_sum
+        fused_z = reid_pos.z
+
+        fusion_confidence = (
+            reid_pos.confidence * self.reid_weight + ir_pos.confidence * self.ir_weight
+        ) / weight_sum
+
+        axis_conf = np.array([
+            (reid_pos.axis_confidence[0] * self.reid_weight + ir_pos.axis_confidence[0] * self.ir_weight) / weight_sum,
+            (reid_pos.axis_confidence[1] * self.reid_weight + ir_pos.axis_confidence[1] * self.ir_weight) / weight_sum,
+            reid_pos.axis_confidence[2],
+        ], dtype=float)
+        axis_conf = np.clip(axis_conf, 0.0, 1.0)
+
+        var_reid_x = self._confidence_to_variance(reid_pos.axis_confidence[0], self.reid_measurement_variance)
+        var_ir_x = self._confidence_to_variance(ir_pos.axis_confidence[0], self.ir_measurement_variance)
+        var_x = max(self.measurement_noise_floor, self._combine_variances([var_reid_x, var_ir_x]))
+
+        var_reid_y = self._confidence_to_variance(reid_pos.axis_confidence[1], self.reid_measurement_variance)
+        var_ir_y = self._confidence_to_variance(ir_pos.axis_confidence[1], self.ir_measurement_variance)
+        var_y = max(self.measurement_noise_floor, self._combine_variances([var_reid_y, var_ir_y]))
+
+        var_z = self._confidence_to_variance(reid_pos.axis_confidence[2], self.reid_measurement_variance_z)
+
+        measurement = np.array([fused_x, fused_y, fused_z], dtype=float)
+        measurement_cov = np.diag([var_x, var_y, var_z])
+        return measurement, measurement_cov, axis_conf, fusion_confidence
+
+    def _build_reid_measurement(self, reid_pos: Position3D) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+        axis_conf = np.clip(np.array(reid_pos.axis_confidence, dtype=float), 0.0, 1.0)
+        measurement = np.array([reid_pos.x, reid_pos.y, reid_pos.z], dtype=float)
+        measurement_cov = np.diag([
+            self._confidence_to_variance(axis_conf[0], self.reid_measurement_variance),
+            self._confidence_to_variance(axis_conf[1], self.reid_measurement_variance),
+            self._confidence_to_variance(axis_conf[2], self.reid_measurement_variance_z),
+        ])
+        fusion_confidence = reid_pos.confidence * 0.7
+        return measurement, measurement_cov, axis_conf, fusion_confidence
+
+    def _build_ir_measurement(self, person: Person, ir_pos: Position3D) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+        axis_conf = np.clip(np.array(ir_pos.axis_confidence, dtype=float), 0.0, 1.0)
+        axis_conf[2] = min(axis_conf[2], 0.3)
+        prior_z = person.position.z if person.last_updated > 0 else ir_pos.z
+        measurement = np.array([ir_pos.x, ir_pos.y, prior_z], dtype=float)
+        measurement_cov = np.diag([
+            self._confidence_to_variance(axis_conf[0], self.ir_measurement_variance),
+            self._confidence_to_variance(axis_conf[1], self.ir_measurement_variance),
+            max(self.measurement_noise_floor, self.ir_z_variance),
+        ])
+        fusion_confidence = ir_pos.confidence * 0.8
+        return measurement, measurement_cov, axis_conf, fusion_confidence
+
+    def _kalman_predict(self, person: Person, timestamp: float) -> None:
+        if not person.kalman_initialized:
+            return
+
+        dt = timestamp - person.last_updated
+        if dt <= 0:
+            return
+
+        F = np.eye(6)
+        F[0, 3] = dt
+        F[1, 4] = dt
+        F[2, 5] = dt
+
+        dt2 = dt * dt
+        dt3 = dt2 * dt
+        dt4 = dt3 * dt
+        q = self.process_noise
+        Q = q * np.array([
+            [dt4 / 4, 0, 0, dt3 / 2, 0, 0],
+            [0, dt4 / 4, 0, 0, dt3 / 2, 0],
+            [0, 0, dt4 / 4, 0, 0, dt3 / 2],
+            [dt3 / 2, 0, 0, dt2, 0, 0],
+            [0, dt3 / 2, 0, 0, dt2, 0],
+            [0, 0, dt3 / 2, 0, 0, dt2],
+        ])
+
+        person.kalman_state = F @ person.kalman_state
+        person.kalman_covariance = F @ person.kalman_covariance @ F.T + Q
+
+    def _kalman_update(self, person: Person, measurement: np.ndarray, measurement_cov: np.ndarray) -> None:
+        H = self._measurement_matrix
+        S = H @ person.kalman_covariance @ H.T + measurement_cov
+        try:
+            K = person.kalman_covariance @ H.T @ np.linalg.inv(S)
+        except np.linalg.LinAlgError:
+            S += np.eye(3) * self.measurement_noise_floor
+            K = person.kalman_covariance @ H.T @ np.linalg.inv(S)
+
+        innovation = measurement - H @ person.kalman_state
+        person.kalman_state = person.kalman_state + K @ innovation
+        person.kalman_covariance = (self._identity6 - K @ H) @ person.kalman_covariance
+        person.kalman_covariance = (person.kalman_covariance + person.kalman_covariance.T) / 2.0
+
+    def _apply_kalman_measurement(
+        self,
+        person: Person,
+        measurement: np.ndarray,
+        measurement_cov: np.ndarray,
+        timestamp: float,
+        source: TrackingSource,
+        fusion_confidence: float,
+        axis_confidence: np.ndarray,
+        reid_conf: Optional[float],
+        ir_conf: Optional[float],
+    ) -> None:
+        if not person.kalman_initialized:
+            person.kalman_state = np.zeros(6)
+            person.kalman_state[:3] = measurement
+            cov = np.eye(6)
+            cov[:3, :3] *= self.initial_state_variance
+            cov[3:, 3:] *= self.initial_velocity_variance
+            person.kalman_covariance = cov
+            person.kalman_initialized = True
+        else:
+            self._kalman_predict(person, timestamp)
+
+        measurement_cov = np.diag(np.maximum(np.diag(measurement_cov), self.measurement_noise_floor))
+        self._kalman_update(person, measurement, measurement_cov)
+
+        state = person.kalman_state
+        person.velocity = state[3:].copy()
+        clipped_axes = np.clip(axis_confidence, 0.0, 1.0)
+        person.position = Position3D(
+            x=float(state[0]),
+            y=float(state[1]),
+            z=float(state[2]),
+            confidence=float(fusion_confidence),
+            timestamp=timestamp,
+            source=source,
+            axis_confidence=tuple(clipped_axes.tolist()),
+        )
+        if reid_conf is not None:
+            person.reid_confidence = reid_conf
+        if ir_conf is not None:
+            person.ir_confidence = ir_conf
+        person.fusion_confidence = float(fusion_confidence)
+        person.axis_confidence = clipped_axes
+        person.last_updated = timestamp
+
     def _find_or_create_person(self, reid_id: Optional[int], ir_id: Optional[int]) -> Person:
         """Reuse an existing :class:`Person` if possible or spin up a fresh one.
 

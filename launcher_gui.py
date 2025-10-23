@@ -1538,16 +1538,35 @@ class ConnectionStatusWindow:
             with self.roof_config_path.open("r", encoding="utf-8") as handle:
                 roof_cfg = json.load(handle)
             grid_cfg = roof_cfg.get("grid_config", {}) if isinstance(roof_cfg, dict) else {}
-            self.roof_grid_cols = max(1, int(grid_cfg.get("cameras_per_row", 1)))
-            for idx, camera in enumerate(roof_cfg.get("cameras", []) if isinstance(roof_cfg, dict) else []):
+            per_row = max(1, int(grid_cfg.get("cameras_per_row", 1)))
+            auto_arrange = bool(grid_cfg.get("auto_arrange", False))
+            assigned_index = 0
+            max_col = 0
+            max_row = 0
+
+            camera_list = roof_cfg.get("cameras", []) if isinstance(roof_cfg, dict) else []
+            for idx, camera in enumerate(camera_list):
                 if not isinstance(camera, dict) or not camera.get("enabled", True):
                     continue
-                position = camera.get("position")
-                if (
-                    not isinstance(position, (list, tuple))
-                    or len(position) != 2
-                ):
-                    position = [idx % self.roof_grid_cols, idx // self.roof_grid_cols]
+
+                if auto_arrange:
+                    col = assigned_index % per_row
+                    row = assigned_index // per_row
+                else:
+                    position = camera.get("position")
+                    if not isinstance(position, (list, tuple)) or len(position) != 2:
+                        col = assigned_index % per_row
+                        row = assigned_index // per_row
+                    else:
+                        try:
+                            col = int(position[0])
+                            row = int(position[1])
+                        except Exception:
+                            col = assigned_index % per_row
+                            row = assigned_index // per_row
+
+                max_col = max(max_col, col)
+                max_row = max(max_row, row)
                 entry_id = str(camera.get("camera_id", f"cam_{idx + 1}"))
                 label = str(camera.get("display_name") or entry_id)
                 url = str(camera.get("server_url", ""))
@@ -1556,22 +1575,28 @@ class ConnectionStatusWindow:
                     "label": label,
                     "type": "Roof",
                     "url": url,
-                    "position": (int(position[0]), int(position[1])),
+                    "position": (int(col), int(row)),
                     "status": "checking",
                     "detail": "",
                     "requires_connection": True,
                 }
                 cameras.append(entry)
                 self.roof_entries.append(entry)
+                assigned_index += 1
+
+            # Update grid geometry to reflect actual layout
+            if self.roof_entries:
+                self.roof_grid_cols = max(per_row, max_col + 1)
+            else:
+                self.roof_grid_cols = per_row
         except Exception as exc:
             messagebox.showerror("Configuration Error", f"Unable to load roof configuration:\n{exc}")
             return []
 
-        self.roof_rows = (
-            (len(self.roof_entries) + self.roof_grid_cols - 1) // self.roof_grid_cols
-            if self.roof_entries
-            else 0
-        )
+        if self.roof_entries:
+            self.roof_rows = max(entry["position"][1] for entry in self.roof_entries) + 1
+        else:
+            self.roof_rows = 0
 
         try:
             with self.front_config_path.open("r", encoding="utf-8") as handle:
