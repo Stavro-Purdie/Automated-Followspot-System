@@ -243,44 +243,120 @@ class MultiCameraManager:
         for camera_id, config in enabled_cameras.items():
             if camera_id in frame_dict:
                 frame = frame_dict[camera_id]
-                
-                # Apply cropping
-                x, y, w, h = config.crop_rect
-                if x >= 0 and y >= 0 and x + w <= frame.shape[1] and y + h <= frame.shape[0] and w > 0 and h > 0:
-                    cropped = frame[y:y+h, x:x+w]
-                else:
-                    cropped = frame
-                
-                # Resize to cell size
-                resized = cv2.resize(cropped, (self.grid_config.cell_width, self.grid_config.cell_height))
-                
-                # Calculate position in composite
+
+                if not isinstance(frame, np.ndarray) or frame.size == 0:
+                    frame = None
+
+                if frame is not None:
+                    # Apply cropping
+                    x, y, w, h = config.crop_rect
+                    if (
+                        x >= 0
+                        and y >= 0
+                        and w > 0
+                        and h > 0
+                        and x + w <= frame.shape[1]
+                        and y + h <= frame.shape[0]
+                    ):
+                        cropped = frame[y:y + h, x:x + w]
+                    else:
+                        cropped = frame
+
+                    # Resize to cell size
+                    resized = cv2.resize(cropped, (self.grid_config.cell_width, self.grid_config.cell_height))
+
+                    # Calculate position in composite
+                    grid_x, grid_y = config.position
+                    start_x = grid_x * self.grid_config.cell_width
+                    start_y = grid_y * self.grid_config.cell_height
+                    end_x = start_x + self.grid_config.cell_width
+                    end_y = start_y + self.grid_config.cell_height
+
+                    # Ensure we don't exceed composite bounds
+                    if end_x <= composite_width and end_y <= composite_height:
+                        composite[start_y:end_y, start_x:end_x] = resized
+
+                        # Add camera ID overlay
+                        overlay_text = f"{camera_id}"
+                        if self.demo_mode:
+                            overlay_text += " (DEMO)"
+
+                        cv2.putText(
+                            composite,
+                            overlay_text,
+                            (start_x + 10, start_y + 30),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 255, 255) if not self.demo_mode else (255, 255, 0),
+                            1,
+                        )
+                        continue
+                # fall back to offline tile if frame missing or invalid
+                placeholder = self._render_offline_tile(
+                    self.grid_config.cell_width,
+                    self.grid_config.cell_height,
+                    message=f"{camera_id}\nOFFLINE",
+                )
                 grid_x, grid_y = config.position
                 start_x = grid_x * self.grid_config.cell_width
                 start_y = grid_y * self.grid_config.cell_height
                 end_x = start_x + self.grid_config.cell_width
                 end_y = start_y + self.grid_config.cell_height
-                
-                # Ensure we don't exceed composite bounds
+
                 if end_x <= composite_width and end_y <= composite_height:
-                    composite[start_y:end_y, start_x:end_x] = resized
-                    
-                    # Add camera ID overlay
-                    overlay_text = f"{camera_id}"
-                    if self.demo_mode:
-                        overlay_text += " (DEMO)"
-                    
-                    cv2.putText(
-                        composite,
-                        overlay_text,
-                        (start_x + 10, start_y + 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 255, 255) if not self.demo_mode else (255, 255, 0),
-                        1
-                    )
+                    composite[start_y:end_y, start_x:end_x] = placeholder
+            else:
+                placeholder = self._render_offline_tile(
+                    self.grid_config.cell_width,
+                    self.grid_config.cell_height,
+                    message=f"{camera_id}\nOFFLINE",
+                )
+                grid_x, grid_y = config.position
+                start_x = grid_x * self.grid_config.cell_width
+                start_y = grid_y * self.grid_config.cell_height
+                end_x = start_x + self.grid_config.cell_width
+                end_y = start_y + self.grid_config.cell_height
+
+                if end_x <= composite_width and end_y <= composite_height:
+                    composite[start_y:end_y, start_x:end_x] = placeholder
         
         return composite
+
+    def _render_offline_tile(self, width: int, height: int, *, message: str = "OFFLINE") -> np.ndarray:
+        """Generate an animated warning tile for offline cameras."""
+        stripe_width = max(16, width // 8)
+        phase = int((time.time() * 120) % (2 * stripe_width))
+
+        x_coords = np.arange(width)[None, :]
+        y_coords = np.arange(height)[:, None]
+        bands = ((x_coords + y_coords + phase) // stripe_width) % 2
+
+        tile = np.zeros((height, width, 3), dtype=np.uint8)
+        tile[bands == 0] = (255, 225, 0)  # Bright yellow
+        tile[bands == 1] = (200, 0, 0)    # Deep red
+
+        cv2.rectangle(tile, (0, 0), (width - 1, height - 1), (20, 20, 20), 3)
+
+        lines = [line.strip() for line in message.split("\n") if line.strip()]
+        if not lines:
+            lines = ["OFFLINE"]
+
+        font = cv2.FONT_HERSHEY_DUPLEX
+        scale = max(0.6, min(width, height) / 220.0)
+        thickness = 2
+
+        total_height = int(len(lines) * 40 * scale)
+        baseline_y = (height - total_height) // 2 + int(35 * scale)
+
+        for idx, text in enumerate(lines):
+            text_width, _ = cv2.getTextSize(text, font, scale, thickness)[0]
+            x = max(8, (width - text_width) // 2)
+            y = baseline_y + int(idx * 40 * scale)
+
+            cv2.putText(tile, text, (x, y), font, scale, (20, 20, 20), thickness + 3, cv2.LINE_AA)
+            cv2.putText(tile, text, (x, y), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+        return tile
         
     def detect_ir_beacons_composite(self, composite_frame: np.ndarray) -> Tuple[List, np.ndarray]:
         """Detect IR beacons across the composite frame using existing detection logic"""
