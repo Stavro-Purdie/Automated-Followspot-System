@@ -8,15 +8,17 @@ Processes multiple camera feeds and combines them into a single stream for IR be
 import asyncio
 import json
 import logging
+import re
 import cv2
 import numpy as np
 from threading import Thread, Lock
 from queue import Queue, Empty
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import argparse
 import time
 import os
 import math
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 from dataclasses import dataclass
 
 import aiohttp
@@ -82,9 +84,13 @@ class MultiCameraManager:
         self.running = True
         self.ir_threshold = 200
         self.demo_manager = None
+        self._camera_status: Dict[str, Dict[str, Optional[float]]] = {}
+        self._offline_timeout = 15.0
         self._active_grid_cols = self.grid_config.cameras_per_row
         self._active_grid_rows = max(1, math.ceil(self.grid_config.total_cameras / max(1, self._active_grid_cols)))
         self.demo_stage_state = None
+        max_workers = max(2, min(8, (os.cpu_count() or 4)))
+        self._compose_executor = ThreadPoolExecutor(max_workers=max_workers)
         
         # Legacy fallback support
         if not os.path.exists(self.config_file) and "roof_array_config.json" in self.config_file:
@@ -121,75 +127,10 @@ class MultiCameraManager:
                 for camera_data in data['cameras']:
                     camera = CameraConfig(**camera_data)
                     self.cameras[camera.camera_id] = camera
-            
-            logger.info(f"Loaded {len(self.cameras)} cameras from {self.config_file}")
             self._apply_auto_layout()
             self._update_grid_dimensions()
-            
-        except Exception as e:
-            logger.error(f"Error loading configuration: {e}")
-
-    def _apply_auto_layout(self) -> None:
-        """Ensure cameras have sane grid positions for large arrays."""
-        if not self.cameras:
-            return
-
-        per_row = max(1, self.grid_config.cameras_per_row)
-        ordered_cameras = list(self.cameras.values())
-
-        if self.grid_config.auto_arrange:
-            for idx, camera in enumerate(ordered_cameras):
-                col = idx % per_row
-                row = idx // per_row
-                if camera.position != (col, row):
-                    camera.position = (col, row)
-            logger.info(
-                "Auto-arranged %d cameras into %dx%d grid",
-                len(ordered_cameras),
-                per_row,
-                math.ceil(len(ordered_cameras) / per_row),
-            )
-        else:
-            # Warn if any positions fall outside the declared grid bounds
-            max_x = max(camera.position[0] for camera in ordered_cameras)
-            max_y = max(camera.position[1] for camera in ordered_cameras)
-            if max_x >= per_row:
-                logger.warning(
-                    "Camera layout exceeds configured cameras_per_row=%d (max column=%d). Consider enabling auto_arrange.",
-                    per_row,
-                    max_x,
-                )
-            expected_rows = math.ceil(len(ordered_cameras) / max(1, per_row))
-            if max_y + 1 > expected_rows:
-                logger.warning(
-                    "Camera layout uses %d rows but only %d expected from configuration. Composite size will expand automatically.",
-                    max_y + 1,
-                    expected_rows,
-                )
-
-        if len(ordered_cameras) != self.grid_config.total_cameras:
-            self.grid_config.total_cameras = len(ordered_cameras)
-
-    def _update_grid_dimensions(self, enabled_configs: Optional[List[CameraConfig]] = None) -> None:
-        """Recalculate the active grid size based on camera placement."""
-        if enabled_configs is None:
-            enabled_configs = [camera for camera in self.cameras.values() if camera.enabled]
-        else:
-            enabled_configs = [camera for camera in enabled_configs if camera.enabled]
-
-        if not enabled_configs:
-            self._active_grid_cols = max(1, self.grid_config.cameras_per_row)
-            self._active_grid_rows = 1
-            return
-
-        max_col = max(camera.position[0] for camera in enabled_configs)
-        max_row = max(camera.position[1] for camera in enabled_configs)
-
-        cols = max(max_col + 1, self.grid_config.cameras_per_row, 1)
-        rows = max(max_row + 1, math.ceil(len(enabled_configs) / cols))
-
-        self._active_grid_cols = cols
-        self._active_grid_rows = rows
+        except Exception as exc:
+            logger.error("Failed to load configuration %s: %s", self.config_file, exc, exc_info=True)
 
     def init_demo_mode(self):
         """Initialize demo mode with simulated cameras"""
@@ -207,6 +148,57 @@ class MultiCameraManager:
         if self.demo_manager:
             return self.demo_manager.get_latest_frames()
         return {}
+    
+    def _auto_layout_sort_key(self, camera: CameraConfig) -> Tuple[str, int]:
+        """Return a natural-sort key for arranging camera IDs with numeric suffixes."""
+        match = re.search(r"^(.*?)(\d+)$", camera.camera_id)
+        if match:
+            prefix = match.group(1).strip().lower()
+            number = int(match.group(2))
+            return prefix, number
+        return camera.camera_id.lower(), 0
+
+    def _apply_auto_layout(self) -> None:
+        """Optionally reassign camera grid slots using a natural camera ID order."""
+        if not self.cameras:
+            self.grid_config.total_cameras = 0
+            return
+
+        self.grid_config.total_cameras = len(self.cameras)
+        if not self.grid_config.auto_arrange:
+            return
+
+        per_row = max(1, self.grid_config.cameras_per_row)
+        ordered_cameras = sorted(self.cameras.values(), key=self._auto_layout_sort_key)
+
+        for idx, camera in enumerate(ordered_cameras):
+            col = idx % per_row
+            row = idx // per_row
+            camera.position = (col, row)
+
+    def _update_grid_dimensions(self, active_cameras: Optional[List[CameraConfig]] = None) -> None:
+        """Recompute the grid dimensions based on enabled cameras."""
+        if active_cameras is None:
+            active_cameras = [cfg for cfg in self.cameras.values() if cfg.enabled]
+
+        if not active_cameras:
+            self._active_grid_cols = max(1, self.grid_config.cameras_per_row)
+            self._active_grid_rows = 1
+            return
+
+        if self.grid_config.auto_arrange:
+            estimated_cols = min(self.grid_config.cameras_per_row, max(1, len(active_cameras)))
+            estimated_rows = max(1, math.ceil(len(active_cameras) / estimated_cols))
+        else:
+            estimated_cols = self.grid_config.cameras_per_row
+            estimated_rows = max(1, math.ceil(len(active_cameras) / max(1, estimated_cols)))
+
+        # Ensure we always cover explicitly assigned positions
+        max_col = max(cfg.position[0] for cfg in active_cameras) + 1
+        max_row = max(cfg.position[1] for cfg in active_cameras) + 1
+
+        self._active_grid_cols = max(1, max(estimated_cols, max_col))
+        self._active_grid_rows = max(1, max(estimated_rows, max_row))
             
     def create_composite_frame(self) -> Optional[np.ndarray]:
         """Create a composite frame from all enabled cameras"""
@@ -215,14 +207,12 @@ class MultiCameraManager:
         if not enabled_cameras:
             return None
         
-        # Get frames from appropriate source
+        # Get frames from appropriate source (placeholders draw even when empty)
         if self.demo_mode and self.demo_manager:
-            frame_source = self.demo_manager.get_latest_frames()
+            frame_dict = dict(self.demo_manager.get_latest_frames() or {})
         else:
-            frame_source = self.latest_frames
-        
-        if not frame_source:
-            return None
+            with self.frame_lock:
+                frame_dict = dict(self.latest_frames)
 
         # Calculate composite frame dimensions
         self._update_grid_dimensions(list(enabled_cameras.values()))
@@ -231,111 +221,223 @@ class MultiCameraManager:
         
         # Create black canvas
         composite = np.zeros((composite_height, composite_width, 3), dtype=np.uint8)
+        now = time.time()
         
-        # Use appropriate lock
-        if self.demo_mode:
-            # Demo mode has its own locking
-            frame_dict = frame_source
-        else:
-            with self.frame_lock:
-                frame_dict = frame_source
-        
+        tasks: Dict[Any, Dict[str, Any]] = {}
         for camera_id, config in enabled_cameras.items():
-            if camera_id in frame_dict:
-                frame = frame_dict[camera_id]
+            frame = frame_dict.get(camera_id)
+            status = self._camera_status.setdefault(camera_id, {"last_seen": 0.0, "missing_since": now})
 
-                if not isinstance(frame, np.ndarray) or frame.size == 0:
-                    frame = None
+            grid_x, grid_y = config.position
+            start_x = grid_x * self.grid_config.cell_width
+            start_y = grid_y * self.grid_config.cell_height
+            end_x = start_x + self.grid_config.cell_width
+            end_y = start_y + self.grid_config.cell_height
 
-                if frame is not None:
-                    # Apply cropping
-                    x, y, w, h = config.crop_rect
-                    if (
-                        x >= 0
-                        and y >= 0
-                        and w > 0
-                        and h > 0
-                        and x + w <= frame.shape[1]
-                        and y + h <= frame.shape[0]
-                    ):
-                        cropped = frame[y:y + h, x:x + w]
-                    else:
-                        cropped = frame
+            if end_x > composite_width or end_y > composite_height:
+                logger.debug("Skipping camera %s; tile exceeds composite bounds", camera_id)
+                continue
 
-                    # Resize to cell size
-                    resized = cv2.resize(cropped, (self.grid_config.cell_width, self.grid_config.cell_height))
+            has_live_frame = isinstance(frame, np.ndarray) and frame.size > 0
+            fallback_renderer = self._render_offline_tile
+            fallback_message = f"{camera_id}\nOFFLINE"
 
-                    # Calculate position in composite
-                    grid_x, grid_y = config.position
-                    start_x = grid_x * self.grid_config.cell_width
-                    start_y = grid_y * self.grid_config.cell_height
-                    end_x = start_x + self.grid_config.cell_width
-                    end_y = start_y + self.grid_config.cell_height
-
-                    # Ensure we don't exceed composite bounds
-                    if end_x <= composite_width and end_y <= composite_height:
-                        composite[start_y:end_y, start_x:end_x] = resized
-
-                        # Add camera ID overlay
-                        overlay_text = f"{camera_id}"
-                        if self.demo_mode:
-                            overlay_text += " (DEMO)"
-
-                        cv2.putText(
-                            composite,
-                            overlay_text,
-                            (start_x + 10, start_y + 30),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
-                            (0, 255, 255) if not self.demo_mode else (255, 255, 0),
-                            1,
-                        )
-                        continue
-                # fall back to offline tile if frame missing or invalid
-                placeholder = self._render_offline_tile(
-                    self.grid_config.cell_width,
-                    self.grid_config.cell_height,
-                    message=f"{camera_id}\nOFFLINE",
+            if has_live_frame:
+                status["last_seen"] = now
+                status["missing_since"] = None
+                live_frame = cast(np.ndarray, frame)
+                future = self._compose_executor.submit(
+                    self._prepare_live_tile,
+                    live_frame,
+                    config.crop_rect,
+                    (self.grid_config.cell_width, self.grid_config.cell_height),
                 )
-                grid_x, grid_y = config.position
-                start_x = grid_x * self.grid_config.cell_width
-                start_y = grid_y * self.grid_config.cell_height
-                end_x = start_x + self.grid_config.cell_width
-                end_y = start_y + self.grid_config.cell_height
-
-                if end_x <= composite_width and end_y <= composite_height:
-                    composite[start_y:end_y, start_x:end_x] = placeholder
             else:
-                placeholder = self._render_offline_tile(
+                if status.get("missing_since") is None:
+                    status["missing_since"] = now
+                missing_since = status.get("missing_since") or now
+                status["missing_since"] = missing_since
+
+                is_connecting = (now - missing_since) < self._offline_timeout
+                message = f"{camera_id}\nCONNECTING" if is_connecting else f"{camera_id}\nOFFLINE"
+                renderer = self._render_connecting_tile if is_connecting else self._render_offline_tile
+                future = self._compose_executor.submit(
+                    renderer,
                     self.grid_config.cell_width,
                     self.grid_config.cell_height,
-                    message=f"{camera_id}\nOFFLINE",
+                    message=message,
                 )
-                grid_x, grid_y = config.position
-                start_x = grid_x * self.grid_config.cell_width
-                start_y = grid_y * self.grid_config.cell_height
-                end_x = start_x + self.grid_config.cell_width
-                end_y = start_y + self.grid_config.cell_height
+                fallback_renderer = renderer
+                fallback_message = message
 
-                if end_x <= composite_width and end_y <= composite_height:
-                    composite[start_y:end_y, start_x:end_x] = placeholder
-        
+            tasks[future] = {
+                "slice": (start_y, end_y, start_x, end_x),
+                "camera_id": camera_id,
+                "status": status,
+                "fallback_renderer": fallback_renderer,
+                "fallback_message": fallback_message,
+                "had_live_frame": has_live_frame,
+            }
+
+        for future in as_completed(list(tasks.keys())):
+            info = tasks[future]
+            start_y, end_y, start_x, end_x = info["slice"]
+            camera_id = info["camera_id"]
+            status = info["status"]
+            had_live_frame = info["had_live_frame"]
+
+            try:
+                tile = future.result()
+                if tile is None or getattr(tile, "size", 0) == 0:
+                    raise ValueError("Empty tile returned")
+            except Exception as exc:
+                logger.debug("Falling back to placeholder for %s: %s", camera_id, exc)
+                had_live_frame = False
+                if status is not None and status.get("missing_since") is None:
+                    status["missing_since"] = now
+                tile = info["fallback_renderer"](
+                    self.grid_config.cell_width,
+                    self.grid_config.cell_height,
+                    message=info["fallback_message"],
+                )
+
+            if tile.shape[0] != self.grid_config.cell_height or tile.shape[1] != self.grid_config.cell_width:
+                tile = cv2.resize(tile, (self.grid_config.cell_width, self.grid_config.cell_height))
+
+            composite[start_y:end_y, start_x:end_x] = tile
+
+            if had_live_frame:
+                label = f"{camera_id}"
+                color = (0, 255, 255)
+                if self.demo_mode:
+                    label += " (DEMO)"
+                    color = (255, 255, 0)
+                cv2.putText(
+                    composite,
+                    label,
+                    (start_x + 10, start_y + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    color,
+                    1,
+                )
+
+        self._draw_grid_lines(composite, now)
+
         return composite
+
+    def _select_placeholder_tile(self, camera_id: str, now: float, *, message: str) -> np.ndarray:
+        status = self._camera_status.setdefault(camera_id, {"last_seen": 0.0, "missing_since": now})
+        missing_since = status.get("missing_since")
+        if missing_since is None:
+            missing_since = now
+            status["missing_since"] = missing_since
+
+        if now - missing_since < self._offline_timeout:
+            return self._render_connecting_tile(
+                self.grid_config.cell_width,
+                self.grid_config.cell_height,
+                message=message,
+            )
+
+        return self._render_offline_tile(
+            self.grid_config.cell_width,
+            self.grid_config.cell_height,
+            message=message.replace("CONNECTING", "OFFLINE"),
+        )
+    
+    def _prepare_live_tile(
+        self,
+        frame: np.ndarray,
+        crop_rect: Tuple[int, int, int, int],
+        cell_size: Tuple[int, int],
+    ) -> np.ndarray:
+        """Crop and scale a live frame to the configured cell size."""
+        x, y, w, h = crop_rect
+        frame_height, frame_width = frame.shape[:2]
+
+        if w > 0 and h > 0:
+            x0 = max(0, min(frame_width, x))
+            y0 = max(0, min(frame_height, y))
+            x1 = max(x0, min(frame_width, x0 + w))
+            y1 = max(y0, min(frame_height, y0 + h))
+            if (x1 - x0) > 1 and (y1 - y0) > 1:
+                cropped = frame[y0:y1, x0:x1]
+            else:
+                cropped = frame
+        else:
+            cropped = frame
+
+        cropped = np.ascontiguousarray(cropped)
+        target_width, target_height = cell_size
+
+        if cropped.shape[1] != target_width or cropped.shape[0] != target_height:
+            return cv2.resize(cropped, (target_width, target_height))
+
+        return cropped.copy()
+
+    def _draw_grid_lines(self, frame: np.ndarray, now: Optional[float] = None) -> None:
+        """Overlay persistent cell boundaries regardless of feed state."""
+        if frame.size == 0:
+            return
+
+        height, width = frame.shape[:2]
+        if now is None:
+            now = time.time()
+
+        has_offline = False
+        for status in self._camera_status.values():
+            missing_since = status.get("missing_since")
+            if missing_since is None:
+                continue
+            if (now - float(missing_since)) >= self._offline_timeout:
+                has_offline = True
+                break
+
+        if has_offline:
+            phase = int(time.time() * 6) % 2
+            color = (0, 0, 255) if phase == 0 else (0, 215, 255)
+            thickness = 3
+        else:
+            color = (40, 40, 40)
+            thickness = 2
+
+        for col in range(1, self._active_grid_cols):
+            x = col * self.grid_config.cell_width
+            cv2.line(frame, (x, 0), (x, height - 1), color, thickness)
+
+        for row in range(1, self._active_grid_rows):
+            y = row * self.grid_config.cell_height
+            cv2.line(frame, (0, y), (width - 1, y), color, thickness)
+
+    def has_active_feeds(self, freshness: Optional[float] = None) -> bool:
+        """Return True when at least one camera produced a frame recently."""
+        threshold = freshness if freshness is not None else self._offline_timeout
+        now = time.time()
+
+        for status in self._camera_status.values():
+            last_seen = status.get("last_seen")
+            if last_seen and (now - float(last_seen)) <= threshold:
+                return True
+
+        return False
 
     def _render_offline_tile(self, width: int, height: int, *, message: str = "OFFLINE") -> np.ndarray:
         """Generate an animated warning tile for offline cameras."""
         stripe_width = max(16, width // 8)
-        phase = int((time.time() * 120) % (2 * stripe_width))
+        phase = int((time.time() * 240) % (2 * stripe_width))
 
         x_coords = np.arange(width)[None, :]
         y_coords = np.arange(height)[:, None]
         bands = ((x_coords + y_coords + phase) // stripe_width) % 2
 
         tile = np.zeros((height, width, 3), dtype=np.uint8)
-        tile[bands == 0] = (255, 225, 0)  # Bright yellow
-        tile[bands == 1] = (200, 0, 0)    # Deep red
+        tile[bands == 0] = (0, 215, 255)  # Bright yellow (BGR)
+        tile[bands == 1] = (0, 0, 255)    # Deep red (BGR)
 
-        cv2.rectangle(tile, (0, 0), (width - 1, height - 1), (20, 20, 20), 3)
+        border_phase = int(time.time() * 6) % 2
+        border_color = (0, 0, 255) if border_phase == 0 else (0, 215, 255)
+        cv2.rectangle(tile, (0, 0), (width - 1, height - 1), border_color, 3)
 
         lines = [line.strip() for line in message.split("\n") if line.strip()]
         if not lines:
@@ -357,73 +459,97 @@ class MultiCameraManager:
             cv2.putText(tile, text, (x, y), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
         return tile
+
+    def _render_connecting_tile(self, width: int, height: int, *, message: str = "CONNECTING") -> np.ndarray:
+        stripe_width = max(16, width // 10)
+        phase = int((time.time() * 240) % (2 * stripe_width))
+
+        x_coords = np.arange(width)[None, :]
+        y_coords = np.arange(height)[:, None]
+        bands = ((x_coords - y_coords + phase) // stripe_width) % 2
+
+        tile = np.zeros((height, width, 3), dtype=np.uint8)
+        tile[bands == 0] = (0, 190, 0)      # vibrant green (BGR)
+        tile[bands == 1] = (0, 255, 255)    # bright yellow (BGR)
+
+        cv2.rectangle(tile, (0, 0), (width - 1, height - 1), (35, 35, 35), 2)
+
+        lines = [line.strip() for line in message.split("\n") if line.strip()]
+        if not lines:
+            lines = ["CONNECTING"]
+
+        font = cv2.FONT_HERSHEY_DUPLEX
+        scale = max(0.55, min(width, height) / 260.0)
+        thickness = 2
+
+        total_height = int(len(lines) * 38 * scale)
+        baseline_y = (height - total_height) // 2 + int(32 * scale)
+
+        for idx, text in enumerate(lines):
+            text_width, _ = cv2.getTextSize(text, font, scale, thickness)[0]
+            x = max(6, (width - text_width) // 2)
+            y = baseline_y + int(idx * 38 * scale)
+
+            cv2.putText(tile, text, (x, y), font, scale, (20, 20, 20), thickness + 2, cv2.LINE_AA)
+            cv2.putText(tile, text, (x, y), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+        return tile
         
     def detect_ir_beacons_composite(self, composite_frame: np.ndarray) -> Tuple[List, np.ndarray]:
-        """Detect IR beacons across the composite frame using existing detection logic"""
+        """Detect IR beacons across the composite frame using existing detection logic."""
         if composite_frame is None:
             return [], None
-        
-        # Convert to grayscale
+
+        if not self.has_active_feeds():
+            return [], composite_frame
+
         if len(composite_frame.shape) == 3:
             gray_frame = cv2.cvtColor(composite_frame, cv2.COLOR_BGR2GRAY)
         else:
             gray_frame = composite_frame.copy()
-        
-        # Apply threshold to isolate bright spots (potential IR beacons)
+
         _, thresholded = cv2.threshold(gray_frame, self.ir_threshold, 255, cv2.THRESH_BINARY)
-        
-        # Find contours in the thresholded image
         contours, _ = cv2.findContours(thresholded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Create visualization
+
         viz_frame = composite_frame.copy()
-        beacons = []
-        
-        # Draw rectangles around detected beacons
+        beacons: List[Dict[str, Any]] = []
+
         for contour in contours:
-            # Calculate center of contour
             M = cv2.moments(contour)
-            if M["m00"] != 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-                
-                # Calculate area
-                area = cv2.contourArea(contour)
-                
-                # Filter out small noise
-                if area > 15:  # Minimum area threshold
-                    # Get bounding rectangle
-                    x, y, w, h = cv2.boundingRect(contour)
-                    
-                    # Draw rectangle around beacon
-                    cv2.rectangle(viz_frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
-                    
-                    # Draw crosshair at center
-                    cv2.line(viz_frame, (cx - 10, cy), (cx + 10, cy), (0, 255, 255), 1)
-                    cv2.line(viz_frame, (cx, cy - 10), (cx, cy + 10), (0, 255, 255), 1)
-                    
-                    # Add text with area
-                    cv2.putText(
-                        viz_frame,
-                        f"Area: {area:.0f}",
-                        (x, y - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 255, 255),
-                        1
-                    )
-                    
-                    # Determine which camera this beacon belongs to
-                    camera_id = self.get_camera_for_position(cx, cy)
-                    
-                    # Add to beacons list
-                    beacons.append({
-                        "center": (cx, cy),
-                        "area": area,
-                        "bounds": (x, y, w, h),
-                        "camera_id": camera_id
-                    })
-        
+            if M["m00"] == 0:
+                continue
+
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            area = cv2.contourArea(contour)
+
+            if area <= 15:
+                continue
+
+            x, y, w, h = cv2.boundingRect(contour)
+            cv2.rectangle(viz_frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+            cv2.line(viz_frame, (cx - 10, cy), (cx + 10, cy), (0, 255, 255), 1)
+            cv2.line(viz_frame, (cx, cy - 10), (cx, cy + 10), (0, 255, 255), 1)
+            cv2.putText(
+                viz_frame,
+                f"Area: {area:.0f}",
+                (x, y - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 255),
+                1,
+            )
+
+            camera_id = self.get_camera_for_position(cx, cy)
+            beacons.append(
+                {
+                    "center": (cx, cy),
+                    "area": area,
+                    "bounds": (x, y, w, h),
+                    "camera_id": camera_id,
+                }
+            )
+
         return beacons, viz_frame
         
     def get_camera_for_position(self, x: int, y: int) -> str:

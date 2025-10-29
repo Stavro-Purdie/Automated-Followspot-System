@@ -122,6 +122,9 @@ class VideoDisplayGUI:
         self.front_status_var = tk.StringVar(value="Front: idle")
         self.front_video_label = None
         self.front_display_image = None
+        self.front_placeholder_image = None
+        self.front_last_seen: float = 0.0
+        self.front_missing_since: Optional[float] = time.time()
         self.reid_runner = reid_runner
         if self.reid_runner is None:
             if getattr(self.camera_manager, "demo_mode", False) and DemoReIDRunner is not None:
@@ -180,9 +183,6 @@ class VideoDisplayGUI:
         menubar.add_cascade(label="File", menu=file_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
-        view_menu.add_command(label="Start Display", command=self.start_display)
-        view_menu.add_command(label="Stop Display", command=self.stop_display)
-        view_menu.add_separator()
         view_menu.add_checkbutton(label="Show Coordinates", variable=self.show_coordinates)
         view_menu.add_checkbutton(label="Show Grid", variable=self.show_grid)
         view_menu.add_checkbutton(label="Show IR Beacons", variable=self.show_beacons)
@@ -332,43 +332,62 @@ class VideoDisplayGUI:
         control_frame = ttk.LabelFrame(parent, text="Controls", padding="10")
         control_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
 
-        # IR Threshold control
         ttk.Label(control_frame, text="IR Threshold:").grid(row=0, column=0, sticky=tk.W, pady=5)
         threshold_frame = ttk.Frame(control_frame)
         threshold_frame.grid(row=1, column=0, sticky="we", pady=5)
 
-        threshold_scale = ttk.Scale(threshold_frame, from_=0, to=255,
-                                    variable=self.ir_threshold, orient=tk.HORIZONTAL)
+        threshold_scale = ttk.Scale(
+            threshold_frame,
+            from_=0,
+            to=255,
+            variable=self.ir_threshold,
+            orient=tk.HORIZONTAL,
+        )
         threshold_scale.grid(row=0, column=0, sticky="we")
         threshold_frame.columnconfigure(0, weight=1)
 
         threshold_entry = ttk.Entry(threshold_frame, textvariable=self.ir_threshold, width=5)
         threshold_entry.grid(row=0, column=1, padx=(5, 0))
 
-        # Display options
         ttk.Label(control_frame, text="Display Options:").grid(row=2, column=0, sticky=tk.W, pady=(20, 5))
 
-        ttk.Checkbutton(control_frame, text="Show Coordinates",
-                        variable=self.show_coordinates).grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Checkbutton(
+            control_frame,
+            text="Show Coordinates",
+            variable=self.show_coordinates,
+        ).grid(row=3, column=0, sticky=tk.W, pady=2)
 
-        ttk.Checkbutton(control_frame, text="Show Grid",
-                        variable=self.show_grid).grid(row=4, column=0, sticky=tk.W, pady=2)
+        ttk.Checkbutton(
+            control_frame,
+            text="Show Grid",
+            variable=self.show_grid,
+        ).grid(row=4, column=0, sticky=tk.W, pady=2)
 
-        ttk.Checkbutton(control_frame, text="Show IR Beacons",
-                        variable=self.show_beacons).grid(row=5, column=0, sticky=tk.W, pady=2)
+        ttk.Checkbutton(
+            control_frame,
+            text="Show IR Beacons",
+            variable=self.show_beacons,
+        ).grid(row=5, column=0, sticky=tk.W, pady=2)
 
-        ttk.Checkbutton(control_frame, text="Show Raw Overlay",
-                        variable=self.show_raw_overlay).grid(row=6, column=0, sticky=tk.W, pady=2)
-        
-        ttk.Checkbutton(control_frame, text="Show Fused Targets",
-                        variable=self.show_fused_overlay).grid(row=7, column=0, sticky=tk.W, pady=2)
+        ttk.Checkbutton(
+            control_frame,
+            text="Show Raw Overlay",
+            variable=self.show_raw_overlay,
+        ).grid(row=6, column=0, sticky=tk.W, pady=2)
 
-        # Front ReID options
+        ttk.Checkbutton(
+            control_frame,
+            text="Show Fused Targets",
+            variable=self.show_fused_overlay,
+        ).grid(row=7, column=0, sticky=tk.W, pady=2)
+
         ttk.Label(control_frame, text="Front ReID Overlay:").grid(row=8, column=0, sticky=tk.W, pady=(20, 5))
-        ttk.Checkbutton(control_frame, text="Show Front Camera Overlay",
-                        variable=self.show_reid_overlay).grid(row=9, column=0, sticky=tk.W, pady=2)
+        ttk.Checkbutton(
+            control_frame,
+            text="Show Front Camera Overlay",
+            variable=self.show_reid_overlay,
+        ).grid(row=9, column=0, sticky=tk.W, pady=2)
 
-        # Statistics
         stats_frame = ttk.LabelFrame(control_frame, text="Statistics", padding="10")
         stats_frame.grid(row=10, column=0, sticky="we", pady=(20, 0))
 
@@ -378,40 +397,41 @@ class VideoDisplayGUI:
         ttk.Label(stats_frame, textvariable=self.fused_count_var).grid(row=3, column=0, sticky=tk.W, pady=2)
         ttk.Label(stats_frame, textvariable=self.front_status_var).grid(row=4, column=0, sticky=tk.W, pady=2)
 
-        # Control buttons
         button_frame = ttk.Frame(control_frame)
         button_frame.grid(row=11, column=0, sticky="we", pady=(20, 0))
 
-        ttk.Button(button_frame, text="Start/Stop",
-                   command=self.toggle_display).grid(row=0, column=0, pady=5)
-
-        ttk.Button(button_frame, text="Save Screenshot",
-                   command=self.save_screenshot).grid(row=1, column=0, pady=5)
-
-        ttk.Button(button_frame, text="Reset View",
-                   command=self.reset_view).grid(row=2, column=0, pady=5)
+        ttk.Button(button_frame, text="Save Screenshot", command=self.save_screenshot).grid(row=0, column=0, pady=5)
+        ttk.Button(button_frame, text="Reset View", command=self.reset_view).grid(row=1, column=0, pady=5)
         
     def setup_video_display(self, parent):
         """Setup the video display area"""
         video_frame = ttk.LabelFrame(parent, text="Video Feeds", padding="10")
         video_frame.grid(row=0, column=1, sticky="nsew")
 
-        # IR Composite view
+        # IR Composite view (top)
         ir_title = ttk.Label(video_frame, text="Roof IR Composite", anchor=tk.W)
         ir_title.grid(row=0, column=0, sticky="w", pady=(0, 5))
-        self.video_label = ttk.Label(video_frame, text="No video feed available",
-                                     background="black", foreground="white")
-        self.video_label.grid(row=1, column=0, sticky="we")
+        self.video_label = ttk.Label(
+            video_frame,
+            text="No video feed available",
+            background="black",
+            foreground="white",
+        )
+        self.video_label.grid(row=1, column=0, sticky="nsew")
 
-        # Front ReID view
+        # Front ReID view (bottom)
         front_title = ttk.Label(video_frame, text="Front ReID Overlay", anchor=tk.W)
-        front_title.grid(row=2, column=0, sticky="w", pady=(10, 5))
-        self.front_video_label = ttk.Label(video_frame, text="Front camera not available",
-                                           background="black", foreground="white")
-        self.front_video_label.grid(row=3, column=0, sticky="we")
+        front_title.grid(row=2, column=0, sticky="w", pady=(15, 5))
+        self.front_video_label = ttk.Label(
+            video_frame,
+            text="Front camera not available",
+            background="black",
+            foreground="white",
+        )
+        self.front_video_label.grid(row=3, column=0, sticky="nsew")
 
         video_frame.columnconfigure(0, weight=1)
-        video_frame.rowconfigure(1, weight=1)
+        video_frame.rowconfigure(1, weight=3)
         video_frame.rowconfigure(3, weight=1)
 
         # Mouse click handler for coordinates on IR view
@@ -422,7 +442,7 @@ class VideoDisplayGUI:
         status_frame = ttk.Frame(parent)
         status_frame.grid(row=1, column=0, columnspan=2, sticky="we", pady=(10, 0))
         
-        self.status_var = tk.StringVar(value="Ready")
+        self.status_var = tk.StringVar(value="Connecting to cameras...")
         ttk.Label(status_frame, textvariable=self.status_var).grid(row=0, column=0, sticky=tk.W)
         
         # Mode indicator
@@ -457,8 +477,6 @@ class VideoDisplayGUI:
             self.save_screenshot()
         elif key == 'r':
             self.reset_view()
-        elif key == 'space':
-            self.toggle_display()
         elif key == 'o':
             # Toggle raw overlay
             self.show_raw_overlay.set(not self.show_raw_overlay.get())
@@ -496,13 +514,6 @@ class VideoDisplayGUI:
                 
                 logger.info(f"Mouse click at frame coordinates: ({frame_x}, {frame_y})")
                 
-    def toggle_display(self):
-        """Start or stop the video display"""
-        if self.running:
-            self.stop_display()
-        else:
-            self.start_display()
-            
     def start_display(self):
         """Start the video display thread"""
         if not self.running:
@@ -527,7 +538,7 @@ class VideoDisplayGUI:
                     self.front_status_var.set(f"Front: error {e}")
             self.display_thread = threading.Thread(target=self.display_loop, daemon=True)
             self.display_thread.start()
-            self.status_var.set("Display started")
+            self.status_var.set("Connecting to cameras...")
             logger.info("Video display started")
             
     def stop_display(self):
@@ -598,6 +609,10 @@ class VideoDisplayGUI:
                     
                     # Convert to PIL Image and display
                     self.display_frame(processed_frame)
+                    if self.camera_manager.has_active_feeds():
+                        self.status_var.set("Streaming live feeds")
+                    else:
+                        self.status_var.set("Connecting to cameras...")
                     
                     # Update statistics
                     frame_count += 1
@@ -607,11 +622,14 @@ class VideoDisplayGUI:
                         self.frame_size_var.set(f"Frame: {composite_frame.shape[1]}x{composite_frame.shape[0]}")
                         
                 else:
-                    # No frame available
+                    # No frame available (e.g., no configured cameras)
                     self.display_no_feed_message()
                     self.display_front_placeholder()
+                    self.status_var.set("No camera feeds configured")
                     
-                time.sleep(1/30)  # ~30 FPS
+                target_fps = 120 if not self.camera_manager.has_active_feeds() else 30
+                sleep_interval = max(1.0 / target_fps, 0.001)
+                time.sleep(sleep_interval)
                 
             except Exception as e:
                 logger.error(f"Error in display loop: {e}")
@@ -825,6 +843,8 @@ class VideoDisplayGUI:
         try:
             if self.front_video_label is None:
                 return
+            self.front_last_seen = time.time()
+            self.front_missing_since = None
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_image = Image.fromarray(rgb_frame)
             display_width = 800
@@ -841,13 +861,55 @@ class VideoDisplayGUI:
             logger.error(f"Error displaying front frame: {e}")
 
     def display_front_placeholder(self):
-        if self.front_video_label is not None:
-            self.front_video_label.configure(image="", text="Front camera not available")
+        if self.front_video_label is None:
+            return
+
+        now = time.time()
+        timeout = getattr(self.camera_manager, "_offline_timeout", 15.0)
+        if self.front_missing_since is None:
+            self.front_missing_since = now
+        missing_since = self.front_missing_since or now
+
+        is_connecting = (now - missing_since) < timeout
+        message = "Front ReID\nCONNECTING" if is_connecting else "Front ReID\nOFFLINE"
+
+        measured_width = self.front_video_label.winfo_width()
+        measured_height = self.front_video_label.winfo_height()
+        if measured_width <= 1 or measured_height <= 1:
+            width, height = 640, 300
+        else:
+            width = max(320, measured_width)
+            height = max(200, measured_height)
+        render_connecting = getattr(self.camera_manager, "_render_connecting_tile", None)
+        render_offline = getattr(self.camera_manager, "_render_offline_tile", None)
+
+        try:
+            if is_connecting and callable(render_connecting):
+                tile = render_connecting(width, height, message=message)
+            elif callable(render_offline):
+                tile = render_offline(width, height, message=message)
+            else:
+                tile = np.zeros((height, width, 3), dtype=np.uint8)
+                color = (0, 215, 255) if is_connecting else (0, 0, 255)
+                tile[:] = color
+        except Exception:
+            tile = np.zeros((height, width, 3), dtype=np.uint8)
+
+        try:
+            tile = np.asarray(tile, dtype=np.uint8)
+            rgb_tile = cv2.cvtColor(tile, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(rgb_tile)
+            self.front_placeholder_image = ImageTk.PhotoImage(pil_image)
+            self.front_video_label.configure(image=self.front_placeholder_image, text="")
+        except Exception:
+            self.front_video_label.configure(image="", text=message.replace("\n", " "))
+
+        self.front_status_var.set("Front: connecting" if is_connecting else "Front: offline")
             
     def display_no_feed_message(self):
         """Display message when no video feed is available"""
         if self.video_label is not None:
-            self.video_label.configure(image="", text="No video feed available\nClick 'Start/Stop' to begin")
+            self.video_label.configure(image="", text="")
         
     def save_screenshot(self):
         """Save current frame as screenshot"""
