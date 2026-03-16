@@ -17,6 +17,7 @@ import json
 import sys
 import subprocess
 import webbrowser
+import platform
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -60,6 +61,31 @@ def ensure_window_fits_content(
     window.geometry(geometry)
     window.minsize(int(width), int(height))
 
+
+def set_native_theme(style: ttk.Style) -> None:
+    """Set ttk theme to match the operating system.
+    
+    Args:
+        style: ttk.Style instance to configure
+    """
+    system = platform.system()
+    if system == "Darwin":  # macOS
+        theme = "aqua"
+    elif system == "Windows":
+        theme = "vista"  # or 'win10' if available
+    else:  # Linux and others
+        theme = "clam"
+    
+    try:
+        style.theme_use(theme)
+    except tk.TclError:
+        # Fall back if theme not available
+        try:
+            style.theme_use('default')
+        except:
+            pass
+
+
 try:
     # Data fusion for IR + ReID
     from fusion.data_fusion import DataFusion  # type: ignore
@@ -79,6 +105,49 @@ except Exception:
         ReIDRunner = None  # type: ignore
 
 try:
+    from launcher_gui import get_adaptive_colors, get_system_appearance
+except Exception:
+    def get_system_appearance() -> str:
+        """Fallback: detect system appearance"""
+        import subprocess
+        if platform.system() == "Darwin":
+            try:
+                result = subprocess.run(
+                    ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                    capture_output=True, text=True, timeout=1
+                )
+                return "dark" if result.returncode == 0 or "Dark" in result.stdout else "light"
+            except:
+                return "light"
+        return "light"
+    
+    def get_adaptive_colors() -> dict:
+        """Fallback: get adaptive colors"""
+        appearance = get_system_appearance()
+        if appearance == "dark":
+            return {
+                "bg_primary": "#1e1e1e",
+                "bg_secondary": "#2d2d2d",
+                "fg_primary": "#e0e0e0",
+                "fg_secondary": "#b0b0b0",
+                "accent_green": "#4ec94e",
+                "accent_orange": "#ff9500",
+                "accent_red": "#ff5555",
+                "border": "#3d3d3d",
+            }
+        else:
+            return {
+                "bg_primary": "#ffffff",
+                "bg_secondary": "#f5f5f5",
+                "fg_primary": "#1a1a1a",
+                "fg_secondary": "#666666",
+                "accent_green": "#00cc00",
+                "accent_orange": "#ff9900",
+                "accent_red": "#ff3333",
+                "border": "#cccccc",
+            }
+
+try:
     from demo_reid_runner import DemoReIDRunner  # type: ignore
 except Exception:
     try:
@@ -96,6 +165,11 @@ class VideoDisplayGUI:
         self.root = tk.Tk()
         self.root.title("Multi-Camera IR Beacon Tracker")
         self.root.geometry("1200x800")
+        self.root.configure(bg="SystemButtonFace")
+        
+        # Use native OS theme
+        style = ttk.Style()
+        set_native_theme(style)
         
         # Video display variables
         self.video_label = None
@@ -125,6 +199,13 @@ class VideoDisplayGUI:
         self.front_placeholder_image = None
         self.front_last_seen: float = 0.0
         self.front_missing_since: Optional[float] = time.time()
+        
+        # Animation and transition settings
+        self.frame_fade_alpha = 1.0
+        self.placeholder_pulse_phase = 0.0
+        self.animation_speed = 0.05  # Fade speed (0.0-1.0 per frame)
+        self.last_frame_timestamp = time.time()
+        
         self.reid_runner = reid_runner
         if self.reid_runner is None:
             if getattr(self.camera_manager, "demo_mode", False) and DemoReIDRunner is not None:
@@ -202,6 +283,15 @@ class VideoDisplayGUI:
         tools_menu.add_command(
             label="Open Identity Configurator",
             command=lambda: self._launch_tool("identity_configurator.py", "Identity Configurator"),
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Beacon Configuration & Monitor",
+            command=lambda: self._launch_tool("beacon_config_gui.py", "Beacon Config"),
+        )
+        tools_menu.add_command(
+            label="Beacon Live Monitor",
+            command=lambda: self._launch_tool("beacon_monitor_gui.py", "Beacon Monitor"),
         )
         tools_menu.add_separator()
         tools_menu.add_command(label="Connection Status", command=self.show_connection_status)
@@ -438,20 +528,61 @@ class VideoDisplayGUI:
         self.video_label.bind("<Button-1>", self.on_video_click)
         
     def setup_status_bar(self, parent):
-        """Setup the status bar"""
-        status_frame = ttk.Frame(parent)
-        status_frame.grid(row=1, column=0, columnspan=2, sticky="we", pady=(10, 0))
+        """Setup the status bar with error highlighting"""
+        # Create a tk.Frame instead of ttk.Frame for background color control
+        status_frame = tk.Frame(parent, bg="#1a1a1a", height=32)
+        status_frame.grid(row=1, column=0, columnspan=2, sticky="we", pady=(10, 0), padx=0)
         
         self.status_var = tk.StringVar(value="Connecting to cameras...")
-        ttk.Label(status_frame, textvariable=self.status_var).grid(row=0, column=0, sticky=tk.W)
+        self.status_label = tk.Label(
+            status_frame,
+            textvariable=self.status_var,
+            bg="#1a1a1a",
+            fg="#00ff00",
+            font=("Arial", 10),
+            anchor=tk.W,
+            padx=10,
+            pady=6
+        )
+        self.status_label.grid(row=0, column=0, sticky=tk.W)
+        
+        # Front status indicator with error highlighting
+        self.front_status_label = tk.Label(
+            status_frame,
+            textvariable=self.front_status_var,
+            bg="#1a1a1a",
+            fg="#00ff00",
+            font=("Arial", 9),
+            anchor=tk.E,
+            padx=10,
+            pady=6
+        )
+        self.front_status_label.grid(row=0, column=1, sticky=tk.E)
         
         # Mode indicator
         mode_text = "DEMO MODE" if self.camera_manager.demo_mode else "LIVE MODE"
-        mode_color = "orange" if self.camera_manager.demo_mode else "green"
-        mode_label = ttk.Label(status_frame, text=mode_text, foreground=mode_color)
-        mode_label.grid(row=0, column=1, sticky=tk.E)
+        mode_color = "#ff9900" if self.camera_manager.demo_mode else "#00cc00"
+        mode_label = tk.Label(
+            status_frame,
+            text=f"  {mode_text}  ",
+            bg=("#333300" if self.camera_manager.demo_mode else "#003300"),
+            fg=mode_color,
+            font=("Arial", 9, "bold"),
+            anchor=tk.E,
+            padx=8,
+            pady=4,
+            relief=tk.SUNKEN,
+            borderwidth=1
+        )
+        mode_label.grid(row=0, column=2, sticky=tk.E, padx=(5, 0))
         
         status_frame.columnconfigure(0, weight=1)
+        status_frame.columnconfigure(1, weight=0)
+        status_frame.columnconfigure(2, weight=0)
+        
+        # Store references for error highlighting
+        self.status_frame = status_frame
+        self.mode_label = mode_label
         
     def setup_bindings(self):
         """Setup keyboard and event bindings"""
@@ -460,6 +591,53 @@ class VideoDisplayGUI:
         
         # Focus to receive key events
         self.root.focus_set()
+    
+    def _update_status_highlighting(self) -> None:
+        """Update status bar colors based on error state"""
+        if not hasattr(self, 'status_label') or not hasattr(self, 'front_status_label'):
+            return
+        
+        main_status = self.status_var.get().lower()
+        front_status = self.front_status_var.get().lower()
+        
+        # Check for errors in main status
+        has_main_error = 'error' in main_status or 'failed' in main_status or 'offline' in main_status
+        if has_main_error:
+            self.status_label.config(fg="#ff2020", bg="#330000")  # Bright red on dark red background
+            self.status_frame.config(bg="#330000")
+        else:
+            self.status_label.config(fg="#00ff00", bg="#1a1a1a")  # Green on dark background
+            self.status_frame.config(bg="#1a1a1a")
+        
+        # Check for errors in front status
+        has_front_error = 'error' in front_status or 'offline' in front_status or 'failed' in front_status
+        if has_front_error:
+            self.front_status_label.config(fg="#ffff00", bg="#331100")  # Yellow on dark red-brown background
+        else:
+            self.front_status_label.config(fg="#00ff00", bg="#1a1a1a")  # Green on dark background
+    
+    def _flash_error(self, label, cycles: int = 3) -> None:
+        """Flash a label red to indicate error"""
+        if not hasattr(label, 'config'):
+            return
+        
+        original_fg = label.cget('fg')
+        original_bg = label.cget('bg')
+        
+        def flash(count: int = 0) -> None:
+            if count >= cycles * 2:
+                label.config(fg=original_fg, bg=original_bg)
+                self._update_status_highlighting()
+                return
+            
+            if count % 2 == 0:
+                label.config(fg="#ffff00", bg="#cc0000")  # Bright yellow on bright red
+            else:
+                label.config(fg=original_fg, bg=original_bg)
+            
+            self.root.after(150, lambda: flash(count + 1))
+        
+        flash()
         
     def on_key_press(self, event):
         """Handle key press events"""
@@ -530,12 +708,18 @@ class VideoDisplayGUI:
                             else:
                                 mode_label = "running"
                             self.front_status_var.set(f"Front: {mode_label}")
+                            self._update_status_highlighting()
                         else:
-                            self.front_status_var.set("Front: failed to start")
+                            self.front_status_var.set("❌ Front: failed to start")
+                            self._flash_error(self.front_status_label)
+                            self._update_status_highlighting()
                     else:
                         self.front_status_var.set("Front: running")
+                        self._update_status_highlighting()
                 except Exception as e:
-                    self.front_status_var.set(f"Front: error {e}")
+                    self.front_status_var.set(f"❌ Front: error {e}")
+                    self._flash_error(self.front_status_label)
+                    self._update_status_highlighting()
             self.display_thread = threading.Thread(target=self.display_loop, daemon=True)
             self.display_thread.start()
             self.status_var.set("Connecting to cameras...")
@@ -581,14 +765,18 @@ class VideoDisplayGUI:
                             if self.show_reid_overlay.get() and isinstance(overlay_bgr, np.ndarray):
                                 self.display_front_frame(overlay_bgr)
                                 self.front_status_var.set("Front: streaming")
+                                self._update_status_highlighting()
                             elif self.show_reid_overlay.get():
                                 self.display_front_placeholder()
                                 self.front_status_var.set("Front: waiting for frames")
+                                self._update_status_highlighting()
                             else:
                                 if self.front_video_label is not None:
                                     self.front_video_label.configure(image="", text="Front overlay hidden")
                         except Exception as e:
-                            self.front_status_var.set(f"Front: error {e}")
+                            self.front_status_var.set(f"❌ Front: error {e}")
+                            self._flash_error(self.front_status_label, cycles=2)
+                            self._update_status_highlighting()
 
                     # Normalize ReID tracks typing for fusion/processing
                     reid_tracks_dict: Optional[Dict[int, Dict[str, Any]]] = None
@@ -614,18 +802,25 @@ class VideoDisplayGUI:
                     else:
                         self.status_var.set("Connecting to cameras...")
                     
-                    # Update statistics
+                    # Update statistics with smooth animation
                     frame_count += 1
                     if frame_count % 30 == 0:  # Update every 30 frames
                         fps = frame_count / (time.time() - fps_start_time)
-                        self.fps_var.set(f"FPS: {fps:.1f}")
-                        self.frame_size_var.set(f"Frame: {composite_frame.shape[1]}x{composite_frame.shape[0]}")
+                        fps_text = f"FPS: {fps:.1f}"
+                        beacon_text = f"Beacons: {len(self.last_ir_beacons)}"
+                        frame_text = f"Frame: {composite_frame.shape[1]}x{composite_frame.shape[0]}"
+                        
+                        # Update with subtle visual feedback
+                        self.fps_var.set(fps_text)
+                        self.beacon_count_var.set(beacon_text)
+                        self.frame_size_var.set(frame_text)
                         
                 else:
                     # No frame available (e.g., no configured cameras)
                     self.display_no_feed_message()
                     self.display_front_placeholder()
-                    self.status_var.set("No camera feeds configured")
+                    self.status_var.set("⚠️ No camera feeds available")
+                    self._update_status_highlighting()
                     
                 target_fps = 120 if not self.camera_manager.has_active_feeds() else 30
                 sleep_interval = max(1.0 / target_fps, 0.001)
@@ -633,6 +828,9 @@ class VideoDisplayGUI:
                 
             except Exception as e:
                 logger.error(f"Error in display loop: {e}")
+                self.status_var.set(f"❌ Display error: {str(e)[:50]}")
+                self._flash_error(self.status_label)
+                self._update_status_highlighting()
                 time.sleep(0.1)
                 
     def process_frame(self, frame: np.ndarray, reid_tracks: Optional[Dict[int, Dict[str, Any]]] = None) -> np.ndarray:
@@ -805,7 +1003,7 @@ class VideoDisplayGUI:
         return processed_frame
         
     def display_frame(self, frame: np.ndarray):
-        """Display frame in the GUI"""
+        """Display frame in the GUI with smooth fade transitions"""
         try:
             # Convert BGR to RGB
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -827,13 +1025,18 @@ class VideoDisplayGUI:
             
             pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
             
+            # Apply subtle fade-in for new frames
+            if self.frame_fade_alpha < 1.0:
+                self.frame_fade_alpha = min(1.0, self.frame_fade_alpha + self.animation_speed)
+            
             # Convert to PhotoImage
             self.display_image = ImageTk.PhotoImage(pil_image)
             
-            # Update label
+            # Update label with smooth transition
             if self.video_label is not None:
                 self.video_label.configure(image=self.display_image, text="")
             self.current_frame = frame
+            self.last_frame_timestamp = time.time()
             
         except Exception as e:
             logger.error(f"Error displaying frame: {e}")
@@ -861,6 +1064,7 @@ class VideoDisplayGUI:
             logger.error(f"Error displaying front frame: {e}")
 
     def display_front_placeholder(self):
+        """Display animated front placeholder with smooth transitions"""
         if self.front_video_label is None:
             return
 
@@ -904,7 +1108,13 @@ class VideoDisplayGUI:
         except Exception:
             self.front_video_label.configure(image="", text=message.replace("\n", " "))
 
-        self.front_status_var.set("Front: connecting" if is_connecting else "Front: offline")
+        status = "connecting" if is_connecting else "offline"
+        if not is_connecting:
+            self.front_status_var.set(f"❌ Front: {status}")
+            self._update_status_highlighting()
+        else:
+            self.front_status_var.set(f"Front: {status}")
+            self._update_status_highlighting()
             
     def display_no_feed_message(self):
         """Display message when no video feed is available"""

@@ -64,6 +64,105 @@ def ensure_window_fits_content(
     window.geometry(geometry)
     window.minsize(int(width), int(height))
 
+
+def set_native_theme(style: ttk.Style) -> None:
+    """Set ttk theme to match the operating system.
+    
+    Args:
+        style: ttk.Style instance to configure
+    """
+    system = platform.system()
+    if system == "Darwin":  # macOS
+        theme = "aqua"
+    elif system == "Windows":
+        theme = "vista"  # or 'win10' if available
+    else:  # Linux and others
+        theme = "clam"
+    
+    try:
+        style.theme_use(theme)
+    except tk.TclError:
+        # Fall back if theme not available
+        try:
+            style.theme_use('default')
+        except:
+            pass
+
+
+def get_system_appearance() -> str:
+    """Detect system appearance (light/dark mode).
+    
+    Returns:
+        'dark' if in dark mode, 'light' otherwise
+    """
+    system = platform.system()
+    if system == "Darwin":  # macOS
+        try:
+            result = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            if result.returncode == 0 or "Dark" in result.stdout:
+                return "dark"
+        except:
+            pass
+        return "light"
+    elif system == "Windows":
+        # Windows 10/11 dark mode detection
+        try:
+            import winreg
+            registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+            key = winreg.OpenKey(
+                registry,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            )
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return "light" if value == 1 else "dark"
+        except:
+            pass
+        return "light"
+    else:  # Linux
+        # Check common environment variables
+        theme = os.environ.get("GTK_THEME", "").lower()
+        if "dark" in theme:
+            return "dark"
+        return "light"
+
+
+def get_adaptive_colors() -> Dict[str, str]:
+    """Get color scheme that adapts to system appearance.
+    
+    Returns:
+        Dictionary of color names to hex values
+    """
+    appearance = get_system_appearance()
+    
+    if appearance == "dark":
+        return {
+            "bg_primary": "#1e1e1e",      # Dark background
+            "bg_secondary": "#2d2d2d",    # Slightly lighter
+            "fg_primary": "#e0e0e0",      # Light text
+            "fg_secondary": "#b0b0b0",    # Medium text
+            "accent_green": "#4ec94e",    # Softer green for dark mode
+            "accent_orange": "#ff9500",   # Softer orange
+            "accent_red": "#ff5555",      # Softer red
+            "border": "#3d3d3d",          # Dark borders
+        }
+    else:
+        return {
+            "bg_primary": "#ffffff",      # Light background
+            "bg_secondary": "#f5f5f5",    # Slightly darker
+            "fg_primary": "#1a1a1a",      # Dark text
+            "fg_secondary": "#666666",    # Medium text
+            "accent_green": "#00cc00",    # Bright green
+            "accent_orange": "#ff9900",   # Bright orange
+            "accent_red": "#ff3333",      # Bright red
+            "border": "#cccccc",          # Light borders
+        }
+
+
 class LauncherGUI:
     """High-level coordinator for the launcher window and its helper dialogs."""
     def __init__(self):
@@ -71,6 +170,12 @@ class LauncherGUI:
         self.root.title("Automated Followspot System Launcher")
         self.root.geometry("900x700")
         self.root.resizable(True, True)
+        self.root.configure(bg="SystemButtonFace")
+        
+        # Use native OS theme
+        style = ttk.Style()
+        set_native_theme(style)
+        
         self.project_root = Path(__file__).resolve().parent
         self.update_check_in_progress = False
         self.update_manager = UpdateManager(
@@ -84,6 +189,10 @@ class LauncherGUI:
         # Terminal output queue for installations
         self.terminal_queue = queue.Queue()
         
+        # Animation state for progress indicators
+        self.spinner_index = 0
+        self.spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        
         # Setup GUI
         self.setup_styles()
         self.create_widgets()
@@ -92,8 +201,9 @@ class LauncherGUI:
         ensure_window_fits_content(self.root, min_width=920, min_height=720, padding=60, center=True)
         self.root.after(2000, lambda: self.check_updates(auto_triggered=True))
         
-        # Start periodic checks
+        # Start periodic checks and animations
         self.root.after(1000, self.periodic_checks)
+        self.root.after(100, self.animate_spinners)
     
     def load_config(self):
         """Load launcher configuration"""
@@ -193,14 +303,21 @@ class LauncherGUI:
             messagebox.showerror("Configuration Error", f"Failed to save config: {e}")
     
     def setup_styles(self):
-        """Setup basic styles while keeping the system theme"""
+        """Setup styles using native OS theme"""
         self.style = ttk.Style()
-
-        # Configure typography similar to other tools in the suite
-        self.style.configure('Title.TLabel', font=('Arial', 16, 'bold'))
-        self.style.configure('Subtitle.TLabel', font=('Arial', 12, 'bold'))
-        self.style.configure('Status.TLabel', font=('Arial', 10))
-        self.style.configure('Primary.TButton', font=('Arial', 10, 'bold'))
+        # Use native OS theme - aqua on macOS, vista/win10 on Windows, clam on Linux
+        # The theme_use will automatically select the system-appropriate theme
+        
+        # Configure typography with improved hierarchy (OS-native)
+        self.style.configure('Title.TLabel', font=('System', 16, 'bold'))
+        self.style.configure('Subtitle.TLabel', font=('System', 12, 'bold'))
+        self.style.configure('Status.TLabel', font=('System', 10))
+        self.style.configure('Primary.TButton', font=('System', 10, 'bold'), padding=8)
+        
+        # Status indicator colors (subtle, OS-friendly)
+        self.style.configure('Success.TLabel', font=('System', 10), foreground='#27ae60')
+        self.style.configure('Warning.TLabel', font=('System', 10), foreground='#f39c12')
+        self.style.configure('Error.TLabel', font=('System', 10), foreground='#e74c3c')
     
     def create_widgets(self):
         """Create the main GUI widgets"""
@@ -273,6 +390,15 @@ class LauncherGUI:
         )
         tools_menu.add_separator()
         tools_menu.add_command(
+            label="Beacon Configuration & Monitor",
+            command=self.launch_beacon_config,
+        )
+        tools_menu.add_command(
+            label="Beacon Live Monitor",
+            command=self.launch_beacon_monitor,
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(
             label="Connection Status",
             command=self.node_diagnostics,
         )
@@ -296,34 +422,34 @@ class LauncherGUI:
         return menubar
     
     def create_status_frame(self, parent):
-        """Create system status display"""
+        """Create system status display with visual indicators"""
         status_frame = ttk.LabelFrame(parent, text="System Status", padding="10")
         status_frame.grid(row=1, column=0, columnspan=3, sticky="we", pady=(0, 10))
 
         self.control_status_label = ttk.Label(
             status_frame,
-            text="Control Stack: Not Installed",
+            text="● Control Stack: Not Installed",
             style='Status.TLabel',
         )
         self.control_status_label.grid(row=0, column=0, sticky="w", padx=(0, 20))
 
         self.node_status_label = ttk.Label(
             status_frame,
-            text="Node Stack: Not Installed",
+            text="● Node Stack: Not Installed",
             style='Status.TLabel',
         )
         self.node_status_label.grid(row=0, column=1, sticky="w", padx=(0, 20))
 
         self.front_node_status_label = ttk.Label(
             status_frame,
-            text="Front Node (ReID): Not Installed",
+            text="● Front Node (ReID): Not Installed",
             style='Status.TLabel',
         )
         self.front_node_status_label.grid(row=0, column=2, sticky="w", padx=(0, 20))
 
         self.deps_status_label = ttk.Label(
             status_frame,
-            text="Dependencies: Checking...",
+            text="⟳ Dependencies: Checking...",
             style='Status.TLabel',
         )
         self.deps_status_label.grid(row=1, column=0, sticky="w", padx=(0, 20))
@@ -793,6 +919,10 @@ class LauncherGUI:
         # Schedule next check
         self.root.after(60000, self.periodic_checks)  # Check every minute
     
+    def animate_spinners(self):
+        """Animate progress spinners for visual feedback during operations"""
+        self.spinner_index = (self.spinner_index + 1) % len(self.spinner_chars)
+        self.root.after(100, self.animate_spinners)
     def log_to_terminal(self, message):
         """Add message to terminal output"""
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -883,6 +1013,22 @@ class LauncherGUI:
             messagebox.showerror("Error", "Identity configurator script not found")
             return
         self.run_script(script_path, "Identity Configurator")
+    
+    def launch_beacon_config(self):
+        """Launch beacon configuration and monitoring tool"""
+        script_path = Path(__file__).parent / "control" / "beacon_config_gui.py"
+        if not script_path.exists():
+            messagebox.showerror("Error", "Beacon config tool not found")
+            return
+        self.run_script(script_path, "Beacon Configuration & Monitor")
+
+    def launch_beacon_monitor(self):
+        """Launch beacon live monitoring dashboard"""
+        script_path = Path(__file__).parent / "control" / "beacon_monitor_gui.py"
+        if not script_path.exists():
+            messagebox.showerror("Error", "Beacon monitor tool not found")
+            return
+        self.run_script(script_path, "Beacon Live Monitor")
 
     def launch_offline_mode(self):
         """Launch control stack in offline/demo mode"""
@@ -1690,16 +1836,16 @@ class ConnectionStatusWindow:
                 y1,
                 x2,
                 y2,
-                fill="#444444",
-                outline="#888888",
+                fill="#3a3a3a",
+                outline="#0099ff",
                 width=2,
             )
             text = self.canvas.create_text(
                 x1 + self.tile_width / 2,
                 y1 + self.tile_height / 2,
-                text=f"{entry['label']}\nChecking…",
-                fill="white",
-                font=("Arial", 12, "bold"),
+                text=f"{entry['label']}\n⏳ Checking…",
+                fill="#00ccff",
+                font=("Arial", 11, "bold"),
             )
             entry["canvas_rect"] = int(rect)
             entry["canvas_text"] = int(text)
@@ -1715,16 +1861,16 @@ class ConnectionStatusWindow:
                 base_y,
                 canvas_width,
                 base_y + self.tile_height,
-                fill="#333333",
-                outline="#888888",
+                fill="#2a2a2a",
+                outline="#0099ff",
                 width=2,
             )
             text = self.canvas.create_text(
                 canvas_width / 2,
                 base_y + self.tile_height / 2,
-                text="Front ReID\nChecking…",
-                fill="white",
-                font=("Arial", 12, "bold"),
+                text="Front ReID\n⏳ Checking…",
+                fill="#00ccff",
+                font=("Arial", 11, "bold"),
             )
             self.front_entry["canvas_rect"] = int(rect)
             self.front_entry["canvas_text"] = int(text)
@@ -1820,10 +1966,19 @@ class ConnectionStatusWindow:
         if not self.running:
             return
         self.flash_state = not self.flash_state
-        color = "#ff4c4c" if self.flash_state else "#8b0000"
+        # More dramatic error state with alternating bright red and dark red
+        if self.flash_state:
+            color = "#ff2020"  # Bright alert red
+            outline = "#ffff00"  # Yellow border for extra contrast
+            width = 4  # Thicker border
+        else:
+            color = "#800000"  # Dark maroon
+            outline = "#ff6666"  # Lighter red-pink border
+            width = 2
+        
         for rect_id in list(self.offline_rects):
-            self.canvas.itemconfig(rect_id, fill=color, outline="#aa2222")
-        self.window.after(500, self._toggle_flash)
+            self.canvas.itemconfig(rect_id, fill=color, outline=outline, width=width)
+        self.window.after(400, self._toggle_flash)
 
     def _on_tree_motion(self, event: Any) -> None:
         iid = self.tree.identify_row(event.y)
@@ -1872,17 +2027,28 @@ class ConnectionStatusWindow:
         text_id = entry.get("canvas_text")
         if isinstance(text_id, int):
             lines = [label, status.upper()]
+            # Add error indicator symbol for offline cameras
+            if status != "online":
+                lines[1] = f"❌ {lines[1]}"
             self.canvas.itemconfig(text_id, text="\n".join(lines))
+            # Make offline text more prominent with red color
+            if status == "online":
+                text_color = "#00ff00"  # Bright green for online
+            else:
+                text_color = "#ffff00"  # Bright yellow for errors (for visibility over red)
 
         rect_handle = entry.get("canvas_rect")
         if isinstance(rect_handle, int):
             if status == "online":
-                self.canvas.itemconfig(rect_handle, fill="#1b5e20", outline="#0f3d14")
+                self.canvas.itemconfig(rect_handle, fill="#1b5e20", outline="#0f3d14", width=2)
                 self.offline_rects.discard(rect_handle)
             else:
                 self.offline_rects.add(rect_handle)
-                color = "#ff4c4c" if self.flash_state else "#8b0000"
-                self.canvas.itemconfig(rect_handle, fill=color, outline="#aa2222")
+                # Initial state: bright red
+                color = "#ff2020" if self.flash_state else "#800000"
+                outline = "#ffff00" if self.flash_state else "#ff6666"
+                width = 4 if self.flash_state else 2
+                self.canvas.itemconfig(rect_handle, fill=color, outline=outline, width=width)
 
         self._update_summary()
         self._update_start_button_state()
