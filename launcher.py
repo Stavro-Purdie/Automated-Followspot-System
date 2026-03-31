@@ -315,6 +315,50 @@ def run_pip_install(requirements_file: Path) -> bool:
     return True
 
 
+def flash_beacon() -> None:
+    """Run the Xiao ESP32-C6 beacon flasher helper."""
+    script = PROJECT_ROOT / "tools" / "beacon_flash.py"
+    if not script.exists():
+        print(f"[FLASH] Helper not found: {script}")
+        input("Press Enter to continue...")
+        return
+
+    print(INDUSTRIAL_DIVIDER)
+    print("#  BEACON FLASHER (Xiao ESP32-C6)")
+    print("#  Requires: arduino-cli, esp32 core, Adafruit SSD1306/GFX libs")
+    print(INDUSTRIAL_DIVIDER)
+
+    ssid = input("Wi-Fi SSID (required): ").strip()
+    password = input("Wi-Fi Password (required): ").strip()
+    port = input("Serial port (e.g., /dev/tty.usbmodemXYZ or COM5): ").strip()
+
+    if not ssid or not password or not port:
+        print("[FLASH] Missing required fields; aborting.")
+        input("Press Enter to continue...")
+        return
+
+    cmd = [
+        sys.executable,
+        str(script),
+        "--ssid",
+        ssid,
+        "--password",
+        password,
+        "--port",
+        port,
+    ]
+
+    print(f"[FLASH] Executing: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, check=True)
+        print(f"[FLASH] Completed with code {result.returncode}")
+    except subprocess.CalledProcessError as exc:
+        print(f"[FLASH] Failed (exit {exc.returncode})")
+    except Exception as exc:
+        print(f"[FLASH] Error: {exc}")
+    input("Press Enter to continue...")
+
+
 def install_stack(stack_slug: str, config: Dict[str, Any]) -> bool:
     """Install the requested stack and update configuration metadata."""
     if stack_slug not in STACK_METADATA:
@@ -422,6 +466,7 @@ def interactive_cli(config: Dict[str, Any]) -> None:
         print("#    [3] Install Front Truss Node Stack")
         print("#    [4] Show Status Report")
         print("#    [5] Launch GUI Mode")
+        print("#    [6] Flash Beacon (Xiao ESP32-C6)")
         print("#    [0] Exit")
         print(INDUSTRIAL_DIVIDER)
         choice = input("COMMAND> ").strip()
@@ -437,6 +482,8 @@ def interactive_cli(config: Dict[str, Any]) -> None:
             input("Press Enter to continue...")
         elif choice == "5":
             launch_gui()
+        elif choice == "6":
+            flash_beacon()
         elif choice == "0":
             print("Stand down. Returning to shell.")
             break

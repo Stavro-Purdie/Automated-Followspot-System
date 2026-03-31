@@ -18,6 +18,8 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
 import sys
 
+from beacon_network import fetch_status, push_config
+
 logger = logging.getLogger("beacon_config_gui")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -115,7 +117,12 @@ class BeaconSettings:
     battery_enabled: bool = True
     battery_low_threshold: float = 20.0  # Percentage
     fan_enabled: bool = True
+    fan_auto: bool = True
     fan_speed_pwm: int = 100  # 0-255
+    fan_temp_start: float = 40.0  # Temperature where fan ramps up
+    fan_temp_full: float = 55.0  # Temperature where fan hits max
+    fan_min_pwm: int = 80  # Minimum PWM when auto is active
+    fan_max_pwm: int = 255  # Maximum PWM when auto is active
     led_duty_cycle: int = 100  # 0-100 percent
     voltage_nominal: float = 12.0
     amperage_limit: float = 5.0
@@ -334,14 +341,46 @@ class BeaconConfigGUI:
         
         row = 0
         
+        # Auto fan toggle
+        self.fan_auto_var = tk.BooleanVar(value=True)
+        auto_check = ttk.Checkbutton(
+            monitor_frame,
+            text="Automatic Fan (temperature-driven)",
+            variable=self.fan_auto_var,
+            command=self._update_fan_controls_state,
+        )
+        auto_check.grid(row=row, column=0, columnspan=3, sticky="w", pady=5)
+        row += 1
+
         # Fan speed control
         ttk.Label(monitor_frame, text="Fan Speed (PWM 0-255):").grid(row=row, column=0, sticky="w", pady=5)
         self.fan_speed_var = tk.IntVar(value=100)
-        fan_scale = ttk.Scale(monitor_frame, from_=0, to=255, orient=tk.HORIZONTAL, variable=self.fan_speed_var)
-        fan_scale.grid(row=row, column=1, sticky="ew", padx=(10, 5))
+        self.fan_scale = ttk.Scale(monitor_frame, from_=0, to=255, orient=tk.HORIZONTAL, variable=self.fan_speed_var)
+        self.fan_scale.grid(row=row, column=1, sticky="ew", padx=(10, 5))
         self.fan_speed_label = ttk.Label(monitor_frame, text="100", width=4)
         self.fan_speed_label.grid(row=row, column=2)
         self.fan_speed_var.trace('w', lambda *args: self.fan_speed_label.config(text=str(self.fan_speed_var.get())))
+        row += 1
+
+        # Auto fan thresholds
+        ttk.Label(monitor_frame, text="Fan Ramp Start Temp (°C):").grid(row=row, column=0, sticky="w", pady=5)
+        self.fan_temp_start_var = tk.DoubleVar(value=40.0)
+        ttk.Spinbox(monitor_frame, from_=0, to=90, increment=0.5, textvariable=self.fan_temp_start_var, width=10).grid(row=row, column=1, sticky="w", padx=10)
+        row += 1
+
+        ttk.Label(monitor_frame, text="Fan Full Speed Temp (°C):").grid(row=row, column=0, sticky="w", pady=5)
+        self.fan_temp_full_var = tk.DoubleVar(value=55.0)
+        ttk.Spinbox(monitor_frame, from_=0, to=100, increment=0.5, textvariable=self.fan_temp_full_var, width=10).grid(row=row, column=1, sticky="w", padx=10)
+        row += 1
+
+        ttk.Label(monitor_frame, text="Fan Min PWM (auto):").grid(row=row, column=0, sticky="w", pady=5)
+        self.fan_min_pwm_var = tk.IntVar(value=80)
+        ttk.Spinbox(monitor_frame, from_=0, to=255, textvariable=self.fan_min_pwm_var, width=10).grid(row=row, column=1, sticky="w", padx=10)
+        row += 1
+
+        ttk.Label(monitor_frame, text="Fan Max PWM (auto):").grid(row=row, column=0, sticky="w", pady=5)
+        self.fan_max_pwm_var = tk.IntVar(value=255)
+        ttk.Spinbox(monitor_frame, from_=0, to=255, textvariable=self.fan_max_pwm_var, width=10).grid(row=row, column=1, sticky="w", padx=10)
         row += 1
         
         # LED duty cycle control
@@ -372,16 +411,23 @@ class BeaconConfigGUI:
         ttk.Button(monitor_frame, text="Apply Settings", command=self.apply_settings).grid(row=row, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         
         monitor_frame.columnconfigure(1, weight=1)
+        self._update_fan_controls_state()
     
     def on_beacon_selected(self, event=None):
         """Handle beacon selection change"""
         beacon_id = self.beacon_var.get()
         if beacon_id in self.beacons:
             beacon = self.beacons[beacon_id]
+            self.fan_auto_var.set(beacon.fan_auto)
             self.fan_speed_var.set(beacon.fan_speed_pwm)
+            self.fan_temp_start_var.set(beacon.fan_temp_start)
+            self.fan_temp_full_var.set(beacon.fan_temp_full)
+            self.fan_min_pwm_var.set(beacon.fan_min_pwm)
+            self.fan_max_pwm_var.set(beacon.fan_max_pwm)
             self.led_duty_var.set(beacon.led_duty_cycle)
             self.battery_threshold_var.set(int(beacon.battery_low_threshold))
             self.amperage_limit_var.set(beacon.amperage_limit)
+            self._update_fan_controls_state()
             self.refresh_status()
     
     def refresh_status(self):
@@ -391,6 +437,15 @@ class BeaconConfigGUI:
             return
         
         status = self.beacon_status[beacon_id]
+        beacon = self.beacons.get(beacon_id)
+
+        # Auto fan logic: derive PWM from temperature when enabled
+        if beacon and beacon.fan_auto and status.temperature_c is not None:
+            auto_pwm = self._compute_auto_fan_pwm(beacon, status.temperature_c)
+            if auto_pwm != beacon.fan_speed_pwm:
+                beacon.fan_speed_pwm = auto_pwm
+            if auto_pwm != self.fan_speed_var.get():
+                self.fan_speed_var.set(auto_pwm)
         
         # Update status labels
         connection_text = "✓ Online" if status.online else "✗ Offline"
@@ -426,13 +481,27 @@ class BeaconConfigGUI:
             return
         
         beacon = self.beacons[beacon_id]
+        beacon.fan_auto = self.fan_auto_var.get()
         beacon.fan_speed_pwm = self.fan_speed_var.get()
+        beacon.fan_temp_start = float(self.fan_temp_start_var.get())
+        beacon.fan_temp_full = float(self.fan_temp_full_var.get())
+        beacon.fan_min_pwm = int(self.fan_min_pwm_var.get())
+        beacon.fan_max_pwm = int(self.fan_max_pwm_var.get())
         beacon.led_duty_cycle = self.led_duty_var.get()
         beacon.battery_low_threshold = float(self.battery_threshold_var.get())
         beacon.amperage_limit = self.amperage_limit_var.get()
         
-        logger.info(f"Applied settings to {beacon_id}")
-        messagebox.showinfo("Success", f"Settings applied to {beacon_id}")
+        try:
+            push_config(
+                beacon,
+                brightness_pct=beacon.led_duty_cycle,
+                led_on=beacon.led_duty_cycle > 0,
+            )
+            logger.info(f"Pushed settings to {beacon_id}")
+            messagebox.showinfo("Success", f"Settings applied to {beacon_id}")
+        except Exception as exc:
+            logger.error(f"Failed to push settings to {beacon_id}: {exc}")
+            messagebox.showerror("Error", f"Could not send settings to {beacon_id}: {exc}")
     
     def add_beacon_dialog(self):
         """Show dialog to add a new beacon"""
@@ -512,18 +581,13 @@ class BeaconConfigGUI:
             return
         
         beacon = self.beacons[beacon_id]
-        # Simulate connection test
-        self.beacon_status[beacon_id].online = True
-        self.beacon_status[beacon_id].battery_percent = 85.5
-        self.beacon_status[beacon_id].battery_voltage = 12.1
-        self.beacon_status[beacon_id].current_amperage = 2.3
-        self.beacon_status[beacon_id].fan_speed_rpm = 1200
-        self.beacon_status[beacon_id].led_brightness = 100
-        self.beacon_status[beacon_id].temperature_c = 35.2
-        self.beacon_status[beacon_id].uptime_seconds = 7200
-        
-        self.refresh_status()
-        messagebox.showinfo("Success", f"Connected to {beacon_id}")
+        try:
+            payload = fetch_status(beacon, timeout=3.0)
+            self._apply_payload(beacon_id, payload)
+            messagebox.showinfo("Success", f"Connected to {beacon_id}")
+        except Exception as exc:
+            logger.error(f"Failed to reach {beacon_id}: {exc}")
+            messagebox.showerror("Error", f"Unable to reach {beacon_id}: {exc}")
     
     def start_monitoring(self):
         """Start background monitoring"""
@@ -534,11 +598,59 @@ class BeaconConfigGUI:
     def _monitoring_loop(self):
         """Background monitoring loop"""
         while self.monitoring_active:
-            # Simulate beacon polling
-            for beacon_id in self.beacons:
+            for beacon_id, beacon in self.beacons.items():
                 status = self.beacon_status[beacon_id]
-                status.last_update = time.time()
-            time.sleep(1.0)
+                try:
+                    payload = fetch_status(beacon, timeout=2.5)
+                    self._apply_payload(beacon_id, payload)
+                except Exception as exc:
+                    status.online = False
+                    status.status_message = str(exc)
+                    status.last_update = time.time()
+                time.sleep(beacon.poll_interval)
+
+    def _apply_payload(self, beacon_id: str, payload: dict):
+        """Map firmware JSON payload into BeaconStatus."""
+        status = self.beacon_status[beacon_id]
+        status.online = True
+        status.status_message = "OK"
+        status.last_update = time.time()
+
+        status.battery_voltage = payload.get("battery_v")
+        status.battery_percent = payload.get("battery_pct")
+        status.current_amperage = payload.get("current_a")
+        status.fan_speed_rpm = payload.get("fan_rpm")
+        status.led_brightness = payload.get("brightness_pct")
+        status.temperature_c = payload.get("temp_c")
+        status.uptime_seconds = payload.get("uptime_s")
+
+    def _compute_auto_fan_pwm(self, beacon: BeaconSettings, temperature_c: float) -> int:
+        """Derive a PWM value based on temperature and beacon auto settings."""
+        start = beacon.fan_temp_start
+        full = beacon.fan_temp_full
+        min_pwm = max(0, min(255, beacon.fan_min_pwm))
+        max_pwm = max(min_pwm, min(255, beacon.fan_max_pwm))
+
+        # Avoid division by zero and clamp temperature
+        if full <= start:
+            return max_pwm
+
+        if temperature_c <= start:
+            return min_pwm
+        if temperature_c >= full:
+            return max_pwm
+
+        ratio = (temperature_c - start) / (full - start)
+        pwm = int(round(min_pwm + ratio * (max_pwm - min_pwm)))
+        return max(min_pwm, min(max_pwm, pwm))
+
+    def _update_fan_controls_state(self):
+        """Enable/disable manual fan controls based on auto mode."""
+        manual_enabled = not self.fan_auto_var.get()
+        if manual_enabled:
+            self.fan_scale.state(["!disabled"])
+        else:
+            self.fan_scale.state(["disabled"])
     
     def show_about(self):
         """Show about dialog"""
@@ -546,6 +658,7 @@ class BeaconConfigGUI:
             "About Beacon Configuration Tool",
             "Beacon Configuration & Monitoring Tool v1.0\n\n"
             "Network-accessible interface for managing IR beacon hardware.\n"
+            "Automatic fan control now adjusts PWM from temperature, plus manual overrides.\n"
             "Control fan speed, LED duty cycles, and monitor battery/power status."
         )
     

@@ -9,24 +9,78 @@
     "control_stack": {
       "installed": true,
       "version": "1.0.0",
-      "install_date": "2025-10-28T12:32:23.783413",
+      "install_date": "2026-03-30T10:34:06.387100",
       "dependencies_verified": false,
-      "last_dependency_check": "2026-03-16 14:01:42"
+      "last_dependency_check": "2026-03-31 13:43:45"
     },
     "node_stack": {
       "installed": false,
       "version": null,
       "install_date": null,
       "dependencies_verified": false,
-      "last_dependency_check": "2025-09-17 11:44:54",
-      "cron_enabled": false
+      "last_dependency_check": "2026-03-30 10:33:48",
+      "cron_enabled": false,
+      "node_setup": {
+        "static_ip": null,
+        "hostname": null,
+        "camera_device": "imx219",
+        "interface": "eth0",
+        "gateway": null,
+        "dns": null,
+        "port": 8080,
+        "profile": "roof_array",
+        "configured_at": "2026-03-30T10:33:48.096326"
+      },
+      "autostart": {
+        "hostname": {
+          "requested": null,
+          "applied": false,
+          "message": null
+        },
+        "static_ip_notes": {
+          "notes_file": "/Users/spurdie/Automated-Followspot-System/node/node_network_notes.txt"
+        },
+        "service": {
+          "service_name": "followspot-node",
+          "service_path": "/Users/spurdie/.config/systemd/user/followspot-node.service",
+          "enabled": false,
+          "enable_error": "Command not found: systemctl --user daemon-reload"
+        }
+      }
     },
     "front_node_stack": {
       "installed": false,
       "version": null,
       "install_date": null,
       "dependencies_verified": false,
-      "last_dependency_check": null
+      "last_dependency_check": null,
+      "node_setup": {
+        "static_ip": null,
+        "hostname": null,
+        "camera_device": "imx477",
+        "interface": "eth0",
+        "gateway": null,
+        "dns": null,
+        "port": 8000,
+        "profile": "front_truss",
+        "configured_at": "2026-03-30T10:33:10.237109"
+      },
+      "autostart": {
+        "hostname": {
+          "requested": null,
+          "applied": false,
+          "message": null
+        },
+        "static_ip_notes": {
+          "notes_file": "/Users/spurdie/Automated-Followspot-System/node/front_node_network_notes.txt"
+        },
+        "service": {
+          "service_name": "followspot-front_node",
+          "service_path": "/Users/spurdie/.config/systemd/user/followspot-front_node.service",
+          "enabled": false,
+          "enable_error": "Command not found: systemctl --user daemon-reload"
+        }
+      }
     }
   },
   "settings": {
@@ -46,7 +100,7 @@
         "last_prompted": "4b827f8035c0c35231953f8ae725458f81deaa5a",
         "last_applied": null,
         "last_node_applied": null,
-        "last_checked": "2026-03-16T14:01:42.373079"
+        "last_checked": "2026-03-31T13:43:40.491969"
       },
       "testing": {
         "last_remote": null,

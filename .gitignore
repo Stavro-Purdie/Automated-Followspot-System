@@ -41,3 +41,5 @@ __pycache__/launcher.cpython-313.pyc
 __pycache__/launcher_gui.cpython-313.pyc
 __pycache__/installer_wizard.cpython-313.pyc
 launcher_config.json
+__pycache__
+backups
