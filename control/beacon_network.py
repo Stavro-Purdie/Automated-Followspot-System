@@ -50,6 +50,13 @@ def push_config(beacon, *, brightness_pct: int, led_on: bool, timeout: float = D
     return _request(url, data=payload, timeout=timeout)
 
 
+def push_name(beacon, *, name: str, timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+    """Send display name to beacon; persisted in NVS and returned in status."""
+    url = f"http://{beacon.ip_address}:{beacon.port}/api/config"
+    payload = {"name": name}
+    return _request(url, data=payload, timeout=timeout)
+
+
 def push_wifi(beacon, *, ssid: str, password: str, timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
     """Send Wi-Fi credentials; firmware stores and restarts."""
     url = f"http://{beacon.ip_address}:{beacon.port}/api/wifi"

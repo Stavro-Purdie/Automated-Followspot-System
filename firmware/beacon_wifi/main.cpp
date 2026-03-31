@@ -52,6 +52,7 @@ bool    lowBatt    = false;
 /* ---------- WIFI ---------- */
 String wifiSsid = WIFI_SSID_DEFAULT;
 String wifiPass = WIFI_PASS_DEFAULT;
+String beaconName = BEACON_NAME_DEFAULT;
 WebServer server(80);
 bool wifiReady = false;
 
@@ -77,6 +78,7 @@ void loadSettings() {
   lvlIdx   = prefs.getUChar("bri", 5);
   wifiSsid = prefs.getString("ssid", WIFI_SSID_DEFAULT);
   wifiPass = prefs.getString("pass", WIFI_PASS_DEFAULT);
+  beaconName = prefs.getString("name", BEACON_NAME_DEFAULT);
   prefs.end();
 }
 
@@ -86,6 +88,7 @@ void saveSettings() {
   prefs.putUChar("bri", lvlIdx);
   prefs.putString("ssid", wifiSsid);
   prefs.putString("pass", wifiPass);
+  prefs.putString("name", beaconName);
   prefs.end();
 }
 
@@ -105,6 +108,15 @@ void startApFallback() {
   WiFi.softAP(apName.c_str(), "beacon1234");
 }
 
+String safeName(const String &src) {
+  String out = src;
+  out.replace("\"", "'");
+  if (out.length() > 24) {
+    out = out.substring(0, 24);
+  }
+  return out;
+}
+
 String buildStatusJson() {
   float v = 0.0f;
   int pct = 0;
@@ -115,8 +127,10 @@ String buildStatusJson() {
   }
 
   float f = BASE_FREQ_HZ + beaconID * FREQ_STEP_HZ;
+  String safe = safeName(beaconName);
   String json = "{";
   json += "\"id\":" + String(beaconID) + ",";
+  json += "\"name\":\"" + safe + "\",";
   json += "\"brightness_pct\":" + String(map(lvlIdx, 0, 5, 0, 100)) + ",";
   json += "\"led_enabled\":" + String(ledEnable ? "true" : "false") + ",";
   json += "\"battery_v\":" + String(v, 3) + ",";
@@ -150,6 +164,14 @@ void handleConfig() {
   if (server.hasArg("led")) {
     ledEnable = server.arg("led") != "0";
     changed = true;
+  }
+  if (server.hasArg("name")) {
+    String newName = server.arg("name");
+    newName.trim();
+    if (newName.length() > 0) {
+      beaconName = safeName(newName);
+      changed = true;
+    }
   }
   if (changed) {
     saveSettings();
@@ -189,8 +211,11 @@ void setup() {
 
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("Name: "); display.println(safeName(beaconName));
   display.setTextSize(2);
-  display.setCursor(0, 20);
+  display.setCursor(0, 18);
   display.print("ID "); display.println(beaconID);
   display.display();
   delay(800);
@@ -241,14 +266,16 @@ void loop() {
       display.clearDisplay();
       display.setTextSize(1);
       display.setCursor(0, 0);
+      display.print("Name: "); display.println(safeName(beaconName));
+      display.setCursor(0, 12);
       display.print("ID:"); display.print(beaconID);
       display.print(" "); display.print((int)f); display.print("Hz");
       int pct = constrain(map((int)(v * 1000), (int)(VBAT_MIN * 1000), (int)(VBAT_MAX * 1000), 0, 100), 0, 100);
-      display.setCursor(0, 12);
+      display.setCursor(0, 24);
       display.print("Vbat: "); display.print(v, 2); display.println("V");
-      display.setCursor(0, 22);
+      display.setCursor(0, 34);
       display.print("LED: "); display.println(ledEnable ? "ON" : "OFF");
-      display.setCursor(0, 32);
+      display.setCursor(0, 44);
       display.print("WiFi: "); display.println(WiFi.isConnected() ? WiFi.localIP().toString() : "AP");
       display.display();
     }

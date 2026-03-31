@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
 import sys
 
-from beacon_network import fetch_status, push_config
+from beacon_network import fetch_status, push_config, push_name
 
 logger = logging.getLogger("beacon_config_gui")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -112,6 +112,7 @@ except Exception:
 class BeaconSettings:
     """Beacon configuration parameters"""
     beacon_id: str
+    display_name: str = "Beacon"
     ip_address: str
     port: int = 5000
     battery_enabled: bool = True
@@ -132,6 +133,7 @@ class BeaconSettings:
 class BeaconStatus:
     """Real-time beacon status from device"""
     beacon_id: str
+    display_name: Optional[str] = None
     online: bool = False
     battery_percent: Optional[float] = None
     battery_voltage: Optional[float] = None
@@ -302,6 +304,7 @@ class BeaconConfigGUI:
         ttk.Button(control_frame, text="Add Beacon", command=self.add_beacon_dialog).grid(row=0, column=2, padx=2)
         ttk.Button(control_frame, text="Remove", command=self.remove_beacon).grid(row=0, column=3, padx=2)
         ttk.Button(control_frame, text="Refresh", command=self.refresh_status).grid(row=0, column=4, padx=2)
+        ttk.Button(control_frame, text="Rename", command=self.rename_beacon).grid(row=0, column=5, padx=2)
         
         control_frame.columnconfigure(1, weight=1)
     
@@ -323,6 +326,7 @@ class BeaconConfigGUI:
             ("LED Brightness", "led"),
             ("Temperature", "temperature"),
             ("Uptime", "uptime"),
+            ("Display Name", "name"),
         ]
         
         for label_text, key in status_items:
@@ -472,6 +476,9 @@ class BeaconConfigGUI:
         
         uptime_text = f"{status.uptime_seconds}s" if status.uptime_seconds is not None else "--"
         self.status_labels["uptime"].config(text=uptime_text)
+
+        name_text = status.display_name or "--"
+        self.status_labels["name"].config(text=name_text)
     
     def apply_settings(self):
         """Apply settings to selected beacon"""
@@ -502,6 +509,27 @@ class BeaconConfigGUI:
         except Exception as exc:
             logger.error(f"Failed to push settings to {beacon_id}: {exc}")
             messagebox.showerror("Error", f"Could not send settings to {beacon_id}: {exc}")
+
+    def rename_beacon(self):
+        """Prompt for a display name and push to device."""
+        beacon_id = self.beacon_var.get()
+        if beacon_id not in self.beacons:
+            messagebox.showwarning("Warning", "Please select a beacon")
+            return
+
+        beacon = self.beacons[beacon_id]
+        current = self.beacon_status.get(beacon_id, BeaconStatus(beacon_id=beacon_id)).display_name or beacon.display_name
+        name = tk.simpledialog.askstring("Rename Beacon", "Display name to show on beacon:", initialvalue=current)
+        if not name:
+            return
+
+        beacon.display_name = name
+        try:
+            push_name(beacon, name=name)
+            messagebox.showinfo("Success", f"Renamed {beacon_id} to '{name}'")
+        except Exception as exc:
+            logger.error(f"Failed to rename {beacon_id}: {exc}")
+            messagebox.showerror("Error", f"Could not rename beacon: {exc}")
     
     def add_beacon_dialog(self):
         """Show dialog to add a new beacon"""
@@ -623,6 +651,7 @@ class BeaconConfigGUI:
         status.led_brightness = payload.get("brightness_pct")
         status.temperature_c = payload.get("temp_c")
         status.uptime_seconds = payload.get("uptime_s")
+        status.display_name = payload.get("name")
 
     def _compute_auto_fan_pwm(self, beacon: BeaconSettings, temperature_c: float) -> int:
         """Derive a PWM value based on temperature and beacon auto settings."""

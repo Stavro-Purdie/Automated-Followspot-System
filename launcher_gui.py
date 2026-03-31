@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 import platform
+import glob
 from pathlib import Path
 from datetime import datetime
 import queue
@@ -178,6 +179,7 @@ class LauncherGUI:
         
         self.project_root = Path(__file__).resolve().parent
         self.update_check_in_progress = False
+        self.deps_op_in_progress = False
         self.update_manager = UpdateManager(
             "Stavro-Purdie", "Automated-Followspot-System", self.project_root
         )
@@ -891,6 +893,106 @@ class LauncherGUI:
                 stack_info['last_dependency_check'] = now
         
         self.save_config()
+
+    def _run_pip_command(self, cmd: list[str], description: str) -> bool:
+        """Run pip command in a thread and stream to terminal; return success."""
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        except Exception as exc:
+            self.log_to_terminal(f"Error starting {description}: {exc}")
+            return False
+
+        if proc.stdout:
+            for line in proc.stdout:
+                self.root.after(0, self.log_to_terminal, line.strip())
+
+        rc = proc.wait()
+        self.root.after(0, self.log_to_terminal, f"{description} exited with code {rc}")
+        return rc == 0
+
+    def _dependency_files(self) -> list[Path]:
+        base = Path(__file__).parent
+        files = [
+            base / "control" / "requirements.txt",
+            base / "node" / "requirements.txt",
+        ]
+        return [f for f in files if f.exists()]
+
+    def install_all_dependencies(self):
+        """Install all stack dependencies via pip."""
+        if self.deps_op_in_progress:
+            messagebox.showinfo("Dependencies", "Another dependency operation is already running.")
+            return
+
+        req_files = self._dependency_files()
+        if not req_files:
+            messagebox.showerror("Dependencies", "No requirements.txt files found.")
+            return
+
+        self.deps_op_in_progress = True
+        self.deps_status_label.config(text="Dependencies: Installing...")
+        self.log_to_terminal("Starting dependency install...")
+
+        def worker():
+            ok = True
+            for req in req_files:
+                self.root.after(0, self.log_to_terminal, f"Installing from {req}...")
+                cmd = [sys.executable, "-m", "pip", "install", "-r", str(req)]
+                if not self._run_pip_command(cmd, f"pip install -r {req.name}"):
+                    ok = False
+                    break
+
+            cert_cmd = [sys.executable, "-m", "pip", "install", "certifi"]
+            if ok:
+                self.root.after(0, self.log_to_terminal, "Ensuring certifi is present...")
+                ok = self._run_pip_command(cert_cmd, "pip install certifi")
+
+            self.root.after(0, self.update_deps_status, ok)
+            self.root.after(0, self.check_dependencies_async)
+            self.deps_op_in_progress = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def remove_all_dependencies(self):
+        """Remove all stack dependencies via pip uninstall -r."""
+        if self.deps_op_in_progress:
+            messagebox.showinfo("Dependencies", "Another dependency operation is already running.")
+            return
+
+        if not messagebox.askyesno(
+            "Remove Dependencies",
+            "This will run pip uninstall for control/node requirements. Continue?",
+        ):
+            return
+
+        req_files = self._dependency_files()
+        if not req_files:
+            messagebox.showerror("Dependencies", "No requirements.txt files found.")
+            return
+
+        self.deps_op_in_progress = True
+        self.deps_status_label.config(text="Dependencies: Removing...")
+        self.log_to_terminal("Starting dependency removal...")
+
+        def worker():
+            ok = True
+            for req in req_files:
+                self.root.after(0, self.log_to_terminal, f"Removing packages from {req}...")
+                cmd = [sys.executable, "-m", "pip", "uninstall", "-r", str(req), "-y"]
+                if not self._run_pip_command(cmd, f"pip uninstall -r {req.name}"):
+                    ok = False
+                    break
+
+            self.root.after(0, self.update_deps_status, False)
+            self.root.after(0, self.check_dependencies_async)
+            self.deps_op_in_progress = False
+
+        threading.Thread(target=worker, daemon=True).start()
     
     def periodic_checks(self):
         """Perform periodic system checks"""
@@ -1040,28 +1142,8 @@ class LauncherGUI:
         self.run_script(script_path, "Beacon Live Monitor")
 
     def launch_beacon_flasher(self):
-        """Run the Xiao ESP32-C6 beacon flashing helper."""
-        script_path = Path(__file__).parent / "tools" / "beacon_flash.py"
-        if not script_path.exists():
-            messagebox.showerror("Error", "Beacon flasher script not found")
-            return
-
-        ssid = simpledialog.askstring("Beacon Wi-Fi", "Wi-Fi SSID:", parent=self.root)
-        if not ssid:
-            return
-        password = simpledialog.askstring("Beacon Wi-Fi", "Wi-Fi Password:", show="*", parent=self.root)
-        if password is None:
-            return
-        port = simpledialog.askstring(
-            "Serial Port",
-            "Serial port (e.g., /dev/tty.usbmodemXYZ or COM5):",
-            parent=self.root,
-        )
-        if not port:
-            return
-
-        args = ["--ssid", ssid, "--password", password, "--port", port]
-        self.run_script(script_path, "Beacon Flasher", args=args)
+        """Open the Xiao ESP32-C6 beacon flasher window."""
+        BeaconFlashWindow(self).show()
 
     def launch_offline_mode(self):
         """Launch control stack in offline/demo mode"""
@@ -1633,6 +1715,458 @@ class HoverTooltip:
             self.tipwindow.destroy()
             self.tipwindow = None
         self.current_text = None
+
+
+class BeaconFlashWindow:
+    """Single-window Xiao ESP32-C6 flasher with autodetect and log output."""
+
+    def __init__(self, launcher: "LauncherGUI") -> None:
+        self.launcher = launcher
+        self.root = launcher.root
+        self.window: Optional[tk.Toplevel] = None
+        self.ssid_var = tk.StringVar()
+        self.pass_var = tk.StringVar()
+        self.port_var = tk.StringVar()
+        self.fqbn_var = tk.StringVar(value="esp32:esp32:xiao_esp32c6")
+        self.name_var = tk.StringVar(value="Beacon")
+        self.dep_status_var = tk.StringVar(value="Checking dependencies...")
+        self.deps_ok = False
+        self.busy = False
+        self.spinner_state = False
+        self.proc: Optional[subprocess.Popen] = None
+        self.log_widget: Optional[scrolledtext.ScrolledText] = None
+        self.port_combo: Optional[ttk.Combobox] = None
+        self.port_refresh_btn: Optional[ttk.Button] = None
+        self.flash_button: Optional[ttk.Button] = None
+        self.install_deps_btn: Optional[ttk.Button] = None
+        self.remove_deps_btn: Optional[ttk.Button] = None
+        self.install_cli_btn: Optional[ttk.Button] = None
+        self.input_controls: list[tuple[tk.Widget, str]] = []
+
+    def show(self) -> None:
+        if self.window and self.window.winfo_exists():
+            self.window.lift()
+            return
+
+        self.window = tk.Toplevel(self.root)
+        self.window.title("Flash Beacon (Xiao ESP32-C6)")
+        self.window.geometry("640x520")
+        self.window.transient(self.root)
+        self.window.grab_set()
+        self.window.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        frame = ttk.Frame(self.window, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="Wi-Fi SSID:").grid(row=0, column=0, sticky="w", pady=4)
+        ssid_entry = ttk.Entry(frame, textvariable=self.ssid_var)
+        ssid_entry.grid(row=0, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Wi-Fi Password:").grid(row=1, column=0, sticky="w", pady=4)
+        pass_entry = ttk.Entry(frame, textvariable=self.pass_var, show="*")
+        pass_entry.grid(row=1, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Beacon Name:").grid(row=2, column=0, sticky="w", pady=4)
+        name_entry = ttk.Entry(frame, textvariable=self.name_var)
+        name_entry.grid(row=2, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Serial Port:").grid(row=3, column=0, sticky="w", pady=4)
+        port_row = ttk.Frame(frame)
+        port_row.grid(row=3, column=1, sticky="ew", pady=4)
+        port_row.columnconfigure(0, weight=1)
+        ports = self._detect_ports()
+        if ports and not self.port_var.get():
+            self.port_var.set(ports[0])
+        self.port_combo = ttk.Combobox(
+            port_row,
+            textvariable=self.port_var,
+            values=ports,
+            state="readonly",
+        )
+        self.port_combo.grid(row=0, column=0, sticky="ew")
+        self.port_refresh_btn = ttk.Button(port_row, text="Refresh", command=self._refresh_ports)
+        self.port_refresh_btn.grid(row=0, column=1, padx=(6, 0))
+
+        ttk.Label(frame, text="FQBN:").grid(row=4, column=0, sticky="w", pady=4)
+        fqbn_entry = ttk.Entry(frame, textvariable=self.fqbn_var)
+        fqbn_entry.grid(row=4, column=1, sticky="ew", pady=4)
+
+        dep_status_label = ttk.Label(frame, textvariable=self.dep_status_var, foreground="#c06000")
+        dep_status_label.grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 4))
+
+        deps_row = ttk.Frame(frame)
+        deps_row.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        deps_row.columnconfigure(0, weight=1)
+        deps_row.columnconfigure(1, weight=1)
+        deps_row.columnconfigure(2, weight=1)
+        self.install_deps_btn = ttk.Button(
+            deps_row,
+            text="Install Flash Dependencies",
+            command=self._install_flash_deps,
+        )
+        self.install_deps_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.remove_deps_btn = ttk.Button(
+            deps_row,
+            text="Remove Flash Dependencies",
+            command=self._remove_flash_deps,
+        )
+        self.remove_deps_btn.grid(row=0, column=1, sticky="ew", padx=(4, 4))
+        self.install_cli_btn = ttk.Button(
+            deps_row,
+            text="Install arduino-cli",
+            command=self._install_arduino_cli,
+        )
+        self.install_cli_btn.grid(row=0, column=2, sticky="ew", padx=(0, 0))
+
+        btn_row = ttk.Frame(frame)
+        btn_row.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(4, 8))
+        btn_row.columnconfigure(1, weight=1)
+        self.status_var = tk.StringVar(value="Idle")
+        self.spinner_label = ttk.Label(btn_row, textvariable=self.status_var)
+        self.spinner_label.grid(row=0, column=0, sticky="w")
+        self.flash_button = ttk.Button(btn_row, text="Flash", command=self._start)
+        self.flash_button.grid(row=0, column=1, sticky="e")
+        ttk.Button(btn_row, text="Close", command=self._on_close).grid(row=0, column=2, sticky="e", padx=(6, 0))
+
+        log_frame = ttk.LabelFrame(frame, text="Log", padding=6)
+        log_frame.grid(row=8, column=0, columnspan=2, sticky="nsew")
+        frame.rowconfigure(8, weight=1)
+        self.log_widget = scrolledtext.ScrolledText(log_frame, height=14, width=80, font=("Consolas", 9))
+        self.log_widget.pack(fill=tk.BOTH, expand=True)
+
+        ensure_window_fits_content(self.window, min_width=640, min_height=520, padding=40, center=True)
+        self.window.after(500, self._animate)
+
+        self.input_controls = [
+            (ssid_entry, "normal"),
+            (pass_entry, "normal"),
+            (name_entry, "normal"),
+            (self.port_combo, "readonly"),
+            (self.port_refresh_btn, "normal") if self.port_refresh_btn else (None, "normal"),
+            (fqbn_entry, "normal"),
+            (self.flash_button, "normal") if self.flash_button else (None, "normal"),
+        ]
+        self.input_controls = [(w, state) for w, state in self.input_controls if w is not None]
+        self._sync_controls()
+        self._check_deps_async()
+
+    def _detect_ports(self) -> list[str]:
+        patterns = [
+            "/dev/tty.usbmodem*",
+            "/dev/ttyUSB*",
+            "/dev/ttyACM*",
+            "/dev/cu.usbmodem*",
+            "/dev/cu.usbserial*",
+            "COM*",
+        ]
+        ports: list[str] = []
+        for pat in patterns:
+            for hit in glob.glob(pat):
+                if hit not in ports:
+                    ports.append(hit)
+        return sorted(ports)
+
+    def _refresh_ports(self) -> None:
+        ports = self._detect_ports()
+        current = self.port_var.get()
+        if self.port_combo:
+            self.port_combo.configure(values=ports)
+        if ports and not current:
+            self.port_var.set(ports[0])
+        self._append_log(f"Detected ports: {', '.join(ports) if ports else 'none'}")
+
+    def _start(self) -> None:
+        if self.busy:
+            return
+        if not self.deps_ok:
+            messagebox.showwarning("Dependencies Missing", "Install required dependencies before flashing.", parent=self.window)
+            return
+        ssid = self.ssid_var.get().strip()
+        password = self.pass_var.get().strip()
+        port = self.port_var.get().strip()
+        name = self.name_var.get().strip() or "Beacon"
+        fqbn = self.fqbn_var.get().strip() or "esp32:esp32:xiao_esp32c6"
+
+        if not ssid or not password:
+            messagebox.showwarning("Missing Input", "SSID and password are required.", parent=self.window)
+            return
+
+        if not port:
+            ports = self._detect_ports()
+            if ports:
+                port = ports[0]
+                self.port_var.set(port)
+            else:
+                messagebox.showwarning("No Port", "No USB serial device found. Plug in the Xiao and refresh.", parent=self.window)
+                return
+
+        script_path = Path(__file__).parent / "tools" / "beacon_flash.py"
+        if not script_path.exists():
+            messagebox.showerror("Error", "Beacon flasher script not found.", parent=self.window)
+            return
+
+        cmd = [
+            sys.executable,
+            str(script_path),
+            "--ssid",
+            ssid,
+            "--password",
+            password,
+            "--port",
+            port,
+            "--name",
+            name,
+        ]
+
+        env = os.environ.copy()
+        env["ARDUINO_FQBN"] = fqbn
+
+        self._append_log(f"Running: {' '.join(cmd)}")
+        self._set_busy(True, "Flashing...")
+
+        def worker():
+            try:
+                self.proc = subprocess.Popen(
+                    cmd,
+                    cwd=script_path.parent,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    env=env,
+                )
+                assert self.proc.stdout is not None
+                for line in self.proc.stdout:
+                    self.root.after(0, self._append_log, line.rstrip())
+                rc = self.proc.wait()
+                self.root.after(0, self._on_done, rc)
+            except Exception as exc:
+                self.root.after(0, self._append_log, f"Error: {exc}")
+                self.root.after(0, self._on_done, 1)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _run_arduino_commands(self, commands: list[list[str]], status: str) -> None:
+        if self.busy:
+            return
+        if shutil.which("arduino-cli") is None:
+            messagebox.showerror(
+                "arduino-cli Missing",
+                "arduino-cli is not on PATH. Install it first: https://arduino.github.io/arduino-cli/latest/",
+                parent=self.window,
+            )
+            return
+
+        self._set_busy(True, status)
+        self._append_log(status)
+
+        def worker():
+            rc = 0
+            for cmd in commands:
+                try:
+                    self.root.after(0, self._append_log, f"[cmd] {' '.join(cmd)}")
+                    self.proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    assert self.proc.stdout is not None
+                    for line in self.proc.stdout:
+                        self.root.after(0, self._append_log, line.rstrip())
+                    rc = self.proc.wait()
+                    if rc != 0:
+                        break
+                except Exception as exc:
+                    rc = 1
+                    self.root.after(0, self._append_log, f"Error: {exc}")
+                    break
+                finally:
+                    self.proc = None
+
+            self.root.after(0, self._on_done, rc)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _run_single_command(self, cmd: list[str], status: str) -> None:
+        if self.busy:
+            return
+        self._set_busy(True, status)
+        self._append_log(f"[cmd] {' '.join(cmd)}")
+
+        def worker():
+            rc = 1
+            try:
+                self.proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                assert self.proc.stdout is not None
+                for line in self.proc.stdout:
+                    self.root.after(0, self._append_log, line.rstrip())
+                rc = self.proc.wait()
+            except Exception as exc:
+                self.root.after(0, self._append_log, f"Error: {exc}")
+            finally:
+                self.proc = None
+                self.root.after(0, self._on_done, rc)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        for widget, state in self.input_controls:
+            try:
+                widget.configure(state=state if enabled else "disabled")
+            except Exception:
+                pass
+
+    def _sync_controls(self) -> None:
+        enabled = self.deps_ok and not self.busy
+        self._set_controls_enabled(enabled)
+
+    def _check_deps_async(self) -> None:
+        self.dep_status_var.set("Checking dependencies...")
+        def worker():
+            has_cli = bool(shutil.which("arduino-cli"))
+            core_ok = False
+            libs_ok = False
+            msg_parts: list[str] = []
+            core = self._core_from_fqbn()
+            if not has_cli:
+                msg_parts.append("arduino-cli not found")
+            else:
+                try:
+                    res_core = subprocess.run(
+                        ["arduino-cli", "core", "list"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if res_core.returncode == 0 and core in res_core.stdout:
+                        core_ok = True
+                    else:
+                        msg_parts.append(f"Missing core {core}")
+                except Exception as exc:
+                    msg_parts.append(f"Core check failed: {exc}")
+
+                try:
+                    res_lib = subprocess.run(
+                        ["arduino-cli", "lib", "list"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if res_lib.returncode == 0:
+                        out = res_lib.stdout
+                        libs_ok = "Adafruit GFX Library" in out and "Adafruit SSD1306" in out
+                        if not libs_ok:
+                            msg_parts.append("Missing Adafruit GFX/SSD1306")
+                    else:
+                        msg_parts.append("Library check failed")
+                except Exception as exc:
+                    msg_parts.append(f"Library check failed: {exc}")
+
+            ok = has_cli and core_ok and libs_ok
+            msg = "; ".join(msg_parts) if msg_parts else "All dependencies present."
+            self.root.after(0, lambda: self._apply_dep_status(ok, has_cli, core_ok, libs_ok, msg))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_dep_status(self, ok: bool, has_cli: bool, core_ok: bool, libs_ok: bool, msg: str) -> None:
+        self.deps_ok = ok
+        self.dep_status_var.set(msg)
+        # Highlight install buttons when needed
+        if self.install_deps_btn:
+            self.install_deps_btn.configure(style="TButton" if ok else "Primary.TButton")
+        if self.install_cli_btn:
+            self.install_cli_btn.configure(style="TButton" if has_cli else "Primary.TButton")
+        self._sync_controls()
+
+    def _core_from_fqbn(self) -> str:
+        parts = self.fqbn_var.get().strip().split(":")
+        if len(parts) >= 2:
+            return ":".join(parts[:2])
+        return "esp32:esp32"
+
+    def _install_flash_deps(self) -> None:
+        core = self._core_from_fqbn()
+        cmds = [
+            ["arduino-cli", "core", "update-index"],
+            ["arduino-cli", "core", "install", core],
+            ["arduino-cli", "lib", "install", "Adafruit GFX Library"],
+            ["arduino-cli", "lib", "install", "Adafruit SSD1306"],
+        ]
+        self._run_arduino_commands(cmds, "Installing flash dependencies...")
+
+    def _remove_flash_deps(self) -> None:
+        core = self._core_from_fqbn()
+        cmds = [
+            ["arduino-cli", "lib", "uninstall", "Adafruit SSD1306"],
+            ["arduino-cli", "lib", "uninstall", "Adafruit GFX Library"],
+            ["arduino-cli", "core", "uninstall", core],
+        ]
+        self._run_arduino_commands(cmds, "Removing flash dependencies...")
+
+    def _install_arduino_cli(self) -> None:
+        if self.busy:
+            return
+        if shutil.which("arduino-cli"):
+            messagebox.showinfo("arduino-cli", "arduino-cli is already installed.", parent=self.window)
+            return
+
+        system = platform.system()
+        brew = shutil.which("brew")
+
+        if system == "Darwin" and brew:
+            self._run_single_command([brew, "install", "arduino-cli"], "Installing arduino-cli via Homebrew...")
+            return
+
+        messagebox.showinfo(
+            "Install arduino-cli",
+            "Please install arduino-cli manually: https://arduino.github.io/arduino-cli/latest/installation/",
+            parent=self.window,
+        )
+
+    def _append_log(self, text: str) -> None:
+        if not self.log_widget or not self.log_widget.winfo_exists():
+            return
+        self.log_widget.insert(tk.END, text + "\n")
+        self.log_widget.see(tk.END)
+
+    def _set_busy(self, busy: bool, status: str = "") -> None:
+        self.busy = busy
+        if status:
+            self.status_var.set(status)
+        else:
+            self.status_var.set("Busy" if busy else "Idle")
+        self._sync_controls()
+
+    def _on_done(self, rc: int) -> None:
+        self._set_busy(False, f"Done (exit {rc})")
+        self.proc = None
+        self._check_deps_async()
+
+    def _animate(self) -> None:
+        if not self.window or not self.window.winfo_exists():
+            return
+        if self.busy:
+            self.spinner_state = not self.spinner_state
+            self.spinner_label.configure(foreground="#00ccff" if self.spinner_state else "#666666")
+        else:
+            self.spinner_label.configure(foreground="#666666")
+        self.window.after(500, self._animate)
+
+    def _on_close(self) -> None:
+        if self.busy and self.proc:
+            try:
+                self.proc.terminate()
+            except Exception:
+                pass
+        if self.window:
+            self.window.destroy()
+            self.window = None
 
 
 class ConnectionStatusWindow:
