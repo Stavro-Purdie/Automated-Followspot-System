@@ -6,7 +6,7 @@ control suite, logs, into one semi-approachable window.
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext, filedialog
+from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
 import json
 import os
 import sys
@@ -397,6 +397,10 @@ class LauncherGUI:
             label="Beacon Live Monitor",
             command=self.launch_beacon_monitor,
         )
+        tools_menu.add_command(
+            label="Flash Beacon (Xiao ESP32-C6)",
+            command=self.launch_beacon_flasher,
+        )
         tools_menu.add_separator()
         tools_menu.add_command(
             label="Connection Status",
@@ -686,10 +690,15 @@ class LauncherGUI:
         ttk.Button(tools_frame, text="Settings", command=self.show_settings).grid(
             row=3, column=0, sticky="ew", pady=(0, 5)
         )
+        ttk.Button(
+            tools_frame,
+            text="Flash Beacon (Xiao ESP32-C6)",
+            command=self.launch_beacon_flasher,
+        ).grid(row=4, column=0, sticky="ew", pady=(0, 5))
 
-        ttk.Separator(tools_frame, orient='horizontal').grid(row=4, column=0, sticky="ew", pady=10)
+        ttk.Separator(tools_frame, orient='horizontal').grid(row=5, column=0, sticky="ew", pady=10)
 
-        ttk.Button(tools_frame, text="Exit", command=self.root.quit).grid(row=5, column=0, sticky="ew")
+        ttk.Button(tools_frame, text="Exit", command=self.root.quit).grid(row=6, column=0, sticky="ew")
     
     def create_terminal_frame(self, parent):
         """Create terminal output display"""
@@ -1029,6 +1038,30 @@ class LauncherGUI:
             messagebox.showerror("Error", "Beacon monitor tool not found")
             return
         self.run_script(script_path, "Beacon Live Monitor")
+
+    def launch_beacon_flasher(self):
+        """Run the Xiao ESP32-C6 beacon flashing helper."""
+        script_path = Path(__file__).parent / "tools" / "beacon_flash.py"
+        if not script_path.exists():
+            messagebox.showerror("Error", "Beacon flasher script not found")
+            return
+
+        ssid = simpledialog.askstring("Beacon Wi-Fi", "Wi-Fi SSID:", parent=self.root)
+        if not ssid:
+            return
+        password = simpledialog.askstring("Beacon Wi-Fi", "Wi-Fi Password:", show="*", parent=self.root)
+        if password is None:
+            return
+        port = simpledialog.askstring(
+            "Serial Port",
+            "Serial port (e.g., /dev/tty.usbmodemXYZ or COM5):",
+            parent=self.root,
+        )
+        if not port:
+            return
+
+        args = ["--ssid", ssid, "--password", password, "--port", port]
+        self.run_script(script_path, "Beacon Flasher", args=args)
 
     def launch_offline_mode(self):
         """Launch control stack in offline/demo mode"""

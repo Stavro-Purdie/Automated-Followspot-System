@@ -9,9 +9,9 @@
     "control_stack": {
       "installed": true,
       "version": "1.0.0",
-      "install_date": "2026-03-30T10:34:06.387100",
+      "install_date": "2026-03-31T14:03:56.468464",
       "dependencies_verified": false,
-      "last_dependency_check": "2026-03-31 13:43:45"
+      "last_dependency_check": "2026-03-31 14:03:56"
     },
     "node_stack": {
       "installed": false,
@@ -100,7 +100,7 @@
         "last_prompted": "4b827f8035c0c35231953f8ae725458f81deaa5a",
         "last_applied": null,
         "last_node_applied": null,
-        "last_checked": "2026-03-31T13:43:40.491969"
+        "last_checked": "2026-03-31T14:03:39.347326"
       },
       "testing": {
         "last_remote": null,
