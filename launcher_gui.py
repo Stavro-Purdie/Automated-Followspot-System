@@ -409,6 +409,10 @@ class LauncherGUI:
             command=self.node_diagnostics,
         )
         tools_menu.add_command(
+            label="Debug Telemetry Dashboard",
+            command=self.launch_debug_telemetry_dashboard,
+        )
+        tools_menu.add_command(
             label="Open Settings",
             command=self.show_settings,
         )
@@ -1144,6 +1148,11 @@ class LauncherGUI:
     def launch_beacon_flasher(self):
         """Open the Xiao ESP32-C6 beacon flasher window."""
         BeaconFlashWindow(self).show()
+
+    def launch_debug_telemetry_dashboard(self):
+        """Launch the simulated telemetry debug dashboard."""
+        script_path = Path(__file__).parent / "control" / "debug_telemetry_dashboard.py"
+        self.run_script(script_path, "Debug Telemetry Dashboard")
 
     def launch_offline_mode(self):
         """Launch control stack in offline/demo mode"""

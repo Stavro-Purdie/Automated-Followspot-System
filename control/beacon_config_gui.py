@@ -112,9 +112,9 @@ except Exception:
 class BeaconSettings:
     """Beacon configuration parameters"""
     beacon_id: str
-    display_name: str = "Beacon"
     ip_address: str
     port: int = 5000
+    display_name: str = "Beacon"
     battery_enabled: bool = True
     battery_low_threshold: float = 20.0  # Percentage
     fan_enabled: bool = True
