@@ -186,7 +186,7 @@ Configuration includes:
 
 The launcher includes a simulated telemetry dashboard for debugging the node and beacon workflow without live hardware.
 
-For a focused guide, see [docs/debugging_information.md](/Users/spurdie/Automated-Followspot-System/docs/debugging_information.md).
+For a focused guide, see [docs/debugging_information.md](docs/debugging_information.md).
 
 Open it from the GUI launcher via `Tools -> Debug Telemetry Dashboard`, or run it directly with:
 
