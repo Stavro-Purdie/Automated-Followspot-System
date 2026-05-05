@@ -25,10 +25,12 @@ import aiohttp
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
 def _sanitize_for_log(value: Any) -> str:
-    """Return a log-safe, single-line string with control chars escaped."""
+    """Return a log-safe, single-line string with CR/LF and control chars neutralized."""
     text = str(value)
-    escaped = text.encode("unicode_escape", errors="backslashreplace").decode("ascii", errors="ignore")
-    return escaped
+    # Prevent log forging by removing line breaks entirely.
+    text = text.replace("\r", "").replace("\n", "")
+    # Replace remaining non-printable control characters (except tab) with '?'.
+    return "".join(ch if (ch == "\t" or ord(ch) >= 32) else "?" for ch in text)
 
 try:
     from demo_stage_state import get_demo_stage_state
