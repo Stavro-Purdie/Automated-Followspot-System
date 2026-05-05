@@ -25,9 +25,10 @@ import aiohttp
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
 def _sanitize_for_log(value: Any) -> str:
-    """Return a log-safe string by stripping CR/LF and other ASCII control chars."""
+    """Return a log-safe, single-line string with control chars escaped."""
     text = str(value)
-    return re.sub(r'[\x00-\x1f\x7f]+', ' ', text)
+    escaped = text.encode("unicode_escape", errors="backslashreplace").decode("ascii", errors="ignore")
+    return escaped
 
 try:
     from demo_stage_state import get_demo_stage_state

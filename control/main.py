@@ -16,8 +16,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("main")
 
 def _sanitize_for_log(value) -> str:
-    """Return a log-safe string by stripping CR/LF and other ASCII control chars."""
-    return re.sub(r'[\x00-\x1f\x7f]+', ' ', str(value))
+    """Return a log-safe, single-line string with control chars escaped."""
+    text = str(value)
+    escaped = text.encode("unicode_escape", errors="backslashreplace").decode("ascii", errors="ignore")
+    return escaped
 
 def main():
     """Parse CLI flags, present the mode chooser, and start the requested tools."""
