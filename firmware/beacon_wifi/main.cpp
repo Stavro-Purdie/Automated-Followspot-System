@@ -246,11 +246,26 @@ void loop() {
   float f = BASE_FREQ_HZ + beaconID * FREQ_STEP_HZ;
   unsigned long intv = 1e6 / f;
   unsigned long nowU = micros();
-  if (!menuMode && ledEnable && !lowBatt && (nowU - lastPulseUs) >= intv) {
-    lastPulseUs = nowU;
-    analogWrite(PIN_IRLED, lvl[lvlIdx]);
-    delay(PULSE_WIDTH_MS);
-    analogWrite(PIN_IRLED, 0);
+  const unsigned long pulseWidthUs = PULSE_WIDTH_MS * 1000UL;
+  static bool pulseActive = false;
+  static unsigned long pulseStartUs = 0;
+
+  if (menuMode || !ledEnable || lowBatt) {
+    if (pulseActive) {
+      analogWrite(PIN_IRLED, 0);
+      pulseActive = false;
+    }
+  } else {
+    if (pulseActive && (nowU - pulseStartUs) >= pulseWidthUs) {
+      analogWrite(PIN_IRLED, 0);
+      pulseActive = false;
+    }
+    if (!pulseActive && (nowU - lastPulseUs) >= intv) {
+      lastPulseUs = nowU;
+      pulseStartUs = nowU;
+      pulseActive = true;
+      analogWrite(PIN_IRLED, lvl[lvlIdx]);
+    }
   }
 
   /* ---- Battery sample each second ---- */
