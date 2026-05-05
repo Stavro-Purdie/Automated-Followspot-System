@@ -75,7 +75,7 @@ def main():
     
     # Check if config file exists
     if not os.path.exists(args.config) and not args.demo:
-        logger.error("Configuration file '%s' not found.", _sanitize_for_log(args.config))
+        logger.error("Configuration file '%s' not found.", str(args.config).replace('\r', '').replace('\n', ''))
         logger.info("Run with --configure to create configuration or --demo for demo mode")
         return
     
