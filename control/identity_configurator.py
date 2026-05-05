@@ -12,6 +12,7 @@ import subprocess
 import sys
 import uuid
 import webbrowser
+import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -25,6 +26,24 @@ if hasattr(Image, "Resampling"):
     _LANCZOS = Image.Resampling.LANCZOS  # type: ignore[attr-defined]
 else:  # pragma: no cover - compatibility for older Pillow
     _LANCZOS = Image.LANCZOS  # type: ignore[attr-defined]
+
+
+def set_native_theme(style: ttk.Style) -> None:
+    """Set ttk theme to match the operating system."""
+    system = platform.system()
+    if system == "Darwin":  # macOS
+        theme = "aqua"
+    elif system == "Windows":
+        theme = "vista"
+    else:
+        theme = "clam"
+    try:
+        style.theme_use(theme)
+    except tk.TclError:
+        try:
+            style.theme_use('default')
+        except:
+            pass
 
 
 class IdentityConfigurator:
@@ -41,7 +60,12 @@ class IdentityConfigurator:
         self.root.title("Identity Configurator - Automated Followspot System")
         self.root.geometry("1200x780")
         self.root.minsize(1000, 640)
-
+        self.root.configure(bg="SystemButtonFace")
+        
+        # Configure ttk style for native theme
+        style = ttk.Style()
+        set_native_theme(style)
+        
         # Data models
         self.identity_data: Dict[str, List[Dict]] = {"identities": []}
         self.filtered_order: List[str] = []

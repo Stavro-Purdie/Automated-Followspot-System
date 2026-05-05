@@ -11,6 +11,7 @@ A comprehensive multi-camera IR beacon tracking system with automated followspot
 - **Demo Mode**: Full simulation mode for testing without hardware
 - **Automated Installation**: Guided installation process with dependency management
 - **System Diagnostics**: Built-in health checks and maintenance tools
+- **Debug Telemetry Dashboard**: Simulated node telemetry for debugging and UI validation
 - **Built-in Help System**: Independent help window with keyboard shortcuts and operator guidelines
 
 ## Quick Start
@@ -180,6 +181,25 @@ Configuration includes:
 - Crop rectangles for each camera
 - Grid layout and positioning
 - IR detection parameters
+
+## Debugging Information
+
+The launcher includes a simulated telemetry dashboard for debugging the node and beacon workflow without live hardware.
+
+For a focused guide, see [docs/debugging_information.md](docs/debugging_information.md).
+
+Open it from the GUI launcher via `Tools -> Debug Telemetry Dashboard`, or run it directly with:
+
+```bash
+python control/debug_telemetry_dashboard.py
+```
+
+The dashboard shows:
+
+- Node identity fields: ID, IP, and MAC address
+- Synthetic electrical and thermal data
+- Raw hex payload output for packet-level inspection
+- A copy-to-clipboard snapshot for sharing debug state during troubleshooting
 
 ## Front Camera Calibration (Complete Guide)
 

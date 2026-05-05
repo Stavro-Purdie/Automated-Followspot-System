@@ -9,10 +9,17 @@ import sys
 import os
 import logging
 import argparse
+import re
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("main")
+
+def _sanitize_for_log(value) -> str:
+    """Return a log-safe, single-line string with control chars escaped."""
+    text = str(value)
+    escaped = text.encode("unicode_escape", errors="backslashreplace").decode("ascii", errors="ignore")
+    return escaped
 
 def main():
     """Parse CLI flags, present the mode chooser, and start the requested tools."""
@@ -27,6 +34,7 @@ def main():
                         help="Skip the connection dialog and use command line arguments")
     
     args = parser.parse_args()
+    args.config = _sanitize_for_log(args.config)
     
     # If no specific mode is requested and no-dialog is not set, show the connection dialog
     if not args.demo and not args.configure and not args.no_dialog:
@@ -48,13 +56,13 @@ def main():
                 args.demo = False
                 args.configure = False
             
-            args.config = result["config"]
+            args.config = _sanitize_for_log(result["config"])
             
         except ImportError as e:
-            logger.warning(f"Could not import connection dialog: {e}")
+            logger.warning("Could not import connection dialog: %s", _sanitize_for_log(e))
             logger.info("Continuing with command line arguments...")
         except Exception as e:
-            logger.warning(f"Error showing connection dialog: {e}")
+            logger.warning("Error showing connection dialog: %s", _sanitize_for_log(e))
             logger.info("Continuing with command line arguments...")
     
     # Launch configuration GUI if requested
@@ -63,13 +71,13 @@ def main():
             from camera_config_gui import main as config_main
             config_main()
         except ImportError as e:
-            logger.error(f"Could not import configuration GUI: {e}")
+            logger.error("Could not import configuration GUI: %s", _sanitize_for_log(e))
             logger.info("Please ensure all dependencies are installed")
         return
     
     # Check if config file exists
     if not os.path.exists(args.config) and not args.demo:
-        logger.error(f"Configuration file '{args.config}' not found.")
+        logger.error("Configuration file '%s' not found.", str(args.config).replace('\r', '').replace('\n', ''))
         logger.info("Run with --configure to create configuration or --demo for demo mode")
         return
     
@@ -94,10 +102,10 @@ def main():
         gui.run()
         
     except ImportError as e:
-        logger.error(f"Could not import required modules: {e}")
+        logger.error("Could not import required modules: %s", _sanitize_for_log(e))
         logger.info("Please ensure all dependencies are installed with: pip install -r requirements.txt")
     except Exception as e:
-        logger.error(f"Error starting application: {e}")
+        logger.error("Error starting application: %s", _sanitize_for_log(e))
         sys.exit(1)
 
 if __name__ == "__main__":

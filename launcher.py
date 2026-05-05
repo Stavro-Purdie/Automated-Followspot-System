@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 from copy import deepcopy
@@ -315,6 +316,84 @@ def run_pip_install(requirements_file: Path) -> bool:
     return True
 
 
+def flash_beacon() -> None:
+    """Run the Xiao ESP32-C6 beacon flasher helper."""
+    script = PROJECT_ROOT / "tools" / "beacon_flash.py"
+    if not script.exists():
+        print(f"[FLASH] Helper not found: {script}")
+        input("Press Enter to continue...")
+        return
+
+    print(INDUSTRIAL_DIVIDER)
+    print("#  BEACON FLASHER (Xiao ESP32-C6)")
+    print("#  Requires: arduino-cli, esp32 core, Adafruit SSD1306/GFX libs")
+    print(INDUSTRIAL_DIVIDER)
+
+    ssid = input("Wi-Fi SSID (required): ").strip()
+    password = input("Wi-Fi Password (required): ").strip()
+    port = input("Serial port (e.g., /dev/tty.usbmodemXYZ or COM5): ").strip()
+
+    if not ssid or not password or not port:
+        print("[FLASH] Missing required fields; aborting.")
+        input("Press Enter to continue...")
+        return
+
+    # Validate user-provided values before passing them as command arguments.
+    # SSID: 1-32 printable chars, no control/newline/null bytes.
+    # Password: 8-63 chars (WPA/WPA2 typical), no control/newline/null bytes.
+    # Port: allowlist expected serial device formats.
+    ssid_ok = (
+        1 <= len(ssid) <= 32
+        and "\x00" not in ssid
+        and "\n" not in ssid
+        and "\r" not in ssid
+    )
+    password_ok = (
+        8 <= len(password) <= 63
+        and "\x00" not in password
+        and "\n" not in password
+        and "\r" not in password
+    )
+    port_ok = bool(re.fullmatch(r"(COM[0-9]{1,3}|/dev/(tty|cu)[A-Za-z0-9._-]+)", port))
+
+    if not ssid_ok:
+        print("[FLASH] Invalid SSID format; aborting.")
+        input("Press Enter to continue...")
+        return
+    if not password_ok:
+        print("[FLASH] Invalid Wi-Fi password format; aborting.")
+        input("Press Enter to continue...")
+        return
+    if not port_ok:
+        print("[FLASH] Invalid serial port format; aborting.")
+        input("Press Enter to continue...")
+        return
+
+    cmd = [
+        sys.executable,
+        str(script),
+        "--ssid",
+        ssid,
+        "--password",
+        password,
+        "--port",
+        port,
+    ]
+
+    print(
+        f"[FLASH] Executing beacon flasher "
+        f"(script={script.name}, ssid=<redacted>, password=<redacted>, port={port})"
+    )
+    try:
+        result = subprocess.run(cmd, check=True)
+        print(f"[FLASH] Completed with code {result.returncode}")
+    except subprocess.CalledProcessError as exc:
+        print(f"[FLASH] Failed (exit {exc.returncode})")
+    except Exception as exc:
+        print(f"[FLASH] Error: {exc}")
+    input("Press Enter to continue...")
+
+
 def install_stack(stack_slug: str, config: Dict[str, Any]) -> bool:
     """Install the requested stack and update configuration metadata."""
     if stack_slug not in STACK_METADATA:
@@ -422,6 +501,7 @@ def interactive_cli(config: Dict[str, Any]) -> None:
         print("#    [3] Install Front Truss Node Stack")
         print("#    [4] Show Status Report")
         print("#    [5] Launch GUI Mode")
+        print("#    [6] Flash Beacon (Xiao ESP32-C6)")
         print("#    [0] Exit")
         print(INDUSTRIAL_DIVIDER)
         choice = input("COMMAND> ").strip()
@@ -437,6 +517,8 @@ def interactive_cli(config: Dict[str, Any]) -> None:
             input("Press Enter to continue...")
         elif choice == "5":
             launch_gui()
+        elif choice == "6":
+            flash_beacon()
         elif choice == "0":
             print("Stand down. Returning to shell.")
             break

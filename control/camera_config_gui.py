@@ -10,6 +10,7 @@ import threading
 import time
 import subprocess
 import webbrowser
+import platform
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -24,7 +25,7 @@ import aiohttp
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
 try:
-    from launcher_gui import ensure_window_fits_content
+    from launcher_gui import ensure_window_fits_content, set_native_theme
 except Exception:
     def ensure_window_fits_content(
         window: tk.Toplevel | tk.Tk,
@@ -59,6 +60,23 @@ except Exception:
 
         window.geometry(geometry)
         window.minsize(int(width), int(height))
+    
+    def set_native_theme(style: ttk.Style) -> None:
+        """Set ttk theme to match the operating system."""
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            theme = "aqua"
+        elif system == "Windows":
+            theme = "vista"
+        else:
+            theme = "clam"
+        try:
+            style.theme_use(theme)
+        except tk.TclError:
+            try:
+                style.theme_use('default')
+            except:
+                pass
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -90,6 +108,11 @@ class CameraConfigGUI:
         self.root = tk.Tk()
         self.root.title("Multi-Camera Configuration")
         self.root.geometry("1400x900")
+        self.root.configure(bg="SystemButtonFace")
+        
+        # Configure ttk style for native theme
+        style = ttk.Style()
+        set_native_theme(style)
         
         # Configuration
         self.config_file = "../config/roof_array_config.json"

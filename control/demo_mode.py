@@ -54,6 +54,11 @@ class DemoVideoGenerator:
         self._stage_rect = self._calc_stage_rect()
         self._stage_background = self._build_stage_background()
         self._trails: Dict[int, List[Tuple[int, int]]] = {}
+        
+        # Animation state for smooth transitions
+        self.animation_phase = 0.0
+        self.animation_speed = 0.02
+        self.glow_intensity = 0.35
 
     def _compute_camera_variance(self) -> float:
         """Derive a deterministic offset per camera to avoid identical renders."""
@@ -135,6 +140,11 @@ class DemoVideoGenerator:
     
     def generate_frame(self) -> np.ndarray:
         """Generate a single demo frame"""
+        # Update animation phase for smooth transitions
+        self.animation_phase += self.animation_speed
+        if self.animation_phase > 2 * math.pi:
+            self.animation_phase -= 2 * math.pi
+        
         frame = self._stage_background.copy()
         self._draw_ambient_light(frame)
 
@@ -156,11 +166,13 @@ class DemoVideoGenerator:
             self._draw_trail(frame, {'history': history, 'color': color})  # type: ignore[arg-type]
             active_ids.add(subject_id)
 
-            # Soft glow base
+            # Soft glow base with animated intensity
             glow = np.zeros_like(frame)
+            # Smooth pulsing glow using sine wave
+            glow_factor = 0.3 + 0.15 * math.sin(self.animation_phase + subject_id * 0.5)
             cv2.circle(glow, center, radius + 12, tuple(int(c * 0.6) for c in color), -1)
             cv2.GaussianBlur(glow, (0, 0), sigmaX=max(radius * 0.6, 1.0), dst=glow)
-            cv2.addWeighted(frame, 1.0, glow, 0.35, 0, frame)
+            cv2.addWeighted(frame, 1.0, glow, glow_factor, 0, frame)
 
             cv2.circle(frame, center, radius, color, -1)
             cv2.circle(frame, center, max(2, int(radius * 0.6)), (255, 255, 255), -1)

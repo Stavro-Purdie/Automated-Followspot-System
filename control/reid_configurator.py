@@ -12,6 +12,7 @@ import threading
 import time
 import subprocess
 import webbrowser
+import platform
 from pathlib import Path
 from datetime import datetime
 import os
@@ -22,6 +23,25 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
+def set_native_theme(style: ttk.Style) -> None:
+    """Set ttk theme to match the operating system."""
+    system = platform.system()
+    if system == "Darwin":  # macOS
+        theme = "aqua"
+    elif system == "Windows":
+        theme = "vista"
+    else:
+        theme = "clam"
+    try:
+        style.theme_use(theme)
+    except tk.TclError:
+        try:
+            style.theme_use('default')
+        except:
+            pass
+
+
 class ReIDConfigurator:
     """All-in-one toolkit for managing the front ReID camera pipeline."""
     
@@ -30,6 +50,11 @@ class ReIDConfigurator:
         self.root.title("Front Array (ReID) Configurator - Automated Followspot System")
         self.root.geometry("1200x800")
         self.root.resizable(True, True)
+        self.root.configure(bg="SystemButtonFace")
+        
+        # Configure ttk style for native theme
+        style = ttk.Style()
+        set_native_theme(style)
         
         # Configuration file paths
         self.config_file = Path(__file__).parent.parent / "config" / "front_array_config.json"
@@ -270,10 +295,10 @@ class ReIDConfigurator:
         """Setup GUI styling"""
         style = ttk.Style()
         
-        # Configure colors and fonts
-        style.configure('Heading.TLabel', font=('Arial', 12, 'bold'))
-        style.configure('Title.TLabel', font=('Arial', 16, 'bold'))
-        style.configure('Status.TLabel', font=('Arial', 10))
+        # Configure fonts using system font
+        style.configure('Heading.TLabel', font=('System', 12, 'bold'))
+        style.configure('Title.TLabel', font=('System', 16, 'bold'))
+        style.configure('Status.TLabel', font=('System', 10))
     
     def create_widgets(self):
         """Create main GUI widgets"""
