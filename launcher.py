@@ -348,7 +348,13 @@ def flash_beacon() -> None:
         port,
     ]
 
-    print(f"[FLASH] Executing: {' '.join(cmd)}")
+    cmd_for_log = cmd.copy()
+    if "--password" in cmd_for_log:
+        pwd_idx = cmd_for_log.index("--password")
+        if pwd_idx + 1 < len(cmd_for_log):
+            cmd_for_log[pwd_idx + 1] = "******"
+
+    print(f"[FLASH] Executing: {' '.join(cmd_for_log)}")
     try:
         result = subprocess.run(cmd, check=True)
         print(f"[FLASH] Completed with code {result.returncode}")
