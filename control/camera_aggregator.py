@@ -1017,7 +1017,7 @@ def main():
     if (not os.path.exists(args.config) and "roof_array_config.json" in args.config):
         legacy = args.config.replace("roof_array_config.json", "camera_config.json")
         if os.path.exists(legacy):
-            logger.warning("Using legacy configuration file: %s", _sanitize_for_log(legacy))
+            logger.warning("Using legacy configuration file: %r", legacy)
             args.config = legacy
     
     if args.configure:
