@@ -1035,9 +1035,9 @@ class LauncherGUI:
         self.root.after(60000, self.periodic_checks)  # Check every minute
     
     def animate_spinners(self):
-        """Animate progress spinners for visual feedback during operations"""
-        self.spinner_index = (self.spinner_index + 1) % len(self.spinner_chars)
-        self.root.after(100, self.animate_spinners)
+        """Spinner animation disabled until it is wired to visible UI state."""
+        return
+
     def log_to_terminal(self, message):
         """Add message to terminal output"""
         timestamp = datetime.now().strftime("%H:%M:%S")
