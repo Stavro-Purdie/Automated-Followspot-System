@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -49,22 +50,31 @@ def ensure_cli() -> None:
     raise SystemExit("arduino-cli not found on PATH. Install from https://arduino.github.io/arduino-cli/latest/ and retry.")
 
 
+def validate_cli_value(value: str, label: str, pattern: str) -> str:
+    if not value or not re.fullmatch(pattern, value):
+        raise SystemExit(f"Invalid {label}: {value!r}")
+    return value
+
+
 def flash(args: argparse.Namespace) -> None:
     ensure_cli()
     if not CRED_TARGET.exists():
         raise SystemExit(f"wifi_credentials.h missing; expected at {CRED_TARGET}")
 
+    safe_fqbn = validate_cli_value(FQBN, "FQBN", r"[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+")
+    safe_port = validate_cli_value(args.port, "serial port", r"[A-Za-z0-9_./:-]+")
+
     build_dir = FW_DIR
-    compile_cmd = ["arduino-cli", "compile", "--fqbn", FQBN, str(build_dir)]
+    compile_cmd = ["arduino-cli", "compile", "--fqbn", safe_fqbn, str(build_dir)]
     run(compile_cmd)
 
     upload_cmd = [
         "arduino-cli",
         "upload",
         "--fqbn",
-        FQBN,
+        safe_fqbn,
         "-p",
-        args.port,
+        safe_port,
         str(build_dir),
     ]
     run(upload_cmd)
