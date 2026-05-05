@@ -82,8 +82,13 @@ def main() -> None:
     if not CRED_TEMPLATE.exists():
         raise SystemExit(f"Template missing: {CRED_TEMPLATE}")
 
-    write_credentials(args.ssid, args.password, args.name)
-    flash(args)
+    try:
+        write_credentials(args.ssid, args.password, args.name)
+        flash(args)
+    finally:
+        if CRED_TARGET.exists():
+            CRED_TARGET.unlink()
+            print(f"[cleanup] Removed {CRED_TARGET}")
 
 
 if __name__ == "__main__":
