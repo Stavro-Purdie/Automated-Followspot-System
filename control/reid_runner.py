@@ -11,6 +11,9 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 import sys
+import socket
+import ipaddress
+from urllib.parse import urlparse
 
 import numpy as np
 import asyncio
@@ -158,7 +161,7 @@ class ReIDRunner:
     def __init__(self, config_path: str = str(Path(__file__).parent.parent / "config" / "front_array_config.json")):
         self.config_path = config_path
         self.config = self._load_config()
-        self.camera_url = self.config["camera"]["front_camera"]["server_url"]
+        self.camera_url = self._validate_camera_url(self.config["camera"]["front_camera"]["server_url"])
         self.protocol = self.config["camera"]["front_camera"].get("protocol", "webrtc")
 
         # ReID processor uses dedicated config with identity gallery settings
@@ -183,6 +186,35 @@ class ReIDRunner:
         """Read the front array configuration file from disk."""
         with open(self.config_path, 'r') as f:
             return json.load(f)
+
+    def _validate_camera_url(self, raw_url: str) -> str:
+        """Validate camera URL to mitigate SSRF (full URL control)."""
+        parsed = urlparse(raw_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"Unsupported camera URL scheme: {parsed.scheme}")
+        if parsed.username or parsed.password:
+            raise ValueError("Camera URL must not include credentials")
+        if not parsed.hostname:
+            raise ValueError("Camera URL must include a hostname")
+
+        try:
+            resolved = socket.getaddrinfo(parsed.hostname, parsed.port or 80, type=socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            raise ValueError(f"Unable to resolve camera host: {parsed.hostname}") from e
+
+        for entry in resolved:
+            ip = ipaddress.ip_address(entry[4][0])
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip.is_unspecified
+            ):
+                raise ValueError(f"Camera host resolves to disallowed IP: {ip}")
+
+        return raw_url
 
     def start(self) -> bool:
         """Start input stream and models"""

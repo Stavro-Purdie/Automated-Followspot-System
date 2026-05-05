@@ -128,7 +128,7 @@ python node/server.py --profile front_truss --port 8000
 
 The DMX endpoint (`/dmx`) is wired but returns a placeholder response until RS485 output is ready.
 
-On headless deployments, launch the industrial CLI to provision any stack—including the front truss node—without a desktop session:
+On headless deployments, launch the  CLI to provision any stack—including the front truss node—without a desktop session:
 
 ```bash
 python launcher.py --cli
