@@ -32,6 +32,7 @@ def main():
                         help="Skip the connection dialog and use command line arguments")
     
     args = parser.parse_args()
+    args.config = _sanitize_for_log(args.config)
     
     # If no specific mode is requested and no-dialog is not set, show the connection dialog
     if not args.demo and not args.configure and not args.no_dialog:
@@ -53,7 +54,7 @@ def main():
                 args.demo = False
                 args.configure = False
             
-            args.config = result["config"]
+            args.config = _sanitize_for_log(result["config"])
             
         except ImportError as e:
             logger.warning("Could not import connection dialog: %s", _sanitize_for_log(e))

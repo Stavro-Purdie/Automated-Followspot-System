@@ -1011,6 +1011,7 @@ def main():
                         help="Start directly in demo mode")
     
     args = parser.parse_args()
+    args.config = _sanitize_for_log(args.config)
     
     # Legacy fallback if new file not present
     if (not os.path.exists(args.config) and "roof_array_config.json" in args.config):
