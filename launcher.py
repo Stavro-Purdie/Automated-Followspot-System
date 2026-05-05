@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 from copy import deepcopy
@@ -334,6 +335,37 @@ def flash_beacon() -> None:
 
     if not ssid or not password or not port:
         print("[FLASH] Missing required fields; aborting.")
+        input("Press Enter to continue...")
+        return
+
+    # Validate user-provided values before passing them as command arguments.
+    # SSID: 1-32 printable chars, no control/newline/null bytes.
+    # Password: 8-63 chars (WPA/WPA2 typical), no control/newline/null bytes.
+    # Port: allowlist expected serial device formats.
+    ssid_ok = (
+        1 <= len(ssid) <= 32
+        and "\x00" not in ssid
+        and "\n" not in ssid
+        and "\r" not in ssid
+    )
+    password_ok = (
+        8 <= len(password) <= 63
+        and "\x00" not in password
+        and "\n" not in password
+        and "\r" not in password
+    )
+    port_ok = bool(re.fullmatch(r"(COM[0-9]{1,3}|/dev/(tty|cu)[A-Za-z0-9._-]+)", port))
+
+    if not ssid_ok:
+        print("[FLASH] Invalid SSID format; aborting.")
+        input("Press Enter to continue...")
+        return
+    if not password_ok:
+        print("[FLASH] Invalid Wi-Fi password format; aborting.")
+        input("Press Enter to continue...")
+        return
+    if not port_ok:
+        print("[FLASH] Invalid serial port format; aborting.")
         input("Press Enter to continue...")
         return
 
