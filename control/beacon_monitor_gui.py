@@ -851,21 +851,35 @@ class BeaconMonitorGUI:
     
     def _monitoring_loop(self):
         """Background thread for monitoring beacons"""
+        next_poll_times: Dict[str, float] = {}
+
         while self.monitoring_active:
             try:
+                now = time.time()
+                next_due_time = now + max(0.2, float(self.poll_interval))
+
                 for beacon_id, config in self.beacons_config.items():
-                    status = self._poll_beacon(beacon_id, config)
-                    if status:
-                        self.beacon_status[beacon_id] = status
                     interval = config.get("poll_interval", self.poll_interval)
                     try:
-                        sleep_for = max(0.2, float(interval))
+                        poll_interval = max(0.2, float(interval))
                     except (TypeError, ValueError):
-                        sleep_for = self.poll_interval
-                    time.sleep(sleep_for)
-                
+                        poll_interval = max(0.2, float(self.poll_interval))
+
+                    due_time = next_poll_times.get(beacon_id, 0.0)
+                    if now >= due_time:
+                        status = self._poll_beacon(beacon_id, config)
+                        if status:
+                            self.beacon_status[beacon_id] = status
+                        due_time = now + poll_interval
+                        next_poll_times[beacon_id] = due_time
+
+                    next_due_time = min(next_due_time, due_time)
+
                 # Update UI
                 self.root.after(0, self._update_cards)
+
+                sleep_for = max(0.05, next_due_time - time.time())
+                time.sleep(sleep_for)
             except Exception as e:
                 logger.error(f"Monitoring loop error: {e}")
                 time.sleep(1)
