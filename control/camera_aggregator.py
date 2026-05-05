@@ -24,6 +24,11 @@ from dataclasses import dataclass
 import aiohttp
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
+def _sanitize_for_log(value: Any) -> str:
+    """Return a log-safe string by stripping CR/LF and other ASCII control chars."""
+    text = str(value)
+    return re.sub(r'[\x00-\x1f\x7f]+', ' ', text)
+
 try:
     from demo_stage_state import get_demo_stage_state
 except Exception:
@@ -109,7 +114,7 @@ class MultiCameraManager:
     def load_config(self):
         """Load configuration from JSON file"""
         if not os.path.exists(self.config_file):
-            logger.warning(f"Configuration file {self.config_file} not found. Using default configuration.")
+            logger.warning("Configuration file %s not found. Using default configuration.", _sanitize_for_log(self.config_file))
             return
             
         try:
@@ -130,7 +135,7 @@ class MultiCameraManager:
             self._apply_auto_layout()
             self._update_grid_dimensions()
         except Exception as exc:
-            logger.error("Failed to load configuration %s: %s", self.config_file, exc, exc_info=True)
+            logger.error("Failed to load configuration %s: %s", _sanitize_for_log(self.config_file), exc, exc_info=True)
 
     def init_demo_mode(self):
         """Initialize demo mode with simulated cameras"""
@@ -1006,7 +1011,7 @@ def main():
     if (not os.path.exists(args.config) and "roof_array_config.json" in args.config):
         legacy = args.config.replace("roof_array_config.json", "camera_config.json")
         if os.path.exists(legacy):
-            logger.warning("Using legacy configuration file: %s", legacy)
+            logger.warning("Using legacy configuration file: %s", _sanitize_for_log(legacy))
             args.config = legacy
     
     if args.configure:

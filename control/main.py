@@ -9,10 +9,15 @@ import sys
 import os
 import logging
 import argparse
+import re
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("main")
+
+def _sanitize_for_log(value) -> str:
+    """Return a log-safe string by stripping CR/LF and other ASCII control chars."""
+    return re.sub(r'[\x00-\x1f\x7f]+', ' ', str(value))
 
 def main():
     """Parse CLI flags, present the mode chooser, and start the requested tools."""
@@ -69,7 +74,7 @@ def main():
     
     # Check if config file exists
     if not os.path.exists(args.config) and not args.demo:
-        logger.error(f"Configuration file '{args.config}' not found.")
+        logger.error("Configuration file '%s' not found.", _sanitize_for_log(args.config))
         logger.info("Run with --configure to create configuration or --demo for demo mode")
         return
     
