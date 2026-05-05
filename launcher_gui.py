@@ -1915,23 +1915,44 @@ class BeaconFlashWindow:
             messagebox.showerror("Error", "Beacon flasher script not found.", parent=self.window)
             return
 
+        launcher_code = (
+            "import os, runpy, sys;"
+            "script=sys.argv[1];"
+            "ssid=sys.argv[2];"
+            "port=sys.argv[3];"
+            "name=sys.argv[4];"
+            "sys.argv=[script,'--ssid',ssid,'--password',os.environ['BEACON_WIFI_PASSWORD'],'--port',port,'--name',name];"
+            "runpy.run_path(script, run_name='__main__')"
+        )
+
         cmd = [
+            sys.executable,
+            "-c",
+            launcher_code,
+            str(script_path),
+            ssid,
+            port,
+            name,
+        ]
+
+        env = os.environ.copy()
+        env["ARDUINO_FQBN"] = fqbn
+        env["BEACON_WIFI_PASSWORD"] = password
+
+        masked_cmd = [
             sys.executable,
             str(script_path),
             "--ssid",
             ssid,
             "--password",
-            password,
+            "********",
             "--port",
             port,
             "--name",
             name,
         ]
 
-        env = os.environ.copy()
-        env["ARDUINO_FQBN"] = fqbn
-
-        self._append_log(f"Running: {' '.join(cmd)}")
+        self._append_log(f"Running: {' '.join(masked_cmd)}")
         self._set_busy(True, "Flashing...")
 
         def worker():
