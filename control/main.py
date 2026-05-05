@@ -56,10 +56,10 @@ def main():
             args.config = result["config"]
             
         except ImportError as e:
-            logger.warning(f"Could not import connection dialog: {e}")
+            logger.warning("Could not import connection dialog: %s", _sanitize_for_log(e))
             logger.info("Continuing with command line arguments...")
         except Exception as e:
-            logger.warning(f"Error showing connection dialog: {e}")
+            logger.warning("Error showing connection dialog: %s", _sanitize_for_log(e))
             logger.info("Continuing with command line arguments...")
     
     # Launch configuration GUI if requested
@@ -68,7 +68,7 @@ def main():
             from camera_config_gui import main as config_main
             config_main()
         except ImportError as e:
-            logger.error(f"Could not import configuration GUI: {e}")
+            logger.error("Could not import configuration GUI: %s", _sanitize_for_log(e))
             logger.info("Please ensure all dependencies are installed")
         return
     
@@ -99,10 +99,10 @@ def main():
         gui.run()
         
     except ImportError as e:
-        logger.error(f"Could not import required modules: {e}")
+        logger.error("Could not import required modules: %s", _sanitize_for_log(e))
         logger.info("Please ensure all dependencies are installed with: pip install -r requirements.txt")
     except Exception as e:
-        logger.error(f"Error starting application: {e}")
+        logger.error("Error starting application: %s", _sanitize_for_log(e))
         sys.exit(1)
 
 if __name__ == "__main__":

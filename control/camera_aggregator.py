@@ -135,7 +135,12 @@ class MultiCameraManager:
             self._apply_auto_layout()
             self._update_grid_dimensions()
         except Exception as exc:
-            logger.error("Failed to load configuration %s: %s", _sanitize_for_log(self.config_file), exc, exc_info=True)
+            logger.error(
+                "Failed to load configuration %s: %s",
+                _sanitize_for_log(self.config_file),
+                _sanitize_for_log(exc),
+                exc_info=True
+            )
 
     def init_demo_mode(self):
         """Initialize demo mode with simulated cameras"""
@@ -991,7 +996,7 @@ async def cleanup_connections(manager):
         try:
             await pc.close()
         except Exception as e:
-            logger.debug(f"Error closing connection: {e}")
+            logger.debug("Error closing connection: %s", _sanitize_for_log(e))
     manager.camera_connections.clear()
 
 def main():
