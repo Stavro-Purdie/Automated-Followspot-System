@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Beacon Configuration & Monitoring Tool
-Network-accessible interface for configuring and monitoring IR beacon hardware.
-Allows real-time control of battery monitoring, fan speed, voltage/amperage tracking,
-and LED duty cycle settings.
+Beacon Configuration GUI.
 """
 
 import tkinter as tk

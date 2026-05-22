@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Graphical Beacon Monitor - Real-time Dashboard
-Displays multiple beacons with visual status indicators, battery levels, 
-fan speeds, temperatures, and LED states. Designed for quick glance monitoring
-of entire beacon array during live operation.
+Beacon Monitor GUI.
 """
 
 import tkinter as tk

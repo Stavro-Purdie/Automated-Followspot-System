@@ -15,7 +15,6 @@ logger = logging.getLogger("spotlight_controller")
 
 
 class SpotlightController:
-    """Lightweight controller that turns XYZ targets into pan/tilt angles."""
 
     def __init__(self, config_path: str | Path = Path("config/spotlight_config.json")):
         self.config_path = Path(config_path)

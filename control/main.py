@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Decides whether we boot into live mode, spin up the camera configurator, or
+Decides whether we enter into live mode, camera configurator, or
 launch the demos. 
 """
 

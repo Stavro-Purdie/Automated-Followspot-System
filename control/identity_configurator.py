@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Curates the performer roster—with photos, metadata, and quick edits.
+Manages performer identities, including photos and meta data, for the ReID system.
 """
 
 from __future__ import annotations

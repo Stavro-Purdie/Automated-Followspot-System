@@ -1907,7 +1907,7 @@ class BeaconFlashWindow:
                 port = ports[0]
                 self.port_var.set(port)
             else:
-                messagebox.showwarning("No Port", "No USB serial device found. Plug in the Xiao and refresh.", parent=self.window)
+                messagebox.showwarning("No Port", "No USB serial device found. Plug in the Controller and refresh.", parent=self.window)
                 return
 
         script_path = Path(__file__).parent / "tools" / "beacon_flash.py"
