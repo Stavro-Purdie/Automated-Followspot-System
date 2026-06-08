@@ -7,7 +7,7 @@ The Automated Followspot System includes a simulated telemetry dashboard for qui
 Launch it from the GUI launcher through `Tools -> Debug Telemetry Dashboard`, or run it directly:
 
 ```bash
-python control/debug_telemetry_dashboard.py
+python3 control/debug_telemetry_dashboard.py
 ```
 
 What it shows:

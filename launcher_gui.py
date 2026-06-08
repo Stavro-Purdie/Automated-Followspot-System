@@ -3439,10 +3439,11 @@ class StatusWindow:
     
     def install_missing_dependencies(self):
         """Install missing dependencies"""
+        python_cmd = os.path.basename(sys.executable) if sys.executable else "python3"
         messagebox.showinfo("Install Dependencies", 
                            "This would install missing dependencies.\n\n" +
                            "For now, please use:\n" +
-                           "python launcher.py --install [stack_type]")
+                           f"{python_cmd} launcher.py --install [stack_type]")
     
     def launch_stack(self, stack_type):
         """Launch a specific stack"""

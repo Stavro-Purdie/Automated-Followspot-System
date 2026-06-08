@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import argparse
 import time
 import os
+import sys
 import math
 from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 from dataclasses import dataclass
@@ -1015,6 +1016,9 @@ def main():
     
     args = parser.parse_args()
     args.config = _sanitize_for_log(args.config)
+    python_cmd = sys.executable or "python3"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_script = os.path.join(script_dir, "camera_config_gui.py")
     
     # Legacy fallback if new file not present
     if (not os.path.exists(args.config) and "roof_array_config.json" in args.config):
@@ -1027,18 +1031,15 @@ def main():
         # Launch configuration GUI
         try:
             import subprocess
-            import sys
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            config_script = os.path.join(script_dir, "camera_config_gui.py")
-            subprocess.run([sys.executable, config_script])
+            subprocess.run([python_cmd, config_script])
         except Exception as e:
             logger.error(f"Error launching configuration GUI: {e}")
-            logger.info("Please run 'python camera_config_gui.py' manually to configure cameras.")
+            logger.info(f"Please run '{python_cmd} {config_script}' manually to configure cameras.")
         return
     
     if not os.path.exists(args.config):
         logger.error(f"Configuration file '{args.config}' not found.")
-        logger.info("Run with --configure flag to create configuration, or 'python camera_config_gui.py'")
+        logger.info(f"Run with --configure flag to create configuration, or '{python_cmd} {config_script}'")
         return
     
     logger.info(f"Starting multi-camera client with configuration: {args.config}")
