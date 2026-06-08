@@ -34,7 +34,7 @@ Enter these values in the **Front Node Settings** tab and hit **Save Configurati
 
 ## 4. Confirm the Pose with Actors (or a Stand-In)
 
-1. Launch the fused loop (`python control/fused_main.py`) or start the show profile from the launcher.
+1. Launch the fused loop (`python3 control/fused_main.py`) or start the show profile from the launcher.
 2. Walk a stand-in to the stage origin. The fused position should hover near $(0, 0)$.
 3. Send them upstage ~1 m; the reported $Y$ should climb by ≈1.0.
 4. Have a tall and short person compare Z readouts. They don’t need to be exact heights, just trending upward with taller subjects.

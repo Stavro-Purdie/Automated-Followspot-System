@@ -7,7 +7,7 @@ Prereqs:
 - USB cable attached to Xiao ESP32-C6
 
 Example:
-  python tools/beacon_flash.py --ssid MyNet --password Secret123 \
+  python3 tools/beacon_flash.py --ssid MyNet --password Secret123 \
       --port /dev/tty.usbmodemXYZ
 """
 from __future__ import annotations

@@ -19,7 +19,7 @@ A comprehensive multi-camera IR beacon tracking system with automated followspot
 ### 1. Launch the System (GUI by Default)
 
 ```bash
-python launcher.py
+python3 launcher.py
 # OR
 ./followspot
 ```
@@ -35,21 +35,21 @@ The system launches with a graphical interface by default, providing:
 
 For control stack (camera management and tracking):
 ```bash
-python setup.py  # Choose option 1
+python3 setup.py  # Choose option 1
 # OR
-python launcher.py --install-deps control
+python3 launcher.py --install-deps control
 ```
 
 For node stack (camera server):
 ```bash
-python setup.py  # Choose option 2
+python3 setup.py  # Choose option 2
 # OR
-python launcher.py --install-deps node
+python3 launcher.py --install-deps node
 ```
 
 For the front truss node (IMX477/RS485 build):
 ```bash
-python launcher.py --install-deps front-node
+python3 launcher.py --install-deps front-node
 ```
 
 During either node installation you'll be prompted for static IP, hostname, camera device, and port information. The launcher captures those values, writes network setup notes, and provisions a user-level systemd service so the node boots automatically.
@@ -58,34 +58,34 @@ During either node installation you'll be prompted for static IP, hostname, came
 
 ```bash
 # Launch GUI interface (default behavior)
-python launcher.py
+python3 launcher.py
 ./followspot
 
 # Use industrial command-line launcher
-python launcher.py --cli   # or -cli
+python3 launcher.py --cli   # or -cli
 ./followspot --cli
 
 # Launch camera configuration
-python launcher.py --configure
+python3 launcher.py --configure
 ./followspot --configure
 
 # Run in demo mode (no hardware required)
-python launcher.py --demo
+python3 launcher.py --demo
 ./followspot --demo
 
 # Run live mode
-python launcher.py --run
+python3 launcher.py --run
 ./followspot --run
 
 # Check system status
-python launcher.py --status
+python3 launcher.py --status
 ./followspot --status
 
 # Install the front truss node stack headlessly
-python launcher.py --install-deps front-node
+python3 launcher.py --install-deps front-node
 
 # Start node server
-python launcher.py --node
+python3 launcher.py --node
 ./followspot --node
 ```
 
@@ -123,7 +123,7 @@ The node stack runs on camera devices (typically Raspberry Pi) to stream video:
 Run the front truss node on a Raspberry Pi with the HQ (IMX477) camera and RS485 HAT using the dedicated profile:
 
 ```bash
-python node/server.py --profile front_truss --port 8000
+python3 node/server.py --profile front_truss --port 8000
 ```
 
 The DMX endpoint (`/dmx`) is wired but returns a placeholder response until RS485 output is ready.
@@ -131,10 +131,10 @@ The DMX endpoint (`/dmx`) is wired but returns a placeholder response until RS48
 On headless deployments, launch the  CLI to provision any stack—including the front truss node—without a desktop session:
 
 ```bash
-python launcher.py --cli
+python3 launcher.py --cli
 ```
 
-Follow the on-screen menu or run `python launcher.py --install-deps front-node` directly for unattended scripts.
+Follow the on-screen menu or run `python3 launcher.py --install-deps front-node` directly for unattended scripts.
 
 ### Launcher System
 Unified management interface for both stacks:
@@ -173,7 +173,7 @@ When you install the Node Stack, the launcher provides these options:
 Use the configuration GUI to set up cameras:
 
 ```bash
-python launcher.py --configure
+python3 launcher.py --configure
 ```
 
 Configuration includes:
@@ -191,7 +191,7 @@ For a focused guide, see [docs/debugging_information.md](docs/debugging_informat
 Open it from the GUI launcher via `Tools -> Debug Telemetry Dashboard`, or run it directly with:
 
 ```bash
-python control/debug_telemetry_dashboard.py
+python3 control/debug_telemetry_dashboard.py
 ```
 
 The dashboard shows:
@@ -231,7 +231,7 @@ Record the following before you open the configurator:
 
 1. Launch the front camera configurator:
   ```bash
-  python launcher.py --configure
+  python3 launcher.py --configure
   ```
 2. Open the **Stage Geometry** tab.
 3. Fill in the stage width, depth, and height in meters.
@@ -270,7 +270,7 @@ This approach is suitable when you only need approximate Z values or you have hi
 
 ### 6. Verify Depth in the Fusion View
 
-1. Launch the fused control loop (`python control/fused_main.py`) or start the system via the launcher.
+1. Launch the fused control loop (`python3 control/fused_main.py`) or start the system via the launcher.
 2. Watch the fused person coordinates. A performer centered at stage origin should report `X ≈ 0`, `Y ≈ 0`. When they walk upstage, the Y value should increase. A tall performer and a short performer should produce sensible Z differences (around their actual height).
 3. If the Z value is mirrored or sign-flipped, revisit the rotation matrix—swap axes or adjust signs until upstage/downstage behave correctly.
 
@@ -334,7 +334,7 @@ Perfect for testing and development without hardware:
 - No network or hardware requirements
 
 ```bash
-python launcher.py --demo
+python3 launcher.py --demo
 ```
 
 ### Live Mode
@@ -345,7 +345,7 @@ Connect to real cameras for production use:
 - Interactive controls and overlays
 
 ```bash
-python launcher.py --run
+python3 launcher.py --run
 ```
 
 ### Node Server Mode
@@ -356,7 +356,7 @@ Run camera server on Pi or other devices:
 - Supports auto-start via cron
 
 ```bash
-python launcher.py --node
+python3 launcher.py --node
 ```
 
 ## Controls and Keyboard Shortcuts
@@ -443,18 +443,18 @@ When Core ML is active, Torch-based ReID inference can be skipped entirely (`cor
 
 1. **Dependencies Missing**
    ```bash
-   python launcher.py --check-deps all
-   python setup.py  # Reinstall dependencies
+   python3 launcher.py --check-deps all
+   python3 setup.py  # Reinstall dependencies
    ```
 
 2. **Camera Connection Failed**
    - Check network connectivity
    - Verify camera server URLs
-   - Try demo mode first: `python launcher.py --demo`
+   - Try demo mode first: `python3 launcher.py --demo`
 
 3. **GUI Won't Start**
    ```bash
-   python launcher.py  # Use CLI interface
+   python3 launcher.py  # Use CLI interface
    ```
 
 4. **No Video Display**
@@ -466,9 +466,9 @@ When Core ML is active, Torch-based ReID inference can be skipped entirely (`cor
 Use built-in diagnostics to check system health:
 
 ```bash
-python launcher.py --status          # Overall system status
-python launcher.py --check           # Quick dependency check
-python launcher.py --gui             # GUI diagnostics tools
+python3 launcher.py --status          # Overall system status
+python3 launcher.py --check           # Quick dependency check
+python3 launcher.py --gui             # GUI diagnostics tools
 ```
 
 ### Log Files
