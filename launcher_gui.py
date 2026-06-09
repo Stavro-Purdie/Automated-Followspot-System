@@ -7,6 +7,7 @@ control suite, logs, into one semi-approachable window.
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
+from tkinter import font as tkfont
 import json
 import os
 import sys
@@ -88,6 +89,24 @@ def set_native_theme(style: ttk.Style) -> None:
             style.theme_use('default')
         except:
             pass
+
+    try:
+        default_font = tkfont.nametofont("TkDefaultFont").copy()
+        base_size = max(int(default_font.cget("size")), 10)
+        body_font = (default_font.cget("family"), base_size)
+        heading_font = (default_font.cget("family"), base_size + 1, "bold")
+
+        style.configure(".", font=body_font)
+        style.configure("TButton", padding=(10, 6))
+        style.configure("TEntry", padding=(6, 4))
+        style.configure("TCombobox", padding=(6, 4))
+        style.configure("TLabelframe", padding=(10, 8))
+        style.configure("TLabelframe.Label", font=heading_font)
+        style.configure("Treeview", rowheight=26)
+        style.configure("Treeview.Heading", font=heading_font)
+        style.configure("TNotebook.Tab", padding=(12, 6))
+    except tk.TclError:
+        pass
 
 
 def get_system_appearance() -> str:
