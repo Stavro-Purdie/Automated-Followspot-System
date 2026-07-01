@@ -499,6 +499,16 @@ def launch_gui() -> None:
     gui.root.mainloop()
 
 
+def launch_demo_mode() -> None:
+    """Launch the control stack in demo/offline mode."""
+    demo_script = PROJECT_ROOT / "control" / "main.py"
+    if not demo_script.exists():
+        print(f"[DEMO] Demo entrypoint not found: {demo_script}")
+        return
+
+    subprocess.run([sys.executable, str(demo_script), "--demo"], check=False)
+
+
 def clear_screen() -> None:
     command = "cls" if os.name == "nt" else "clear"
     try:
@@ -568,6 +578,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Show installation status summary and exit",
     )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Launch the control stack in demo/offline mode",
+    )
     return parser.parse_args(argv)
 
 
@@ -582,6 +597,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.status:
         show_status(config)
+        return 0
+
+    if args.demo:
+        launch_demo_mode()
         return 0
 
     if args.gui and args.cli:

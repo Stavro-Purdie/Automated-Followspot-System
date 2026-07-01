@@ -249,6 +249,12 @@ class VideoDisplayGUI:
         self.setup_menu()
         self.setup_ui()
         self.setup_bindings()
+
+    def _ui_is_alive(self) -> bool:
+        try:
+            return bool(self.root.winfo_exists())
+        except Exception:
+            return False
         
     def setup_menu(self):
         """Create a friendly menu for hopping between tools and toggling overlays."""
@@ -348,6 +354,42 @@ class VideoDisplayGUI:
             subprocess.Popen([sys.executable, str(launcher_path)])
         except Exception as exc:
             messagebox.showerror("Launcher Error", f"Failed to open launcher:\n{exc}")
+
+    def setup_header_bar(self, parent):
+        """Create the top banner with app title and mode summary."""
+        header_frame = tk.Frame(parent, bg="#111111", height=58)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, 10))
+        header_frame.grid_propagate(False)
+
+        title_frame = tk.Frame(header_frame, bg="#111111")
+        title_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=12, pady=8)
+
+        ttk.Label(
+            title_frame,
+            text="MULTI-CAMERA IR BEACON TRACKER",
+            font=("Arial", 15, "bold"),
+        ).pack(anchor=tk.W)
+        ttk.Label(
+            title_frame,
+            text="Demo and live camera feeds with fused followspot overlays",
+        ).pack(anchor=tk.W, pady=(2, 0))
+
+        status_frame = tk.Frame(header_frame, bg="#111111")
+        status_frame.pack(side=tk.RIGHT, padx=12, pady=8)
+
+        ttk.Label(
+            status_frame,
+            textvariable=self.fps_var,
+            font=("Arial", 10, "bold"),
+        ).pack(anchor=tk.E)
+        ttk.Label(
+            status_frame,
+            textvariable=self.beacon_count_var,
+        ).pack(anchor=tk.E)
+        ttk.Label(
+            status_frame,
+            textvariable=self.front_status_var,
+        ).pack(anchor=tk.E)
 
     def show_connection_status(self) -> None:
         """Open the connection status window to inspect camera reachability."""
@@ -752,7 +794,8 @@ class VideoDisplayGUI:
                     stop_fn()
         except Exception:
             pass
-        self.status_var.set("Display stopped")
+        if self._ui_is_alive():
+            self.status_var.set("Display stopped")
         logger.info("Video display stopped")
         
     def display_loop(self):
@@ -762,6 +805,9 @@ class VideoDisplayGUI:
         
         while self.running:
             try:
+                if not self._ui_is_alive():
+                    break
+
                 # Get composite frame from camera manager
                 composite_frame = self.camera_manager.create_composite_frame()
                 
@@ -1020,6 +1066,9 @@ class VideoDisplayGUI:
     def display_frame(self, frame: np.ndarray):
         """Display frame in the GUI with smooth fade transitions"""
         try:
+            if not self._ui_is_alive() or self.video_label is None:
+                return
+
             # Convert BGR to RGB
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
@@ -1059,7 +1108,7 @@ class VideoDisplayGUI:
     def display_front_frame(self, frame: np.ndarray):
         """Display front camera overlay in the second panel"""
         try:
-            if self.front_video_label is None:
+            if not self._ui_is_alive() or self.front_video_label is None:
                 return
             self.front_last_seen = time.time()
             self.front_missing_since = None
@@ -1080,7 +1129,7 @@ class VideoDisplayGUI:
 
     def display_front_placeholder(self):
         """Display animated front placeholder with smooth transitions"""
-        if self.front_video_label is None:
+        if not self._ui_is_alive() or self.front_video_label is None:
             return
 
         now = time.time()
@@ -1092,8 +1141,11 @@ class VideoDisplayGUI:
         is_connecting = (now - missing_since) < timeout
         message = "Front ReID\nCONNECTING" if is_connecting else "Front ReID\nOFFLINE"
 
-        measured_width = self.front_video_label.winfo_width()
-        measured_height = self.front_video_label.winfo_height()
+        try:
+            measured_width = self.front_video_label.winfo_width()
+            measured_height = self.front_video_label.winfo_height()
+        except Exception:
+            return
         if measured_width <= 1 or measured_height <= 1:
             width, height = 640, 300
         else:

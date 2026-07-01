@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import urllib.error
 import urllib.request
+import urllib.parse
 
 import numpy as np
 
@@ -41,7 +42,12 @@ class SpotlightController:
             or self.dmx_config.get("transport_url")
             or "http://127.0.0.1:8080/dmx"
         )
+        self.transport_status_url = str(
+            self.dmx_config.get("status_url")
+            or self._derive_status_url(self.transport_url)
+        )
         self.transport_timeout = float(self.dmx_config.get("timeout_s", 2.0))
+        self._bridge_health_cache: Optional[Dict] = None
 
         self.last_pan: Optional[float] = None
         self.last_tilt: Optional[float] = None
@@ -94,6 +100,17 @@ class SpotlightController:
         with path.open("r", encoding="utf-8") as fh:
             return json.load(fh)
 
+    @staticmethod
+    def _derive_status_url(transport_url: str) -> str:
+        parsed = urllib.parse.urlparse(transport_url)
+        if parsed.path.endswith("/dmx"):
+            path = parsed.path[:-4] + "/dmx/status"
+        elif parsed.path.endswith("dmx"):
+            path = parsed.path + "/status"
+        else:
+            path = "/dmx/status"
+        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+
     def _compute_command(self, target_position: np.ndarray) -> Dict[str, float]:
         rel = target_position - self.fixture_position
         horizontal_distance = math.hypot(rel[0], rel[1])
@@ -130,17 +147,42 @@ class SpotlightController:
             or abs(command["tilt_deg"] - self.last_command["tilt_deg"]) > 0.1
         )
 
+    def _bridge_is_ready(self) -> bool:
+        if self.transport_mode == "stub":
+            return True
+
+        request = urllib.request.Request(
+            self.transport_status_url,
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.transport_timeout) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+            self._bridge_health_cache = payload
+            ready = bool(payload.get("initialized")) or payload.get("transport") in {"rs485_serial", "http_bridge"}
+            if not ready:
+                logger.warning("Lighting bridge not ready: %s", payload)
+            return ready
+        except Exception as exc:
+            logger.warning("Lighting bridge health check failed: %s", exc)
+            return False
+
     def _send_command(self, command: Dict) -> None:
         """Send the lighting command to the configured node bridge."""
-        payload = {
-            "type": "lighting_command",
-            "transport": self.transport_mode,
+        lighting_command = {
             "pan_deg": command["pan_deg"],
             "tilt_deg": command["tilt_deg"],
             "brightness_pct": float(self.dmx_config.get("brightness_pct", 100.0)),
             "source": "spotlight_controller",
             "target_id": command.get("target_id"),
+        }
+        payload = {
+            "protocol": "followspot-lighting",
+            "version": 1,
+            "transport": self.transport_mode,
             "timestamp": command.get("timestamp"),
+            "command": lighting_command,
         }
 
         if self.transport_mode == "stub":
@@ -150,6 +192,10 @@ class SpotlightController:
                 command["tilt_deg"],
                 command.get("target_id"),
             )
+            return
+
+        if not self._bridge_is_ready():
+            logger.error("Skipping lighting command because the bridge is not healthy")
             return
 
         request = urllib.request.Request(

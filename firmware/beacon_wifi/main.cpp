@@ -55,6 +55,19 @@ String wifiPass = WIFI_PASS_DEFAULT;
 String beaconName = BEACON_NAME_DEFAULT;
 WebServer server(80);
 bool wifiReady = false;
+String lastTelemetryBody = "{}";
+
+struct TelemetrySnapshot {
+  float batteryVoltage;
+  int batteryPercent;
+  float wifiRssiDbm;
+  String wifiSsid;
+  uint32_t uptimeSeconds;
+  uint8_t ledBrightnessPct;
+  bool ledEnabled;
+  float currentAmps;
+  float temperatureC;
+};
 
 /* ---------- BUTTON ---------- */
 bool btnPrev = HIGH;        // previous physical state
@@ -117,27 +130,77 @@ String safeName(const String &src) {
   return out;
 }
 
-String buildStatusJson() {
-  float v = 0.0f;
-  int pct = 0;
-  {
-    uint16_t raw = analogRead(PIN_VBAT);
-    v = (raw / 4095.0f) * 3.3f * 2.0f;
-    pct = constrain(map((int)(v * 1000), (int)(VBAT_MIN * 1000), (int)(VBAT_MAX * 1000), 0, 100), 0, 100);
+String escapeJson(const String &src) {
+  String out;
+  for (size_t i = 0; i < src.length(); i++) {
+    char c = src[i];
+    switch (c) {
+      case '\\': out += "\\\\"; break;
+      case '"': out += "\\\""; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default: out += c; break;
+    }
   }
+  return out;
+}
 
+TelemetrySnapshot collectTelemetry() {
+  uint16_t raw = analogRead(PIN_VBAT);
+  float voltage = (raw / 4095.0f) * 3.3f * 2.0f;
+  int pct = constrain(map((int)(voltage * 1000), (int)(VBAT_MIN * 1000), (int)(VBAT_MAX * 1000), 0, 100), 0, 100);
+  float rssi = WiFi.isConnected() ? WiFi.RSSI() : -127.0f;
+  uint8_t brightnessPct = static_cast<uint8_t>(map(lvlIdx, 0, 5, 0, 100));
+
+  TelemetrySnapshot telemetry = {
+    voltage,
+    pct,
+    rssi,
+    WiFi.isConnected() ? WiFi.SSID() : wifiSsid,
+    static_cast<uint32_t>(millis() / 1000),
+    brightnessPct,
+    ledEnable,
+    0.0f,
+    0.0f,
+  };
+  return telemetry;
+}
+
+String buildStatusJson() {
+  TelemetrySnapshot telemetry = collectTelemetry();
   float f = BASE_FREQ_HZ + beaconID * FREQ_STEP_HZ;
   String safe = safeName(beaconName);
   String json = "{";
   json += "\"id\":" + String(beaconID) + ",";
   json += "\"name\":\"" + safe + "\",";
-  json += "\"brightness_pct\":" + String(map(lvlIdx, 0, 5, 0, 100)) + ",";
-  json += "\"led_enabled\":" + String(ledEnable ? "true" : "false") + ",";
-  json += "\"battery_v\":" + String(v, 3) + ",";
-  json += "\"battery_pct\":" + String(pct) + ",";
+  json += "\"brightness_pct\":" + String(telemetry.ledBrightnessPct) + ",";
+  json += "\"led_enabled\":" + String(telemetry.ledEnabled ? "true" : "false") + ",";
+  json += "\"battery_v\":" + String(telemetry.batteryVoltage, 3) + ",";
+  json += "\"battery_pct\":" + String(telemetry.batteryPercent) + ",";
   json += "\"freq_hz\":" + String(f, 1) + ",";
-  json += "\"uptime_s\":" + String(millis() / 1000) + ",";
-  json += "\"wifi_rssi\":" + String(WiFi.isConnected() ? WiFi.RSSI() : -127);
+  json += "\"uptime_s\":" + String(telemetry.uptimeSeconds) + ",";
+  json += "\"wifi_rssi\":" + String(telemetry.wifiRssiDbm, 1) + ",";
+  json += "\"wifi_rssi_dbm\":" + String(telemetry.wifiRssiDbm, 1) + ",";
+  json += "\"wifi_ssid\":\"" + safeName(telemetry.wifiSsid) + "\",";
+  json += "\"current_a\":" + String(telemetry.currentAmps, 3) + ",";
+  json += "\"temp_c\":" + String(telemetry.temperatureC, 2) + ",";
+  json += "\"fan_rpm\":0,";
+  json += "\"last_telemetry\":\"" + escapeJson(lastTelemetryBody) + "\"";
+  json += ",\"telemetry\":{";
+  json += "\"id\":" + String(beaconID) + ",";
+  json += "\"name\":\"" + safe + "\",";
+  json += "\"battery_v\":" + String(telemetry.batteryVoltage, 3) + ",";
+  json += "\"battery_pct\":" + String(telemetry.batteryPercent) + ",";
+  json += "\"current_a\":" + String(telemetry.currentAmps, 3) + ",";
+  json += "\"fan_rpm\":0,";
+  json += "\"brightness_pct\":" + String(telemetry.ledBrightnessPct) + ",";
+  json += "\"temp_c\":" + String(telemetry.temperatureC, 2) + ",";
+  json += "\"uptime_s\":" + String(telemetry.uptimeSeconds) + ",";
+  json += "\"wifi_rssi_dbm\":" + String(telemetry.wifiRssiDbm, 1) + ",";
+  json += "\"wifi_ssid\":\"" + safeName(telemetry.wifiSsid) + "\",";
+  json += "\"led_enabled\":" + String(telemetry.ledEnabled ? "true" : "false");
+  json += "}";
   json += "}";
   return json;
 }
@@ -192,6 +255,15 @@ void handleWifi() {
   ESP.restart();
 }
 
+void handleTelemetry() {
+  String body = server.hasArg("plain") ? server.arg("plain") : String();
+  if (body.length() == 0) {
+    body = "{}";
+  }
+  lastTelemetryBody = body;
+  sendJson(String("{\"ok\":true,\"stored_bytes\":") + String(body.length()) + "}");
+}
+
 void handleOptions() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -231,10 +303,12 @@ void setup() {
   server.on("/api/config", HTTP_GET, handleConfig);
   server.on("/api/config", HTTP_POST, handleConfig);
   server.on("/api/wifi", HTTP_POST, handleWifi);
+  server.on("/api/telemetry", HTTP_POST, handleTelemetry);
   server.onNotFound(handleStatus);
   server.on("/api/status", HTTP_OPTIONS, handleOptions);
   server.on("/api/config", HTTP_OPTIONS, handleOptions);
   server.on("/api/wifi", HTTP_OPTIONS, handleOptions);
+  server.on("/api/telemetry", HTTP_OPTIONS, handleOptions);
   server.begin();
 }
 

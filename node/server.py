@@ -92,6 +92,7 @@ class DMXController:
         self.baudrate = int(baudrate)
         self._serial_handle = None
         self.last_command: Dict[str, Any] | None = None
+        self.last_frame: Dict[str, Any] | None = None
 
     def _baud_constant(self) -> int:
         return getattr(termios, f"B{self.baudrate}", termios.B115200)
@@ -117,42 +118,54 @@ class DMXController:
         logger.info("RS485 lighting transport opened on %s @ %s baud", self.serial_port, self.baudrate)
         return handle
 
-    def _serialize_command(self, payload: Dict[str, Any]) -> bytes:
-        frame = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-        return f"{frame}\n".encode("utf-8")
+    def _normalize_frame(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        command = payload.get("command") if isinstance(payload.get("command"), dict) else payload
+        command = command or {}
+        frame = {
+            "protocol": str(payload.get("protocol", "followspot-lighting")),
+            "version": int(payload.get("version", 1)),
+            "transport": str(payload.get("transport", "rs485_serial")),
+            "timestamp": float(payload.get("timestamp", time.time())),
+            "command": {
+                "pan_deg": float(command.get("pan_deg", 0.0)),
+                "tilt_deg": float(command.get("tilt_deg", 0.0)),
+                "brightness_pct": float(command.get("brightness_pct", 100.0)),
+                "source": str(command.get("source", payload.get("source", "control"))),
+                "target_id": command.get("target_id"),
+            },
+        }
+        return frame
+
+    def _serialize_frame(self, frame: Dict[str, Any]) -> bytes:
+        encoded = json.dumps(frame, separators=(",", ":"), sort_keys=True)
+        return f"{encoded}\n".encode("utf-8")
 
     def send_command(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        command = {
-            "type": payload.get("type", "lighting_command"),
-            "pan_deg": float(payload.get("pan_deg", 0.0)),
-            "tilt_deg": float(payload.get("tilt_deg", 0.0)),
-            "brightness_pct": float(payload.get("brightness_pct", 100.0)),
-            "source": payload.get("source", "control"),
-            "timestamp": payload.get("timestamp", time.time()),
-        }
-
-        transport_mode = str(payload.get("transport", "rs485_serial"))
+        frame = self._normalize_frame(payload)
+        command = frame["command"]
+        transport_mode = str(frame.get("transport", "rs485_serial"))
         self.last_command = command
+        self.last_frame = frame
 
         if transport_mode == "stub":
-            logger.info("Stub lighting command accepted: %s", command)
-            return {"ok": True, "transport": transport_mode, "command": command, "written": False}
+            logger.info("Stub lighting frame accepted: %s", frame)
+            return {"ok": True, "transport": transport_mode, "frame": frame, "written": False}
 
         try:
             handle = self._open_serial()
-            handle.write(self._serialize_command(command))
+            handle.write(self._serialize_frame(frame))
             handle.flush()
             self.initialized = True
             logger.info(
-                "Lighting command sent to RS485 transport: pan=%.2f tilt=%.2f brightness=%.1f",
+                "Lighting frame sent to RS485 transport: pan=%.2f tilt=%.2f brightness=%.1f",
                 command["pan_deg"],
                 command["tilt_deg"],
                 command["brightness_pct"],
             )
-            return {"ok": True, "transport": transport_mode, "command": command, "written": True}
+            return {"ok": True, "transport": transport_mode, "frame": frame, "written": True}
         except Exception as exc:
             logger.error("Failed to send lighting command over RS485: %s", exc)
-            return {"ok": False, "transport": transport_mode, "command": command, "error": str(exc)}
+            return {"ok": False, "transport": transport_mode, "frame": frame, "error": str(exc)}
 
     async def handle_update(self, request: web.Request) -> web.Response:
         """Bridge an incoming lighting command to the RS485 transport."""
@@ -487,6 +500,7 @@ async def handle_lighting_status(request):
             "serial_port": controller.serial_port,
             "baudrate": controller.baudrate,
             "last_command": controller.last_command,
+            "last_frame": controller.last_frame,
             "initialized": controller.initialized,
         }
     )

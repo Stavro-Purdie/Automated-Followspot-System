@@ -1176,22 +1176,6 @@ class LauncherGUI:
         roof_config = configs_dir / "roof_array_config.json"
         front_config = configs_dir / "front_array_config.json"
 
-        if not roof_config.exists():
-            if messagebox.askyesno(
-                "Roof Configuration Missing",
-                "No roof array configuration found. Configure now?",
-            ):
-                self.launch_configuration()
-            return
-
-        if not front_config.exists():
-            if messagebox.askyesno(
-                "Front Configuration Missing",
-                "No front array configuration found. Configure now?",
-            ):
-                self.launch_reid_configurator()
-            return
-
         script_path = Path(__file__).parent / "control" / "main.py"
         if not script_path.exists():
             messagebox.showerror("Error", "Live control script not found")
@@ -1217,14 +1201,6 @@ class LauncherGUI:
         configs_dir = Path(__file__).parent / "config"
         roof_config = configs_dir / "roof_array_config.json"
         front_config = configs_dir / "front_array_config.json"
-
-        if not roof_config.exists():
-            if messagebox.askyesno(
-                "Roof Configuration Missing",
-                "No roof array configuration found. Configure now?",
-            ):
-                self.launch_configuration()
-            return
 
         existing = getattr(self, "connection_status_window", None)
         window_obj = getattr(existing, "window", None)

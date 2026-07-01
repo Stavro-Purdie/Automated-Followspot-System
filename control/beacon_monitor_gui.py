@@ -129,6 +129,8 @@ class BeaconStatus:
     wifi_ssid: Optional[str] = None
     signal_dbm: Optional[float] = None
     last_error: Optional[str] = None
+    last_telemetry: Optional[str] = None
+    telemetry: Optional[Dict[str, Any]] = None
 
 class BeaconCard:
     """Visual beacon status card"""
@@ -213,6 +215,20 @@ class BeaconCard:
             wraplength=250,
             justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(1, 0))
+
+        if status.last_telemetry:
+            telemetry_preview = status.last_telemetry.strip().replace("\n", " ")
+            if len(telemetry_preview) > 96:
+                telemetry_preview = telemetry_preview[:93] + "..."
+            tk.Label(
+                content,
+                text=f"Last telemetry: {telemetry_preview}",
+                bg=colors["bg_secondary"],
+                fg=colors["fg_secondary"],
+                font=("System", 8),
+                wraplength=250,
+                justify=tk.LEFT,
+            ).pack(anchor=tk.W, pady=(1, 0))
         
         # Visual overview section
         visuals = tk.Frame(content, bg=colors["bg_secondary"])
@@ -648,6 +664,13 @@ class BeaconMonitorGUI:
         
         # Load configuration
         self.load_config()
+
+        if not self.beacons_config:
+            self.beacons_config = self._default_beacon_configs()
+            logger.info(
+                "Beacon configuration missing or empty; showing %d offline placeholders.",
+                len(self.beacons_config),
+            )
         
         # Initialize beacon status
         for beacon_id in self.beacons_config.keys():
@@ -655,7 +678,8 @@ class BeaconMonitorGUI:
             self.beacon_status[beacon_id] = BeaconStatus(
                 beacon_id=beacon_id,
                 ip_address=config.get("ip_address", "0.0.0.0"),
-                port=config.get("port", 5000)
+                port=config.get("port", 5000),
+                display_name=config.get("display_name"),
             )
         
         # Setup GUI
@@ -857,6 +881,25 @@ class BeaconMonitorGUI:
         self.summary_var.set(f"Online: {online_count}/{total_count} beacons • Last update: {time.strftime('%H:%M:%S')}")
         self.link_summary_var.set(f"Telemetry links: {link_count}/{total_count} ready")
 
+    def _default_beacon_configs(self) -> Dict[str, Dict[str, Any]]:
+        """Provide a non-empty offline beacon set when no saved config exists."""
+        return {
+            "Beacon-1": {
+                "beacon_id": "Beacon-1",
+                "display_name": "Beacon-1",
+                "ip_address": "192.168.1.50",
+                "port": 5000,
+                "poll_interval": 1.0,
+            },
+            "Beacon-2": {
+                "beacon_id": "Beacon-2",
+                "display_name": "Beacon-2",
+                "ip_address": "192.168.1.51",
+                "port": 5000,
+                "poll_interval": 1.0,
+            },
+        }
+
     def _start_stale_watchdog(self):
         """Start a UI watchdog that marks cards stale when their data ages out."""
         self.root.after(250, self._watchdog_tick)
@@ -919,22 +962,28 @@ class BeaconMonitorGUI:
         beacon = SimpleNamespace(ip_address=status.ip_address, port=status.port)
         try:
             payload = fetch_status(beacon, timeout=2.5)
+            telemetry = payload.get("telemetry") if isinstance(payload, dict) else None
+            if not isinstance(telemetry, dict):
+                telemetry = payload if isinstance(payload, dict) else {}
             status.online = True
             status.last_update = time.time()
             status.last_error = None
-            status.battery_voltage = payload.get("battery_v")
-            status.battery_percent = payload.get("battery_pct")
-            status.current_amperage = payload.get("current_a")
-            status.fan_speed_rpm = payload.get("fan_rpm")
-            status.led_brightness = payload.get("brightness_pct")
-            status.temperature_c = payload.get("temp_c")
-            status.uptime_seconds = payload.get("uptime_s")
-            status.wifi_ssid = payload.get("wifi_ssid")
-            signal_value = payload.get("wifi_rssi_dbm", payload.get("signal_dbm"))
+            status.telemetry = telemetry
+            status.battery_voltage = telemetry.get("battery_v")
+            status.battery_percent = telemetry.get("battery_pct")
+            status.current_amperage = telemetry.get("current_a")
+            status.fan_speed_rpm = telemetry.get("fan_rpm")
+            status.led_brightness = telemetry.get("brightness_pct")
+            status.temperature_c = telemetry.get("temp_c")
+            status.uptime_seconds = telemetry.get("uptime_s")
+            status.wifi_ssid = telemetry.get("wifi_ssid")
+            signal_value = telemetry.get("wifi_rssi_dbm", telemetry.get("signal_dbm"))
             try:
                 status.signal_dbm = float(signal_value) if signal_value is not None else None
             except (TypeError, ValueError):
                 status.signal_dbm = None
+            telemetry_value = payload.get("last_telemetry")
+            status.last_telemetry = str(telemetry_value) if telemetry_value is not None else None
         except Exception as exc:
             status.online = False
             status.last_error = str(exc)
@@ -975,6 +1024,7 @@ class BeaconMonitorGUI:
                 "wifi_ssid": status.wifi_ssid,
                 "signal_dbm": status.signal_dbm,
                 "last_error": status.last_error,
+                "last_telemetry": status.last_telemetry,
             })
         
         # Save to file
@@ -1160,6 +1210,20 @@ class BeaconMonitorGUI:
                 wraplength=720,
                 justify=tk.LEFT,
             ).pack(fill=tk.X, padx=12, pady=(0, 4), anchor=tk.W)
+
+        if status.last_telemetry:
+            telemetry_preview = status.last_telemetry.strip().replace("\n", " ")
+            if len(telemetry_preview) > 120:
+                telemetry_preview = telemetry_preview[:117] + "..."
+            tk.Label(
+                item_frame,
+                text=f"Last telemetry: {telemetry_preview}",
+                bg="#222222",
+                fg="#8888aa",
+                font=("Arial", 8),
+                wraplength=720,
+                justify=tk.LEFT,
+            ).pack(fill=tk.X, padx=12, pady=(0, 4), anchor=tk.W)
     
     def load_config(self):
         """Load beacon configuration"""
@@ -1171,9 +1235,9 @@ class BeaconMonitorGUI:
                     logger.info(f"Loaded {len(self.beacons_config)} beacons from config")
             except Exception as e:
                 logger.error(f"Failed to load config: {e}")
-                self.beacons_config = {}
+                self.beacons_config = self._default_beacon_configs()
         else:
-            self.beacons_config = {}
+            self.beacons_config = self._default_beacon_configs()
             logger.warning(
                 "Beacon configuration file not found at %s. Configure beacons first in Beacon Configuration & Monitor.",
                 self.config_file,

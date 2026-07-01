@@ -10,6 +10,8 @@ import os
 import logging
 import argparse
 import re
+from typing import Any
+from pathlib import Path
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -23,9 +25,14 @@ def _sanitize_for_log(value) -> str:
 
 def main():
     """Parse CLI flags, present the mode chooser, and start the requested tools."""
+    project_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description="Multi-Camera IR Beacon Tracker")
-    parser.add_argument("--config", type=str, default="../config/roof_array_config.json",
-                        help="Configuration file path (default: ../config/roof_array_config.json)")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=str(project_root / "config" / "roof_array_config.json"),
+        help="Configuration file path (default: config/roof_array_config.json)",
+    )
     parser.add_argument("--demo", action="store_true",
                         help="Run in demo mode with simulated cameras")
     parser.add_argument("--configure", action="store_true",
@@ -39,9 +46,12 @@ def main():
     # If no specific mode is requested and no-dialog is not set, show the connection dialog
     if not args.demo and not args.configure and not args.no_dialog:
         try:
-            from connection_dialog import show_connection_dialog
+            from camera_aggregator import show_connection_dialog
             logger.info("Showing connection dialog...")
-            result = show_connection_dialog(args.config)
+            dialog_fn = show_connection_dialog
+            if not callable(dialog_fn):
+                raise ImportError("connection dialog is unavailable")
+            result: Any = dialog_fn(args.config)
             
             if not result:
                 logger.info("Dialog cancelled, exiting...")
@@ -75,12 +85,6 @@ def main():
             logger.info("Please ensure all dependencies are installed")
         return
     
-    # Check if config file exists
-    if not os.path.exists(args.config) and not args.demo:
-        logger.error("Configuration file '%s' not found.", str(args.config).replace('\r', '').replace('\n', ''))
-        logger.info("Run with --configure to create configuration or --demo for demo mode")
-        return
-    
     try:
         # Import required modules
         from camera_aggregator import MultiCameraManager
@@ -90,10 +94,12 @@ def main():
         manager = MultiCameraManager(args.config, demo_mode=args.demo)
         
         if not manager.cameras:
-            logger.error("No cameras configured.")
-            if not args.demo:
-                logger.info("Run with --configure to set up cameras or --demo for demo mode")
-                return
+            if args.demo:
+                logger.info("No cameras configured; demo mode will run with placeholder feeds.")
+            else:
+                logger.warning(
+                    "No cameras configured; live mode will open with placeholders and wait for connections."
+                )
         
         # Create and run GUI
         mode_text = "Demo Mode" if args.demo else "Live Mode"
