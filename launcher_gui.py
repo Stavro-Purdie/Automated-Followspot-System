@@ -622,35 +622,43 @@ class LauncherGUI:
         self.front_node_status_label = ttk.Label(self.front_node_frame, text="Status: Stopped")
         self.front_node_status_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
 
+        self.front_bridge_label = ttk.Label(
+            self.front_node_frame,
+            text=self._front_transport_summary(),
+            wraplength=220,
+            justify="left",
+        )
+        self.front_bridge_label.grid(row=1, column=0, sticky="w", pady=(0, 8))
+
         ttk.Button(
             self.front_node_frame,
             text="Start Front Node",
             command=self.start_front_node_stack,
-        ).grid(row=1, column=0, sticky="ew", pady=(0, 5))
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
 
         ttk.Button(
             self.front_node_frame,
             text="Stop Front Node",
             command=self.stop_front_node_stack,
-        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
+        ).grid(row=3, column=0, sticky="ew", pady=(0, 5))
 
         ttk.Button(
             self.front_node_frame,
             text="View Front Node Log",
             command=lambda: self.show_log("front_node"),
-        ).grid(row=3, column=0, sticky="ew", pady=(0, 5))
+        ).grid(row=4, column=0, sticky="ew", pady=(0, 5))
 
         ttk.Button(
             self.front_node_frame,
             text="Reinstall Front Node",
             command=lambda: self.run_installer("front_node", reinstall_mode=True),
-        ).grid(row=4, column=0, sticky="ew", pady=(0, 5))
+        ).grid(row=5, column=0, sticky="ew", pady=(0, 5))
 
         ttk.Button(
             self.front_node_frame,
             text="Uninstall Front Node",
             command=self.uninstall_front_node,
-        ).grid(row=5, column=0, sticky="ew")
+        ).grid(row=6, column=0, sticky="ew")
 
         # Hide frames until stacks are detected as installed
         self.node_frame.grid_remove()
@@ -757,6 +765,9 @@ class LauncherGUI:
             self.front_node_status_label.config(text=f"Front Node (ReID): Installed (v{version})")
         else:
             self.front_node_status_label.config(text="Front Node (ReID): Not Installed")
+
+        if hasattr(self, "front_bridge_label"):
+            self.front_bridge_label.config(text=self._front_transport_summary())
         
         # Show/hide appropriate frames
         if not control_installed and not node_installed and not front_node_installed:
@@ -1270,7 +1281,10 @@ class LauncherGUI:
             return
 
         port = 8000
+        dmx_port = "/dev/ttyAMA0"
+        dmx_baudrate = 115200
         config_path = Path(__file__).parent / "config" / "front_array_config.json"
+        spotlight_path = Path(__file__).parent / "config" / "spotlight_config.json"
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
@@ -1282,14 +1296,23 @@ class LauncherGUI:
         except Exception as exc:
             self.log_to_terminal(f"Using default front node port ({port}) due to config error: {exc}")
 
-        self.front_node_status_label.config(text=f"Status: Starting on port {port}...")
+        try:
+            with open(spotlight_path, "r", encoding="utf-8") as f:
+                spotlight_cfg = json.load(f)
+            dmx_cfg = spotlight_cfg.get("dmx", {})
+            dmx_port = dmx_cfg.get("serial_port", dmx_port)
+            dmx_baudrate = int(dmx_cfg.get("baud_rate", dmx_baudrate))
+        except Exception as exc:
+            self.log_to_terminal(f"Using default RS485 settings due to spotlight config error: {exc}")
+
+        self.front_node_status_label.config(text=f"Status: Starting on port {port} (RS485 {dmx_port})...")
         self.run_script(
             script_path,
             "Front Node Server",
-            args=["--port", str(port)],
+            args=["--port", str(port), "--dmx-port", str(dmx_port), "--dmx-baudrate", str(dmx_baudrate)],
             background=True,
         )
-        self.front_node_status_label.config(text=f"Status: Running on port {port}")
+        self.front_node_status_label.config(text=f"Status: Running on port {port} (RS485 {dmx_port})")
 
     def stop_front_node_stack(self):
         """Stop front node server"""
@@ -1360,6 +1383,23 @@ class LauncherGUI:
     def show_status_window(self):
         """Open the system status dashboard."""
         StatusWindow(self).show()
+
+    def _front_transport_summary(self) -> str:
+        spotlight_config = Path(__file__).parent / "config" / "spotlight_config.json"
+        if not spotlight_config.exists():
+            return "Lighting bridge: not configured"
+
+        try:
+            with open(spotlight_config, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            dmx_cfg = data.get("dmx", {})
+            transport = dmx_cfg.get("transport", "stub")
+            endpoint = dmx_cfg.get("endpoint_url", "http://127.0.0.1:8080/dmx")
+            serial_port = dmx_cfg.get("serial_port", "/dev/ttyAMA0")
+            baud_rate = dmx_cfg.get("baud_rate", 115200)
+            return f"Lighting bridge: {transport}\n{endpoint}\nRS485: {serial_port} @ {baud_rate}"
+        except Exception:
+            return "Lighting bridge: unavailable"
 
     def report_bug(self):
         """Open bug report URL"""

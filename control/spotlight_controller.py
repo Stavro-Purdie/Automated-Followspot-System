@@ -8,6 +8,8 @@ import logging
 import math
 from pathlib import Path
 from typing import Dict, List, Optional
+import urllib.error
+import urllib.request
 
 import numpy as np
 
@@ -33,6 +35,13 @@ class SpotlightController:
         self.tilt_alpha = float(smoothing_cfg.get("tilt_alpha", 0.25))
 
         self.dmx_config = self.config.get("dmx", {})
+        self.transport_mode = str(self.dmx_config.get("transport", "stub"))
+        self.transport_url = str(
+            self.dmx_config.get("endpoint_url")
+            or self.dmx_config.get("transport_url")
+            or "http://127.0.0.1:8080/dmx"
+        )
+        self.transport_timeout = float(self.dmx_config.get("timeout_s", 2.0))
 
         self.last_pan: Optional[float] = None
         self.last_tilt: Optional[float] = None
@@ -122,14 +131,44 @@ class SpotlightController:
         )
 
     def _send_command(self, command: Dict) -> None:
-        """Placeholder for DMX/Maestro integration."""
-        logger.debug(
-            "Spotlight command pan=%.2f tilt=%.2f target=%s",
-            command["pan_deg"],
-            command["tilt_deg"],
-            command.get("target_id"),
+        """Send the lighting command to the configured node bridge."""
+        payload = {
+            "type": "lighting_command",
+            "transport": self.transport_mode,
+            "pan_deg": command["pan_deg"],
+            "tilt_deg": command["tilt_deg"],
+            "brightness_pct": float(self.dmx_config.get("brightness_pct", 100.0)),
+            "source": "spotlight_controller",
+            "target_id": command.get("target_id"),
+            "timestamp": command.get("timestamp"),
+        }
+
+        if self.transport_mode == "stub":
+            logger.info(
+                "Stub transport active; pan=%.2f tilt=%.2f target=%s",
+                command["pan_deg"],
+                command["tilt_deg"],
+                command.get("target_id"),
+            )
+            return
+
+        request = urllib.request.Request(
+            self.transport_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
         )
-        # TODO: integrate with actual lighting control transport
+
+        try:
+            with urllib.request.urlopen(request, timeout=self.transport_timeout) as response:
+                response_body = response.read().decode("utf-8", errors="replace")
+            logger.debug(
+                "Lighting transport response (%s): %s",
+                self.transport_url,
+                response_body,
+            )
+        except urllib.error.URLError as exc:
+            logger.error("Lighting transport request failed: %s", exc)
 
 
 __all__ = ["SpotlightController"]

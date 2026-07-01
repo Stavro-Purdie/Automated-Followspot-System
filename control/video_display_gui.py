@@ -397,25 +397,40 @@ class VideoDisplayGUI:
         
     def setup_ui(self):
         """Assemble the main layout: controls on the left, video wall on the right."""
-        # Main container
-        main_frame = ttk.Frame(self.root, padding="10")
+        # Configure root styling
+        style = ttk.Style()
+        style.configure('Main.TFrame', background='#f5f5f5')
+
+        # Main container with proper margins
+        main_frame = ttk.Frame(self.root, padding="0")
         main_frame.grid(row=0, column=0, sticky="nsew")
-        
+
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
+        main_frame.columnconfigure(1, weight=3)
+        main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(0, weight=1)
-        
+        main_frame.rowconfigure(1, weight=0)
+
+        # Top header bar
+        self.setup_header_bar(main_frame)
+
+        # Content frame with controls on left, video on right
+        content_frame = ttk.Frame(main_frame, padding="0")
+        content_frame.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        content_frame.columnconfigure(1, weight=1)
+        content_frame.rowconfigure(0, weight=1)
+
         # Control panel (left side)
-        self.setup_control_panel(main_frame)
-        
+        self.setup_control_panel(content_frame)
+
         # Video display area (right side)
-        self.setup_video_display(main_frame)
-        
+        self.setup_video_display(content_frame)
+
         # Status bar (bottom)
         self.setup_status_bar(main_frame)
-        ensure_window_fits_content(self.root, min_width=1200, min_height=820, padding=80, center=True)
+        ensure_window_fits_content(self.root, min_width=1400, min_height=900, padding=80, center=True)
         
     def setup_control_panel(self, parent):
         """Layout the tactile controls operators reach for during a show."""

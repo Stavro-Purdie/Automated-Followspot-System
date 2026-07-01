@@ -31,6 +31,9 @@
     "tilt_address": 3,
     "pan_scale": 1.0,
     "tilt_scale": 1.0,
-    "transport": "stub"
+    "transport": "http_bridge",
+    "endpoint_url": "http://192.168.0.50:8000/dmx",
+    "serial_port": "/dev/ttyAMA0",
+    "baud_rate": 115200
   }
 }

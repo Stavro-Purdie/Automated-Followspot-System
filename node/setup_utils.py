@@ -80,6 +80,12 @@ def ensure_autostart_service(
             ],
         )
     )
+    for env_line in (
+        _env_line("FOLLOWSPOT_DMX_PORT", setup.get("dmx_port")),
+        _env_line("FOLLOWSPOT_DMX_BAUDRATE", setup.get("dmx_baudrate")),
+    ):
+        if env_line:
+            env_lines.append(env_line)
 
     exec_parts = [
         python_exec,
@@ -89,6 +95,12 @@ def ensure_autostart_service(
         "--port",
         str(port),
     ]
+    dmx_port = setup.get("dmx_port")
+    dmx_baudrate = setup.get("dmx_baudrate")
+    if dmx_port:
+        exec_parts.extend(["--dmx-port", str(dmx_port)])
+    if dmx_baudrate:
+        exec_parts.extend(["--dmx-baudrate", str(dmx_baudrate)])
     exec_start = " ".join(shlex.quote(part) for part in exec_parts)
 
     service_text = "\n".join(

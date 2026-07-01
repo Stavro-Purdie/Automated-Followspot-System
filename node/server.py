@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import socket
+import termios
 import time
 import fractions
 from typing import Any, Dict
@@ -83,16 +84,91 @@ track_lock = asyncio.Lock()
 
 
 class DMXController:
-    """Placeholder DMX controller for the RS485 HAT."""
+    """Lighting command bridge for the RS485 HAT."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, serial_port: str = "/dev/ttyAMA0", baudrate: int = 115200) -> None:
         self.initialized = False
+        self.serial_port = serial_port
+        self.baudrate = int(baudrate)
+        self._serial_handle = None
+        self.last_command: Dict[str, Any] | None = None
+
+    def _baud_constant(self) -> int:
+        return getattr(termios, f"B{self.baudrate}", termios.B115200)
+
+    def _open_serial(self):
+        if self._serial_handle is not None:
+            return self._serial_handle
+
+        if not self.serial_port:
+            raise RuntimeError("No serial port configured for RS485 transport")
+
+        handle = open(self.serial_port, "wb", buffering=0)
+        fd = handle.fileno()
+        attrs = termios.tcgetattr(fd)
+        attrs[0] = 0
+        attrs[1] = 0
+        attrs[2] = termios.CLOCAL | termios.CREAD | termios.CS8
+        attrs[3] = 0
+        attrs[4] = self._baud_constant()
+        attrs[5] = self._baud_constant()
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        self._serial_handle = handle
+        logger.info("RS485 lighting transport opened on %s @ %s baud", self.serial_port, self.baudrate)
+        return handle
+
+    def _serialize_command(self, payload: Dict[str, Any]) -> bytes:
+        frame = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        return f"{frame}\n".encode("utf-8")
+
+    def send_command(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        command = {
+            "type": payload.get("type", "lighting_command"),
+            "pan_deg": float(payload.get("pan_deg", 0.0)),
+            "tilt_deg": float(payload.get("tilt_deg", 0.0)),
+            "brightness_pct": float(payload.get("brightness_pct", 100.0)),
+            "source": payload.get("source", "control"),
+            "timestamp": payload.get("timestamp", time.time()),
+        }
+
+        transport_mode = str(payload.get("transport", "rs485_serial"))
+        self.last_command = command
+
+        if transport_mode == "stub":
+            logger.info("Stub lighting command accepted: %s", command)
+            return {"ok": True, "transport": transport_mode, "command": command, "written": False}
+
+        try:
+            handle = self._open_serial()
+            handle.write(self._serialize_command(command))
+            handle.flush()
+            self.initialized = True
+            logger.info(
+                "Lighting command sent to RS485 transport: pan=%.2f tilt=%.2f brightness=%.1f",
+                command["pan_deg"],
+                command["tilt_deg"],
+                command["brightness_pct"],
+            )
+            return {"ok": True, "transport": transport_mode, "command": command, "written": True}
+        except Exception as exc:
+            logger.error("Failed to send lighting command over RS485: %s", exc)
+            return {"ok": False, "transport": transport_mode, "command": command, "error": str(exc)}
 
     async def handle_update(self, request: web.Request) -> web.Response:
-        """Respond with a placeholder until DMX output is implemented."""
-        payload = await request.text()
-        logger.debug("Received DMX payload placeholder (%d bytes)", len(payload))
-        return web.Response(status=501, text="DMX output not implemented yet")
+        """Bridge an incoming lighting command to the RS485 transport."""
+        try:
+            if request.content_type == "application/json":
+                payload = await request.json()
+            else:
+                form_data = await request.post()
+                payload = dict(form_data)
+
+            result = self.send_command(payload)
+            status = 200 if result.get("ok") else 502
+            return web.json_response(result, status=status)
+        except Exception as exc:
+            logger.error("Lighting update handler failed: %s", exc)
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 def get_ip_address():
     """Get the server's local IP address"""
@@ -402,6 +478,19 @@ async def handle_camera_info(request):
         logger.error(f"Error getting camera info: {e}")
         return web.Response(status=500, text=f"Error getting camera info: {e}")
 
+async def handle_lighting_status(request):
+    """Return the latest lighting transport state."""
+    controller: DMXController = request.app["dmx_controller"]
+    return web.json_response(
+        {
+            "transport": "rs485_serial" if controller.initialized else "stub",
+            "serial_port": controller.serial_port,
+            "baudrate": controller.baudrate,
+            "last_command": controller.last_command,
+            "initialized": controller.initialized,
+        }
+    )
+
 async def on_server_shutdown(app):
     """Cleanup when server shuts down"""
     # Stop all tracks first
@@ -421,7 +510,7 @@ async def on_server_shutdown(app):
         camera_obj.close()
         logger.info("Camera stopped and closed")
 
-async def run_server(host: str, port: int, profile: str):
+async def run_server(host: str, port: int, profile: str, *, dmx_port: str = "/dev/ttyAMA0", dmx_baudrate: int = 115200):
     """Set up and run the web server"""
     # Initialize the camera
     if not init_picamera(profile):
@@ -431,14 +520,16 @@ async def run_server(host: str, port: int, profile: str):
     # Set up web server
     app = web.Application()
     app.on_shutdown.append(on_server_shutdown)
-    dmx_controller = DMXController()
+    dmx_controller = DMXController(serial_port=dmx_port, baudrate=dmx_baudrate)
+    app["dmx_controller"] = dmx_controller
     
     # Define routes
     app.router.add_post("/offer", handle_offer)
     app.router.add_post("/focus", handle_focus)
     app.router.add_get("/camera/info", handle_camera_info)
     app.router.add_post("/dmx", dmx_controller.handle_update)
-    logger.info("DMX endpoint registered (placeholder)")
+    app.router.add_get("/dmx/status", handle_lighting_status)
+    logger.info("DMX endpoint registered")
     
     # Add simple root endpoint
     async def handle_root(request):
@@ -483,10 +574,20 @@ if __name__ == "__main__":
         choices=sorted(PROFILE_CONFIGS.keys()),
         help="Camera profile to use",
     )
+    parser.add_argument("--dmx-port", default="/dev/ttyAMA0", help="RS485 serial port for lighting output")
+    parser.add_argument("--dmx-baudrate", type=int, default=115200, help="Serial baudrate for lighting output")
     args = parser.parse_args()
     
     try:
-        asyncio.run(run_server(args.host, args.port, args.profile))
+        asyncio.run(
+            run_server(
+                args.host,
+                args.port,
+                args.profile,
+                dmx_port=args.dmx_port,
+                dmx_baudrate=args.dmx_baudrate,
+            )
+        )
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received, shutting down.")
     except Exception as e:

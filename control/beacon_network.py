@@ -26,13 +26,30 @@ def _request(url: str, *, data: Optional[Dict[str, Any]] = None, timeout: float 
     return json.loads(payload)
 
 
+def build_beacon_url(beacon, path: str = "/api/status") -> str:
+    """Build a canonical HTTP URL for a beacon endpoint."""
+    return f"http://{beacon.ip_address}:{beacon.port}{path}"
+
+
 def fetch_status(beacon, *, timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
     """Fetch live status from a beacon.
 
     Expected firmware endpoint: GET /api/status returning JSON.
     """
-    url = f"http://{beacon.ip_address}:{beacon.port}/api/status"
+    url = build_beacon_url(beacon, "/api/status")
     return _request(url, timeout=timeout)
+
+
+def push_telemetry(beacon, *, telemetry: Dict[str, Any], timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+    """Push program telemetry to a beacon-side endpoint when supported."""
+    url = build_beacon_url(beacon, "/api/telemetry")
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    body = json.dumps(telemetry).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        charset = resp.headers.get_content_charset() or "utf-8"
+        payload = resp.read().decode(charset)
+    return json.loads(payload)
 
 
 def push_config(beacon, *, brightness_pct: int, led_on: bool, timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:

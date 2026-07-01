@@ -217,6 +217,20 @@ def collect_node_setup_cli(config_section: Dict[str, Any], stack_slug: str) -> D
         f"Node service port [{default_port_display}]: "
     ).strip()
 
+    dmx_port = None
+    dmx_baudrate = None
+    if stack_slug == "front-node":
+        dmx_port = input(
+            f"RS485 serial port [{defaults.get('dmx_port', '/dev/ttyAMA0')}]: "
+        ).strip() or defaults.get("dmx_port") or "/dev/ttyAMA0"
+        baud_input = input(
+            f"RS485 baudrate [{defaults.get('dmx_baudrate', 115200)}]: "
+        ).strip()
+        try:
+            dmx_baudrate = int(baud_input) if baud_input else int(defaults.get("dmx_baudrate", 115200))
+        except ValueError:
+            dmx_baudrate = 115200
+
     try:
         port = int(port_input) if port_input else int(defaults.get("port") or prof_def.get("port", 8080))
     except ValueError:
@@ -233,6 +247,10 @@ def collect_node_setup_cli(config_section: Dict[str, Any], stack_slug: str) -> D
         "dns": dns,
         "port": port,
     }
+
+    if stack_slug == "front-node":
+        setup["dmx_port"] = dmx_port
+        setup["dmx_baudrate"] = dmx_baudrate
 
     return setup
 

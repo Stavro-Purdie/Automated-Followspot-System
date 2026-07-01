@@ -125,6 +125,10 @@ class BeaconStatus:
     last_update: Optional[float] = None
     ip_address: str = "0.0.0.0"
     port: int = 5000
+    endpoint_url: str = ""
+    wifi_ssid: Optional[str] = None
+    signal_dbm: Optional[float] = None
+    last_error: Optional[str] = None
 
 class BeaconCard:
     """Visual beacon status card"""
@@ -198,6 +202,17 @@ class BeaconCard:
         # IP and Port info
         info_text = f"{status.ip_address}:{status.port}"
         tk.Label(content, text=info_text, bg=colors["bg_secondary"], fg=colors["fg_secondary"], font=("System", 8)).pack(anchor=tk.W)
+
+        endpoint_text = status.endpoint_url or f"http://{status.ip_address}:{status.port}/api/status"
+        tk.Label(
+            content,
+            text=f"Endpoint: {endpoint_text}",
+            bg=colors["bg_secondary"],
+            fg=colors["fg_secondary"],
+            font=("System", 8),
+            wraplength=250,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(1, 0))
         
         # Visual overview section
         visuals = tk.Frame(content, bg=colors["bg_secondary"])
@@ -685,6 +700,16 @@ class BeaconMonitorGUI:
             font=("System", 11)
         )
         summary_label.pack(side=tk.RIGHT, padx=20, pady=15)
+
+        self.link_summary_var = tk.StringVar(value="Telemetry links: checking...")
+        link_summary = tk.Label(
+            header,
+            textvariable=self.link_summary_var,
+            bg=self.colors["bg_secondary"],
+            fg=self.colors["fg_secondary"],
+            font=("System", 9)
+        )
+        link_summary.pack(side=tk.RIGHT, padx=20, pady=15)
         
         # Main content area with scrollbar
         main_frame = tk.Frame(self.root, bg=self.colors["bg_primary"])
@@ -828,7 +853,9 @@ class BeaconMonitorGUI:
         # Update summary
         online_count = sum(1 for s in self.beacon_status.values() if s.online)
         total_count = len(self.beacon_status)
+        link_count = sum(1 for s in self.beacon_status.values() if s.endpoint_url)
         self.summary_var.set(f"Online: {online_count}/{total_count} beacons • Last update: {time.strftime('%H:%M:%S')}")
+        self.link_summary_var.set(f"Telemetry links: {link_count}/{total_count} ready")
 
     def _start_stale_watchdog(self):
         """Start a UI watchdog that marks cards stale when their data ages out."""
@@ -887,12 +914,14 @@ class BeaconMonitorGUI:
         status = self.beacon_status.get(beacon_id, BeaconStatus(beacon_id=beacon_id))
         status.ip_address = config.get("ip_address", "0.0.0.0")
         status.port = config.get("port", 5000)
+        status.endpoint_url = config.get("status_url") or f"http://{status.ip_address}:{status.port}/api/status"
 
         beacon = SimpleNamespace(ip_address=status.ip_address, port=status.port)
         try:
             payload = fetch_status(beacon, timeout=2.5)
             status.online = True
             status.last_update = time.time()
+            status.last_error = None
             status.battery_voltage = payload.get("battery_v")
             status.battery_percent = payload.get("battery_pct")
             status.current_amperage = payload.get("current_a")
@@ -900,8 +929,15 @@ class BeaconMonitorGUI:
             status.led_brightness = payload.get("brightness_pct")
             status.temperature_c = payload.get("temp_c")
             status.uptime_seconds = payload.get("uptime_s")
+            status.wifi_ssid = payload.get("wifi_ssid")
+            signal_value = payload.get("wifi_rssi_dbm", payload.get("signal_dbm"))
+            try:
+                status.signal_dbm = float(signal_value) if signal_value is not None else None
+            except (TypeError, ValueError):
+                status.signal_dbm = None
         except Exception as exc:
             status.online = False
+            status.last_error = str(exc)
             logger.debug("Beacon poll failed for %s (%s:%s): %s", beacon_id, status.ip_address, status.port, exc)
         
         return status
@@ -927,6 +963,7 @@ class BeaconMonitorGUI:
                 "beacon_id": beacon_id,
                 "ip_address": status.ip_address,
                 "port": status.port,
+                "endpoint_url": status.endpoint_url,
                 "online": status.online,
                 "battery_percent": status.battery_percent,
                 "battery_voltage": status.battery_voltage,
@@ -934,7 +971,10 @@ class BeaconMonitorGUI:
                 "fan_speed_rpm": status.fan_speed_rpm,
                 "led_brightness": status.led_brightness,
                 "temperature_c": status.temperature_c,
-                "uptime_seconds": status.uptime_seconds
+                "uptime_seconds": status.uptime_seconds,
+                "wifi_ssid": status.wifi_ssid,
+                "signal_dbm": status.signal_dbm,
+                "last_error": status.last_error,
             })
         
         # Save to file
@@ -1072,6 +1112,31 @@ class BeaconMonitorGUI:
             fg="#888888",
             font=("Arial", 9)
         ).pack(side=tk.LEFT, padx=5)
+
+        endpoint = status.endpoint_url or f"http://{status.ip_address}:{status.port}/api/status"
+        tk.Label(
+            item_frame,
+            text=endpoint,
+            bg="#222222",
+            fg="#555555",
+            font=("Arial", 8),
+            wraplength=720,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, padx=12, pady=(0, 4), anchor=tk.W)
+
+        if status.wifi_ssid or status.signal_dbm is not None:
+            wifi_parts = []
+            if status.wifi_ssid:
+                wifi_parts.append(f"SSID: {status.wifi_ssid}")
+            if status.signal_dbm is not None:
+                wifi_parts.append(f"RSSI: {status.signal_dbm:.0f} dBm")
+            tk.Label(
+                item_frame,
+                text=" • ".join(wifi_parts),
+                bg="#222222",
+                fg="#888888",
+                font=("Arial", 8),
+            ).pack(fill=tk.X, padx=12, pady=(0, 4), anchor=tk.W)
         
         # Last update
         if status.last_update:
@@ -1084,6 +1149,17 @@ class BeaconMonitorGUI:
                 fg="#666666",
                 font=("Arial", 8)
             ).pack(side=tk.RIGHT, padx=5)
+
+        if status.last_error:
+            tk.Label(
+                item_frame,
+                text=f"Last error: {status.last_error}",
+                bg="#222222",
+                fg="#aa6666",
+                font=("Arial", 8),
+                wraplength=720,
+                justify=tk.LEFT,
+            ).pack(fill=tk.X, padx=12, pady=(0, 4), anchor=tk.W)
     
     def load_config(self):
         """Load beacon configuration"""

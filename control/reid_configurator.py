@@ -266,7 +266,10 @@ class ReIDConfigurator:
         dmx_cfg.setdefault("tilt_address", 3)
         dmx_cfg.setdefault("pan_scale", 1.0)
         dmx_cfg.setdefault("tilt_scale", 1.0)
-        dmx_cfg.setdefault("transport", "stub")
+        dmx_cfg.setdefault("transport", "http_bridge")
+        dmx_cfg.setdefault("endpoint_url", "http://192.168.0.50:8000/dmx")
+        dmx_cfg.setdefault("serial_port", "/dev/ttyAMA0")
+        dmx_cfg.setdefault("baud_rate", 115200)
 
         return cfg
     
@@ -669,7 +672,7 @@ class ReIDConfigurator:
         ttk.Label(smoothing_frame, text="Tilt α:").grid(row=0, column=2, padx=(0, 2))
         ttk.Entry(smoothing_frame, textvariable=self.tilt_alpha_var, width=8).grid(row=0, column=3)
 
-        ttk.Label(spot_frame, text="DMX Settings", style='Heading.TLabel').grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Label(spot_frame, text="Lighting Transport", style='Heading.TLabel').grid(row=6, column=0, sticky="w", pady=5)
         dmx_frame = ttk.Frame(spot_frame)
         dmx_frame.grid(row=6, column=1, sticky="w", pady=5)
         self.dmx_universe_var = tk.StringVar(value=str(dmx_cfg.get("universe", 1)))
@@ -677,7 +680,10 @@ class ReIDConfigurator:
         self.dmx_tilt_address_var = tk.StringVar(value=str(dmx_cfg.get("tilt_address", 3)))
         self.dmx_pan_scale_var = tk.StringVar(value=str(dmx_cfg.get("pan_scale", 1.0)))
         self.dmx_tilt_scale_var = tk.StringVar(value=str(dmx_cfg.get("tilt_scale", 1.0)))
-        self.dmx_transport_var = tk.StringVar(value=dmx_cfg.get("transport", "stub"))
+        self.dmx_transport_var = tk.StringVar(value=dmx_cfg.get("transport", "http_bridge"))
+        self.dmx_endpoint_var = tk.StringVar(value=dmx_cfg.get("endpoint_url", "http://192.168.0.50:8000/dmx"))
+        self.dmx_serial_port_var = tk.StringVar(value=dmx_cfg.get("serial_port", "/dev/ttyAMA0"))
+        self.dmx_baud_rate_var = tk.StringVar(value=str(dmx_cfg.get("baud_rate", 115200)))
 
         ttk.Label(dmx_frame, text="Universe:").grid(row=0, column=0, padx=(0, 2))
         ttk.Entry(dmx_frame, textvariable=self.dmx_universe_var, width=6).grid(row=0, column=1, padx=(0, 6))
@@ -691,7 +697,16 @@ class ReIDConfigurator:
         ttk.Label(dmx_frame, text="Tilt Scale:").grid(row=1, column=2, padx=(0, 2), pady=5)
         ttk.Entry(dmx_frame, textvariable=self.dmx_tilt_scale_var, width=6).grid(row=1, column=3, padx=(0, 6), pady=5)
         ttk.Label(dmx_frame, text="Transport:").grid(row=1, column=4, padx=(0, 2), pady=5)
-        ttk.Combobox(dmx_frame, textvariable=self.dmx_transport_var, values=["stub", "artnet", "sacn", "osc"], width=8).grid(row=1, column=5, pady=5)
+        ttk.Combobox(dmx_frame, textvariable=self.dmx_transport_var, values=["stub", "http_bridge", "rs485_serial"], width=12).grid(row=1, column=5, pady=5)
+
+        ttk.Label(dmx_frame, text="Bridge URL:").grid(row=2, column=0, padx=(0, 2), pady=5)
+        ttk.Entry(dmx_frame, textvariable=self.dmx_endpoint_var, width=28).grid(row=2, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=5)
+        ttk.Label(dmx_frame, text="RS485 Port:").grid(row=2, column=4, padx=(0, 2), pady=5)
+        ttk.Entry(dmx_frame, textvariable=self.dmx_serial_port_var, width=16).grid(row=2, column=5, pady=5)
+
+        ttk.Label(dmx_frame, text="Baud:").grid(row=3, column=0, padx=(0, 2), pady=5)
+        ttk.Entry(dmx_frame, textvariable=self.dmx_baud_rate_var, width=8).grid(row=3, column=1, padx=(0, 6), pady=5)
+        ttk.Label(dmx_frame, text="Use the HTTP bridge from the control app; the node writes to RS485.").grid(row=3, column=2, columnspan=4, sticky="w", pady=5)
 
         spot_frame.columnconfigure(1, weight=1)
     
@@ -807,7 +822,10 @@ class ReIDConfigurator:
             self.dmx_tilt_address_var.set(str(dmx_cfg.get("tilt_address", 3)))
             self.dmx_pan_scale_var.set(str(dmx_cfg.get("pan_scale", 1.0)))
             self.dmx_tilt_scale_var.set(str(dmx_cfg.get("tilt_scale", 1.0)))
-            self.dmx_transport_var.set(dmx_cfg.get("transport", "stub"))
+            self.dmx_transport_var.set(dmx_cfg.get("transport", "http_bridge"))
+            self.dmx_endpoint_var.set(dmx_cfg.get("endpoint_url", "http://192.168.0.50:8000/dmx"))
+            self.dmx_serial_port_var.set(dmx_cfg.get("serial_port", "/dev/ttyAMA0"))
+            self.dmx_baud_rate_var.set(str(dmx_cfg.get("baud_rate", 115200)))
         except Exception as exc:
             messagebox.showwarning("Spotlight Load", f"Failed to load spotlight config into UI: {exc}")
 
@@ -892,7 +910,13 @@ class ReIDConfigurator:
         dmx_cfg["tilt_address"] = int(self.dmx_tilt_address_var.get())
         dmx_cfg["pan_scale"] = float(self.dmx_pan_scale_var.get())
         dmx_cfg["tilt_scale"] = float(self.dmx_tilt_scale_var.get())
-        dmx_cfg["transport"] = self.dmx_transport_var.get().strip() or "stub"
+        dmx_cfg["transport"] = self.dmx_transport_var.get().strip() or "http_bridge"
+        dmx_cfg["endpoint_url"] = self.dmx_endpoint_var.get().strip() or "http://192.168.0.50:8000/dmx"
+        dmx_cfg["serial_port"] = self.dmx_serial_port_var.get().strip() or "/dev/ttyAMA0"
+        try:
+            dmx_cfg["baud_rate"] = int(self.dmx_baud_rate_var.get())
+        except ValueError:
+            dmx_cfg["baud_rate"] = 115200
 
     def open_calibration_doc(self) -> None:
         """Open the calibration guide in the default viewer."""
