@@ -24,6 +24,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from control._theme import (
+    DARK_BG, DARK_BG_MED, DARK_BG_LIGHT, DARK_FG, DARK_FG_SEC, DARK_FG_MUTED,
+    GREEN_OK, AMBER_WARN, RED_ERR, BLUE_LINK,
+    FailsafeAnnunciator, StealthAnnunciator,
+    apply_treeview_style, get_status_color,
+)
+
 def ensure_window_fits_content(
     window: tk.Toplevel | tk.Tk,
     *,
@@ -164,13 +171,21 @@ class VideoDisplayGUI:
         self.camera_manager = camera_manager
         self.root = tk.Tk()
         self.root.title("Multi-Camera IR Beacon Tracker")
-        self.root.geometry("1200x800")
-        self.root.configure(bg="SystemButtonFace")
+        self.root.geometry("1400x900")
+        self.root.configure(bg=DARK_BG)
         
-        # Use native OS theme
+        # Industrial dark theme
         style = ttk.Style()
-        set_native_theme(style)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        self._setup_styles(style)
         
+        # Failsafe annunciator (top banner)
+        self.annunciator = FailsafeAnnunciator(self.root, max_alarms=4)
+        self.annunciator.pack(fill=tk.X, side=tk.TOP)
+
         # Video display variables
         self.video_label = None
         self.current_frame = None
@@ -255,6 +270,76 @@ class VideoDisplayGUI:
             return bool(self.root.winfo_exists())
         except Exception:
             return False
+
+    def _setup_styles(self, style: ttk.Style) -> None:
+        """Configure industrial dark theme styles."""
+        # Base colours
+        style.configure(".",
+            background=DARK_BG,
+            foreground=DARK_FG,
+            fieldbackground=DARK_BG_MED,
+            selectbackground=DARK_BG_LIGHT,
+            selectforeground=DARK_FG,
+            bordercolor=DARK_BG,
+            lightcolor=DARK_BG_MED,
+            darkcolor=DARK_BG_MED,
+        )
+
+        # Frames & panels
+        style.configure("TFrame", background=DARK_BG)
+        style.configure("TLabelframe", background=DARK_BG, foreground=DARK_FG_SEC)
+        style.configure("TLabelframe.Label", background=DARK_BG, foreground=DARK_FG_SEC, font=("Segoe UI", 9, "bold"))
+
+        # Labels
+        style.configure("TLabel", background=DARK_BG, foreground=DARK_FG, font=("Segoe UI", 9))
+
+        # Buttons
+        style.configure("TButton",
+            font=("Segoe UI", 9), padding=6,
+            background=DARK_BG_MED, foreground=DARK_FG,
+            bordercolor=DARK_BG, focuscolor=DARK_BG,
+        )
+        style.map("TButton",
+            background=[("active", DARK_BG_LIGHT), ("pressed", DARK_BG)],
+            foreground=[("active", DARK_FG), ("disabled", DARK_FG_MUTED)],
+        )
+
+        # Treeview
+        style.configure("Treeview",
+            background=DARK_BG_MED, foreground=DARK_FG,
+            fieldbackground=DARK_BG_MED,
+            bordercolor=DARK_BG_MED, lightcolor=DARK_BG_MED, darkcolor=DARK_BG_MED,
+            font=("Segoe UI", 9), rowheight=24,
+        )
+        style.map("Treeview",
+            background=[("selected", DARK_BG_LIGHT)],
+            foreground=[("selected", DARK_FG)],
+        )
+        style.configure("Treeview.Heading",
+            background=DARK_BG, foreground=DARK_FG_SEC,
+            font=("Segoe UI", 9, "bold"),
+            bordercolor=DARK_BG,
+        )
+
+        # Scrollbar
+        style.configure("Vertical.TScrollbar",
+            background=DARK_BG_MED, troughcolor=DARK_BG,
+            bordercolor=DARK_BG, arrowcolor=DARK_FG,
+            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED,
+        )
+        style.configure("Horizontal.TScrollbar",
+            background=DARK_BG_MED, troughcolor=DARK_BG,
+            bordercolor=DARK_BG, arrowcolor=DARK_FG,
+            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED,
+        )
+
+        # Progressbar
+        style.configure("TProgressbar",
+            background=GREEN_OK, troughcolor=DARK_BG_MED,
+            bordercolor=DARK_BG, lightcolor=GREEN_OK, darkcolor=GREEN_OK,
+        )
+        
+        self.root.configure(bg=DARK_BG)
         
     def setup_menu(self):
         """Create a friendly menu for hopping between tools and toggling overlays."""
@@ -357,38 +442,51 @@ class VideoDisplayGUI:
 
     def setup_header_bar(self, parent):
         """Create the top banner with app title and mode summary."""
-        header_frame = tk.Frame(parent, bg="#111111", height=58)
+        header_frame = tk.Frame(parent, bg=DARK_BG_MED, height=58)
         header_frame.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, 10))
         header_frame.grid_propagate(False)
 
-        title_frame = tk.Frame(header_frame, bg="#111111")
+        title_frame = tk.Frame(header_frame, bg=DARK_BG_MED)
         title_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=12, pady=8)
 
         ttk.Label(
             title_frame,
             text="MULTI-CAMERA IR BEACON TRACKER",
-            font=("Arial", 15, "bold"),
+            font=("Segoe UI", 15, "bold"),
+            foreground=DARK_FG,
+            background=DARK_BG_MED,
         ).pack(anchor=tk.W)
         ttk.Label(
             title_frame,
             text="Demo and live camera feeds with fused followspot overlays",
+            font=("Segoe UI", 9),
+            foreground=DARK_FG_SEC,
+            background=DARK_BG_MED,
         ).pack(anchor=tk.W, pady=(2, 0))
 
-        status_frame = tk.Frame(header_frame, bg="#111111")
+        status_frame = tk.Frame(header_frame, bg=DARK_BG_MED)
         status_frame.pack(side=tk.RIGHT, padx=12, pady=8)
 
         ttk.Label(
             status_frame,
             textvariable=self.fps_var,
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
+            foreground=GREEN_OK,
+            background=DARK_BG_MED,
         ).pack(anchor=tk.E)
         ttk.Label(
             status_frame,
             textvariable=self.beacon_count_var,
+            font=("Segoe UI", 9),
+            foreground=DARK_FG_SEC,
+            background=DARK_BG_MED,
         ).pack(anchor=tk.E)
         ttk.Label(
             status_frame,
             textvariable=self.front_status_var,
+            font=("Segoe UI", 9),
+            foreground=BLUE_LINK,
+            background=DARK_BG_MED,
         ).pack(anchor=tk.E)
 
     def show_connection_status(self) -> None:
@@ -439,17 +537,68 @@ class VideoDisplayGUI:
         
     def setup_ui(self):
         """Assemble the main layout: controls on the left, video wall on the right."""
-        # Configure root styling
+        # Industrial dark theme
         style = ttk.Style()
-        style.configure('Main.TFrame', background='#f5f5f5')
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        # Base colours
+        style.configure(".",
+            background=DARK_BG,
+            foreground=DARK_FG,
+            fieldbackground=DARK_BG_MED,
+            selectbackground=DARK_BG_LIGHT,
+            selectforeground=DARK_FG,
+            bordercolor=DARK_BG,
+            lightcolor=DARK_BG_MED,
+            darkcolor=DARK_BG_MED,
+        )
+        style.configure("TFrame", background=DARK_BG)
+        style.configure("TLabelframe", background=DARK_BG, foreground=DARK_FG_SEC)
+        style.configure("TLabelframe.Label", background=DARK_BG, foreground=DARK_FG_SEC, font=("Segoe UI", 9, "bold"))
+        style.configure("TLabel", background=DARK_BG, foreground=DARK_FG, font=("Segoe UI", 9))
+        style.configure("TButton", font=("Segoe UI", 9), padding=6,
+            background=DARK_BG_MED, foreground=DARK_FG,
+            bordercolor=DARK_BG, focuscolor=DARK_BG)
+        style.map("TButton",
+            background=[("active", DARK_BG_LIGHT), ("pressed", DARK_BG)],
+            foreground=[("active", DARK_FG), ("disabled", DARK_FG_MUTED)])
+        style.configure("Treeview",
+            background=DARK_BG_MED, foreground=DARK_FG,
+            fieldbackground=DARK_BG_MED, bordercolor=DARK_BG_MED,
+            font=("Segoe UI", 9), rowheight=24)
+        style.map("Treeview",
+            background=[("selected", DARK_BG_LIGHT)],
+            foreground=[("selected", DARK_FG)])
+        style.configure("Treeview.Heading",
+            background=DARK_BG, foreground=DARK_FG_SEC,
+            font=("Segoe UI", 9, "bold"), bordercolor=DARK_BG)
+        style.configure("Vertical.TScrollbar",
+            background=DARK_BG_MED, troughcolor=DARK_BG,
+            bordercolor=DARK_BG, arrowcolor=DARK_FG,
+            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED)
+        style.configure("Horizontal.TScrollbar",
+            background=DARK_BG_MED, troughcolor=DARK_BG,
+            bordercolor=DARK_BG, arrowcolor=DARK_FG,
+            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED)
+        style.configure("TProgressbar",
+            background=GREEN_OK, troughcolor=DARK_BG_MED,
+            bordercolor=DARK_BG, lightcolor=GREEN_OK, darkcolor=GREEN_OK)
+        self.root.configure(bg=DARK_BG)
+
+        # Failsafe annunciator (top banner)
+        self.annunciator = FailsafeAnnunciator(self.root, max_alarms=4)
+        self.annunciator.pack(fill=tk.X, side=tk.TOP)
 
         # Main container with proper margins
         main_frame = ttk.Frame(self.root, padding="0")
-        main_frame.grid(row=0, column=0, sticky="nsew")
+        main_frame.grid(row=1, column=0, sticky="nsew")
 
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
         main_frame.columnconfigure(1, weight=3)
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(0, weight=1)
@@ -585,51 +734,52 @@ class VideoDisplayGUI:
         self.video_label.bind("<Button-1>", self.on_video_click)
         
     def setup_status_bar(self, parent):
-        """Setup the status bar with error highlighting"""
-        # Create a tk.Frame instead of ttk.Frame for background color control
-        status_frame = tk.Frame(parent, bg="#1a1a1a", height=32)
+        """Setup the status bar with industrial theme"""
+        status_frame = tk.Frame(parent, bg=DARK_BG, height=36)
         status_frame.grid(row=1, column=0, columnspan=2, sticky="we", pady=(10, 0), padx=0)
+        status_frame.grid_propagate(False)
         
         self.status_var = tk.StringVar(value="Connecting to cameras...")
         self.status_label = tk.Label(
             status_frame,
             textvariable=self.status_var,
-            bg="#1a1a1a",
-            fg="#00ff00",
-            font=("Arial", 10),
+            bg=DARK_BG,
+            fg=GREEN_OK,
+            font=("Segoe UI", 10),
             anchor=tk.W,
-            padx=10,
+            padx=12,
             pady=6
         )
         self.status_label.grid(row=0, column=0, sticky=tk.W)
         
-        # Front status indicator with error highlighting
+        # Front status indicator
         self.front_status_label = tk.Label(
             status_frame,
             textvariable=self.front_status_var,
-            bg="#1a1a1a",
-            fg="#00ff00",
-            font=("Arial", 9),
+            bg=DARK_BG,
+            fg=BLUE_LINK,
+            font=("Segoe UI", 9),
             anchor=tk.E,
-            padx=10,
+            padx=12,
             pady=6
         )
         self.front_status_label.grid(row=0, column=1, sticky=tk.E)
         
         # Mode indicator
         mode_text = "DEMO MODE" if self.camera_manager.demo_mode else "LIVE MODE"
-        mode_color = "#ff9900" if self.camera_manager.demo_mode else "#00cc00"
+        mode_bg = DARK_BG_MED
+        mode_fg = AMBER_WARN if self.camera_manager.demo_mode else GREEN_OK
         mode_label = tk.Label(
             status_frame,
             text=f"  {mode_text}  ",
-            bg=("#333300" if self.camera_manager.demo_mode else "#003300"),
-            fg=mode_color,
-            font=("Arial", 9, "bold"),
+            bg=mode_bg,
+            fg=mode_fg,
+            font=("Segoe UI", 9, "bold"),
             anchor=tk.E,
-            padx=8,
+            padx=10,
             pady=4,
-            relief=tk.SUNKEN,
-            borderwidth=1
+            relief=tk.FLAT,
+            borderwidth=0
         )
         mode_label.grid(row=0, column=2, sticky=tk.E, padx=(5, 0))
         
@@ -640,6 +790,9 @@ class VideoDisplayGUI:
         # Store references for error highlighting
         self.status_frame = status_frame
         self.mode_label = mode_label
+        
+        # Stealth annunciator at bottom for critical alerts
+        self.stealth_annunciator = StealthAnnunciator(self.root)
         
     def setup_bindings(self):
         """Setup keyboard and event bindings"""
@@ -660,18 +813,25 @@ class VideoDisplayGUI:
         # Check for errors in main status
         has_main_error = 'error' in main_status or 'failed' in main_status or 'offline' in main_status
         if has_main_error:
-            self.status_label.config(fg="#ff2020", bg="#330000")  # Bright red on dark red background
-            self.status_frame.config(bg="#330000")
+            self.status_label.config(fg=RED_ERR, bg=DARK_BG)
+            self.status_frame.config(bg=DARK_BG)
+            self.stealth_annunciator.set_error("System error detected")
+        elif 'warn' in main_status or 'retry' in main_status:
+            self.status_label.config(fg=AMBER_WARN, bg=DARK_BG)
+            self.status_frame.config(bg=DARK_BG)
+            self.stealth_annunciator.set_warning("System warning")
         else:
-            self.status_label.config(fg="#00ff00", bg="#1a1a1a")  # Green on dark background
-            self.status_frame.config(bg="#1a1a1a")
+            self.status_label.config(fg=GREEN_OK, bg=DARK_BG)
+            self.status_frame.config(bg=DARK_BG)
+            self.stealth_annunciator.set_ok()
         
         # Check for errors in front status
-        has_front_error = 'error' in front_status or 'offline' in front_status or 'failed' in front_status
-        if has_front_error:
-            self.front_status_label.config(fg="#ffff00", bg="#331100")  # Yellow on dark red-brown background
+        if 'error' in front_status or 'failed' in front_status:
+            self.front_status_label.config(fg=RED_ERR)
+        elif 'warn' in front_status or 'stale' in front_status:
+            self.front_status_label.config(fg=AMBER_WARN)
         else:
-            self.front_status_label.config(fg="#00ff00", bg="#1a1a1a")  # Green on dark background
+            self.front_status_label.config(fg=BLUE_LINK)
     
     def _flash_error(self, label, cycles: int = 3) -> None:
         """Flash a label red to indicate error"""

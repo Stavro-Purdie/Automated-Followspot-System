@@ -26,6 +26,12 @@ import urllib.request
 
 from update_manager import UpdateManager, UpdateError, CommitInfo
 from node import setup_utils
+from control._theme import (
+    DARK_BG, DARK_BG_MED, DARK_BG_LIGHT, DARK_FG, DARK_FG_SEC, DARK_FG_MUTED,
+    GREEN_OK, AMBER_WARN, RED_ERR, BLUE_LINK,
+    SEVERITY_COLORS, FailsafeAnnunciator, DarkTerminal, FailsafeOverride,
+    apply_treeview_style, darken_color, brighten_color,
+)
 
 
 def ensure_window_fits_content(
@@ -169,13 +175,13 @@ class LauncherGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Automated Followspot System Launcher")
-        self.root.geometry("900x700")
+        self.root.geometry("1000x760")
         self.root.resizable(True, True)
-        self.root.configure(bg="SystemButtonFace")
+        self.root.configure(bg=DARK_BG)
         
-        # Use native OS theme
+        # Industrial theme styles
         style = ttk.Style()
-        set_native_theme(style)
+        self.setup_styles()
         
         self.project_root = Path(__file__).resolve().parent
         self.update_check_in_progress = False
@@ -195,12 +201,29 @@ class LauncherGUI:
         self.spinner_index = 0
         self.spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         
+        # Failsafe annunciator (top banner)
+        self.annunciator = FailsafeAnnunciator(self.root, max_alarms=4)
+        self.annunciator.pack(fill=tk.X, side=tk.TOP)
+        
+        # Failsafe override gates
+        self.uninstall_control_gate = FailsafeOverride(
+            self.annunciator, self._do_uninstall_control,
+            title="Uninstall Control Stack", timeout=5, retries=1
+        )
+        self.uninstall_node_gate = FailsafeOverride(
+            self.annunciator, self._do_uninstall_node,
+            title="Uninstall Node Stack", timeout=5, retries=1
+        )
+        self.uninstall_front_gate = FailsafeOverride(
+            self.annunciator, self._do_uninstall_front,
+            title="Uninstall Front Node", timeout=5, retries=1
+        )
+        
         # Setup GUI
-        self.setup_styles()
         self.create_widgets()
         self.build_common_menubar(self.root)
         self.update_ui_state()
-        ensure_window_fits_content(self.root, min_width=920, min_height=720, padding=60, center=True)
+        ensure_window_fits_content(self.root, min_width=1020, min_height=780, padding=60, center=True)
         self.root.after(2000, lambda: self.check_updates(auto_triggered=True))
         
         # Start periodic checks and animations
@@ -305,29 +328,135 @@ class LauncherGUI:
             messagebox.showerror("Configuration Error", f"Failed to save config: {e}")
     
     def setup_styles(self):
-        """Setup styles using native OS theme"""
+        """Setup industrial dark theme styles"""
         self.style = ttk.Style()
-        # Use native OS theme - aqua on macOS, vista/win10 on Windows, clam on Linux
-        # The theme_use will automatically select the system-appropriate theme
-        
-        # Configure typography with improved hierarchy (OS-native)
-        self.style.configure('Title.TLabel', font=('System', 16, 'bold'))
-        self.style.configure('Subtitle.TLabel', font=('System', 12, 'bold'))
-        self.style.configure('Status.TLabel', font=('System', 10))
-        self.style.configure('Primary.TButton', font=('System', 10, 'bold'), padding=8)
-        
-        # Status indicator colors (subtle, OS-friendly)
-        self.style.configure('Success.TLabel', font=('System', 10), foreground='#27ae60')
-        self.style.configure('Warning.TLabel', font=('System', 10), foreground='#f39c12')
-        self.style.configure('Error.TLabel', font=('System', 10), foreground='#e74c3c')
+        # Force clam as base for consistent dark theming
+        try:
+            self.style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        # Base colours
+        self.style.configure(".",
+            background=DARK_BG,
+            foreground=DARK_FG,
+            fieldbackground=DARK_BG_MED,
+            selectbackground=DARK_BG_LIGHT,
+            selectforeground=DARK_FG,
+            bordercolor=DARK_BG,
+            lightcolor=DARK_BG_MED,
+            darkcolor=DARK_BG_MED,
+        )
+
+        # Frames & panels
+        self.style.configure("TFrame", background=DARK_BG)
+        self.style.configure("TLabelframe", background=DARK_BG, foreground=DARK_FG_SEC)
+        self.style.configure("TLabelframe.Label", background=DARK_BG, foreground=DARK_FG_SEC, font=("Segoe UI", 9, "bold"))
+
+        # Labels
+        self.style.configure("TLabel", background=DARK_BG, foreground=DARK_FG, font=("Segoe UI", 9))
+        self.style.configure("Title.TLabel", font=("Segoe UI", 18, "bold"), foreground=DARK_FG)
+        self.style.configure("Subtitle.TLabel", font=("Segoe UI", 11, "bold"), foreground=DARK_FG_SEC)
+        self.style.configure("Status.TLabel", font=("Segoe UI", 9), foreground=DARK_FG_SEC)
+
+        # Buttons
+        self.style.configure("TButton",
+            font=("Segoe UI", 9), padding=6,
+            background=DARK_BG_MED, foreground=DARK_FG,
+            bordercolor=DARK_BG, focuscolor=DARK_BG,
+        )
+        self.style.map("TButton",
+            background=[("active", DARK_BG_LIGHT), ("pressed", DARK_BG)],
+            foreground=[("active", DARK_FG), ("disabled", DARK_FG_MUTED)],
+        )
+        self.style.configure("Primary.TButton",
+            font=("Segoe UI", 10, "bold"), padding=10,
+            background=BLUE_LINK, foreground=DARK_FG,
+        )
+        self.style.map("Primary.TButton",
+            background=[("active", brighten_color(BLUE_LINK)), ("pressed", darken_color(BLUE_LINK))],
+        )
+
+        # Entry / Combobox
+        self.style.configure("TEntry",
+            fieldbackground=DARK_BG_MED, foreground=DARK_FG,
+            bordercolor=DARK_BG, lightcolor=DARK_BG_MED, darkcolor=DARK_BG_MED,
+            insertcolor=DARK_FG,
+        )
+        self.style.configure("TCombobox",
+            fieldbackground=DARK_BG_MED, foreground=DARK_FG,
+            background=DARK_BG_MED,
+            arrowcolor=DARK_FG,
+        )
+        self.style.map("TCombobox",
+            fieldbackground=[("readonly", DARK_BG_MED)],
+            selectbackground=[("readonly", DARK_BG_LIGHT)],
+            selectforeground=[("readonly", DARK_FG)],
+        )
+
+        # Treeview
+        self.style.configure("Treeview",
+            background=DARK_BG_MED, foreground=DARK_FG,
+            fieldbackground=DARK_BG_MED,
+            bordercolor=DARK_BG, lightcolor=DARK_BG_MED, darkcolor=DARK_BG_MED,
+            font=("Segoe UI", 9),
+            rowheight=24,
+        )
+        self.style.map("Treeview",
+            background=[("selected", DARK_BG_LIGHT)],
+            foreground=[("selected", DARK_FG)],
+        )
+        self.style.configure("Treeview.Heading",
+            background=DARK_BG, foreground=DARK_FG_SEC,
+            font=("Segoe UI", 9, "bold"),
+            bordercolor=DARK_BG,
+        )
+
+        # Notebook (tabs)
+        self.style.configure("TNotebook", background=DARK_BG, borderwidth=0)
+        self.style.configure("TNotebook.Tab",
+            background=DARK_BG_MED, foreground=DARK_FG_SEC,
+            padding=(12, 6), font=("Segoe UI", 9),
+        )
+        self.style.map("TNotebook.Tab",
+            background=[("selected", DARK_BG_LIGHT), ("active", DARK_BG_LIGHT)],
+            foreground=[("selected", DARK_FG), ("active", DARK_FG)],
+        )
+
+        # Scrollbar
+        self.style.configure("Vertical.TScrollbar",
+            background=DARK_BG_MED, troughcolor=DARK_BG,
+            bordercolor=DARK_BG, arrowcolor=DARK_FG,
+            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED,
+        )
+        self.style.configure("Horizontal.TScrollbar",
+            background=DARK_BG_MED, troughcolor=DARK_BG,
+            bordercolor=DARK_BG, arrowcolor=DARK_FG,
+            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED,
+        )
+
+        # Progressbar
+        self.style.configure("TProgressbar",
+            background=GREEN_OK, troughcolor=DARK_BG_MED,
+            bordercolor=DARK_BG, lightcolor=GREEN_OK, darkcolor=GREEN_OK,
+        )
+
+        # Status colors
+        self.style.configure("Success.TLabel", font=("Segoe UI", 9), foreground=GREEN_OK)
+        self.style.configure("Warning.TLabel", font=("Segoe UI", 9), foreground=AMBER_WARN)
+        self.style.configure("Error.TLabel", font=("Segoe UI", 9), foreground=RED_ERR)
+        self.style.configure("Info.TLabel", font=("Segoe UI", 9), foreground=BLUE_LINK)
+
+        # Configure root window
+        self.root.configure(bg=DARK_BG)
     
     def create_widgets(self):
         """Create the main GUI widgets"""
         main_frame = ttk.Frame(self.root, padding="20")
-        main_frame.grid(row=0, column=0, sticky="nsew")
+        main_frame.grid(row=1, column=0, sticky="nsew")
 
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
         for col in range(3):
             main_frame.columnconfigure(col, weight=1)
 
@@ -719,22 +848,13 @@ class LauncherGUI:
         terminal_frame = ttk.LabelFrame(parent, text="Terminal Output", padding="10")
         terminal_frame.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
 
-        self.terminal_text = scrolledtext.ScrolledText(
-            terminal_frame,
-            height=15,
-            width=80,
-            font=('Consolas', 9),
-            bg='black',
-            fg='white',
-        )
-        self.terminal_text.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        self.terminal = DarkTerminal(terminal_frame, height=15)
+        self.terminal.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Button(terminal_frame, text="Clear", command=self.clear_terminal).grid(
-            row=1, column=0, sticky="w", pady=(5, 0)
-        )
-        ttk.Button(terminal_frame, text="Save Log", command=self.save_terminal_log).grid(
-            row=1, column=1, sticky="e", pady=(5, 0)
-        )
+        btn_frame = ttk.Frame(terminal_frame)
+        btn_frame.pack(fill=tk.X, pady=(5, 0))
+        ttk.Button(btn_frame, text="Clear", command=self.clear_terminal).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Save Log", command=self.save_terminal_log).pack(side=tk.RIGHT)
 
         terminal_frame.columnconfigure(0, weight=1)
         terminal_frame.rowconfigure(0, weight=1)
@@ -1052,13 +1172,11 @@ class LauncherGUI:
     def log_to_terminal(self, message):
         """Add message to terminal output"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.terminal_text.insert(tk.END, f"[{timestamp}] {message}\n")
-        self.terminal_text.see(tk.END)
-        self.root.update_idletasks()
+        self.terminal.log(f"[{timestamp}] {message}")
     
     def clear_terminal(self):
         """Clear terminal output"""
-        self.terminal_text.delete(1.0, tk.END)
+        self.terminal.clear()
     
     def save_terminal_log(self):
         """Save terminal log to file"""
@@ -1069,7 +1187,7 @@ class LauncherGUI:
         if filename:
             try:
                 with open(filename, 'w') as f:
-                    f.write(self.terminal_text.get(1.0, tk.END))
+                    f.write(self.terminal.text.get("1.0", tk.END))
                 messagebox.showinfo("Success", f"Log saved to {filename}")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save log: {e}")
@@ -1227,17 +1345,46 @@ class LauncherGUI:
                              "This will reinstall dependencies and verify the installation. Continue?"):
             self.run_installer("control", repair_mode=True)
     
+    def _do_uninstall_control(self):
+        """Actually uninstall control stack after confirmation"""
+        self.config['installations']['control_stack']['installed'] = False
+        self.config['installations']['control_stack']['version'] = None
+        self.config['installations']['control_stack']['install_date'] = None
+        self.save_config()
+        self.update_ui_state()
+        self.log_to_terminal("Control stack uninstalled")
+
     def uninstall_control(self):
-        """Uninstall control stack"""
-        if messagebox.askyesno("Uninstall Control Stack", 
-                             "This will remove the control stack installation. Continue?"):
-            self.config['installations']['control_stack']['installed'] = False
-            self.config['installations']['control_stack']['version'] = None
-            self.config['installations']['control_stack']['install_date'] = None
-            self.save_config()
-            self.update_ui_state()
-            self.log_to_terminal("Control stack uninstalled")
-    
+        """Uninstall control stack with failsafe override"""
+        self.uninstall_control_gate.request()
+
+    def _do_uninstall_node(self):
+        """Actually uninstall node stack after confirmation"""
+        self.config['installations']['node_stack']['installed'] = False
+        self.config['installations']['node_stack']['version'] = None
+        self.config['installations']['node_stack']['install_date'] = None
+        self.config['installations']['node_stack']['cron_enabled'] = False
+        self.save_config()
+        self.update_ui_state()
+        self.log_to_terminal("Node stack uninstalled")
+
+    def uninstall_node(self):
+        """Uninstall node stack with failsafe override"""
+        self.uninstall_node_gate.request()
+
+    def _do_uninstall_front(self):
+        """Actually uninstall front node stack after confirmation"""
+        self.config['installations']['front_node_stack']['installed'] = False
+        self.config['installations']['front_node_stack']['version'] = None
+        self.config['installations']['front_node_stack']['install_date'] = None
+        self.save_config()
+        self.update_ui_state()
+        self.log_to_terminal("Front node stack uninstalled")
+
+    def uninstall_front_node(self):
+        """Uninstall front node stack with failsafe override"""
+        self.uninstall_front_gate.request()
+
     # Node stack methods
     def start_node_server(self):
         """Start node server"""
@@ -1321,36 +1468,7 @@ class LauncherGUI:
         if messagebox.askyesno("Reinstall Node Stack", 
                              "This will completely reinstall the node stack. Continue?"):
             self.run_installer("node", reinstall_mode=True)
-    
-    def uninstall_node(self):
-        """Uninstall node stack"""
-        if messagebox.askyesno("Uninstall Node Stack", 
-                             "This will remove the node stack installation. Continue?"):
-            self.config['installations']['node_stack']['installed'] = False
-            self.config['installations']['node_stack']['version'] = None
-            self.config['installations']['node_stack']['install_date'] = None
-            self.config['installations']['node_stack']['cron_enabled'] = False
-            self.save_config()
-            self.update_ui_state()
-            self.log_to_terminal("Node stack uninstalled")
-
-    def uninstall_front_node(self):
-        """Uninstall front node stack"""
-        if messagebox.askyesno(
-            "Uninstall Front Node",
-            "This will remove the front node installation metadata. Continue?",
-        ):
-            front_cfg = self.config['installations'].setdefault('front_node_stack', {})
-            front_cfg['installed'] = False
-            front_cfg['version'] = None
-            front_cfg['install_date'] = None
-            front_cfg['dependencies_verified'] = False
-            front_cfg['last_dependency_check'] = None
-            self.save_config()
-            self.update_ui_state()
-            self.front_node_status_label.config(text="Status: Not Installed")
-            self.log_to_terminal("Front node stack uninstalled")
-    
+     
     # General methods
     def show_about(self):
         """Show about dialog"""
