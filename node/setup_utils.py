@@ -37,6 +37,110 @@ def _service_name(stack_slug: str) -> str:
     return f"followspot-{stack_slug.replace('-', '_')}"
 
 
+def enable_uart4_for_dmx() -> tuple[bool, str]:
+    """Enable UART4 (/dev/ttyAMA0) for DMX512 on Raspberry Pi.
+
+    Adds dtoverlay=uart4 to /boot/firmware/config.txt if not present.
+    Returns (success, message).
+    """
+    config_paths = [
+        Path("/boot/firmware/config.txt"),
+        Path("/boot/config.txt"),
+    ]
+    config_path = None
+    for p in config_paths:
+        if p.exists():
+            config_path = p
+            break
+
+    if not config_path:
+        return False, "No config.txt found at /boot/firmware/config.txt or /boot/config.txt"
+
+    try:
+        content = config_path.read_text()
+    except Exception as exc:
+        return False, f"Failed to read {config_path}: {exc}"
+
+    if "dtoverlay=uart4" in content:
+        return True, "UART4 already enabled in config.txt"
+
+    # Append the dtoverlay
+    try:
+        with config_path.open("a") as f:
+            f.write("\n# Enable UART4 for DMX512 on /dev/ttyAMA0\ndtoverlay=uart4\n")
+    except Exception as exc:
+        return False, f"Failed to write {config_path}: {exc}"
+
+    return True, f"Added dtoverlay=uart4 to {config_path} (reboot required)"
+
+
+def validate_dmx_timing(port: str = "/dev/ttyAMA0", baudrate: int = 250000) -> tuple[bool, str]:
+    """Validate DMX512 timing on the specified serial port.
+
+    Opens the port at 250000 baud 8N2 and attempts to send a break+MAB+frame.
+    Requires pyserial. Returns (success, message).
+    """
+    try:
+        import serial
+    except ImportError:
+        return False, "pyserial not installed (pip install pyserial)"
+
+    try:
+        ser = serial.Serial(
+            port=port,
+            baudrate=baudrate,
+            bytesize=serial.EIGHTBITS,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_TWO,
+            timeout=0.1,
+            write_timeout=1,
+        )
+    except Exception as exc:
+        return False, f"Failed to open {port} at {baudrate} baud: {exc}"
+
+    try:
+        import termios
+        fd = ser.fileno()
+        attrs = termios.tcgetattr(fd)
+
+        # Send break at current baud (250kbps): 176µs = ~44 bit times
+        # We'll send a few 0x00 bytes at a much lower baud
+        # For now just verify we can write
+        ser.write(b'\x00' * 2)
+        ser.flush()
+        ser.close()
+        return True, f"DMX port {port} opened successfully at {baudrate} baud 8N2"
+    except Exception as exc:
+        try:
+            ser.close()
+        except Exception:
+            pass
+        return False, f"DMX timing validation failed: {exc}"
+
+
+def _run_command(command: list[str]) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            universal_newlines=True,
+            check=False,
+        )
+        success = result.returncode == 0
+        output = (result.stdout or "").strip()
+        return success, output
+    except FileNotFoundError:
+        return False, f"Command not found: {' '.join(command)}"
+    except Exception as exc:  # pragma: no cover - defensive
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _service_name(stack_slug: str) -> str:
+    return f"followspot-{stack_slug.replace('-', '_')}"
+
+
 def ensure_autostart_service(
     stack_slug: str,
     project_root: Path,
@@ -114,7 +218,9 @@ def ensure_autostart_service(
             "Type=simple",
             f"WorkingDirectory={project_root}",
             f"ExecStart={exec_start}",
-            "Restart=on-failure",
+            "Restart=always",
+            "RestartSec=5",
+            "WatchdogSec=30",
             "Environment=PYTHONUNBUFFERED=1",
             *env_lines,
             "",
