@@ -91,15 +91,23 @@ python3 launcher.py --node
 
 ## System Architecture
 
+## System Architecture
+
 ### Control Stack
 The control stack manages camera feeds, performs IR beacon detection, and provides the user interface:
 
 - **Camera Aggregator**: Manages multiple camera connections via WebRTC
 - **IR Beacon Detection**: Real-time detection and tracking algorithms
+- **ReID Processing**: Person Re-Identification with OSNet embeddings
+  - CoreML Neural Engine acceleration on Apple Silicon
+  - TensorRT FP16 optimization on NVIDIA Jetson
+- **Data Fusion**: Kalman filter fusion of IR beacon + ReID tracks
+- **Spotlight Controller**: Computes pan/tilt from fused positions
 - **Configuration GUI**: Camera setup and calibration interface
 - **Video Display**: Composite video output with overlay information
 - **Demo Mode**: Simulated cameras with moving beacons for testing
-- **Help System**: Independent help window accessible via Help menu or 'H' key with complete keyboard shortcuts reference
+- **3D Visualization**: Real-time 3D stage rendering with matplotlib
+- **Help System**: Independent help window accessible via Help menu or 'H' key
 
 **Key Files:**
 - `control/main.py` - Main application entry point
@@ -107,6 +115,12 @@ The control stack manages camera feeds, performs IR beacon detection, and provid
 - `control/camera_config_gui.py` - Configuration interface
 - `control/video_display_gui.py` - Video display GUI
 - `control/demo_mode.py` - Demo/simulation mode
+- `control/reid_runner.py` - ReID pipeline (detect + embed + track)
+- `control/reid_processor.py` - Optimized OSNet + YOLOv8 pipeline
+- `control/person_tracker.py` - Appearance + geometry tracking
+- `control/fused_main.py` - IR + ReID + Kalman fusion
+- `control/spotlight_controller.py` - Pan/tilt computation + DMX
+- `visualization_3d.py` - 3D stage rendering with matplotlib
 
 ### Node Stack
 The node stack runs on camera devices (typically Raspberry Pi) to stream video:
@@ -115,9 +129,13 @@ The node stack runs on camera devices (typically Raspberry Pi) to stream video:
 - **Hardware Integration**: Raspberry Pi camera module support
 - **Network Streaming**: Low-latency video transmission
 - **Remote Management**: Command-line interface for headless operation
+- **DMX Output**: RS485/Art-Net/sACN for fixture control
+- **Health Monitoring**: `/health` endpoint with psutil stats
 
 **Key Files:**
 - `node/server.py` - Camera streaming server
+- `node/dmx_transport.py` - DMX512/Art-Net/sACN transports
+- `node/dmx_transport.py` - DMXEncoder with fixture profiles
 - `node/README.md` - Node-specific documentation
 
 Run the front truss node on a Raspberry Pi with the HQ (IMX477) camera and RS485 HAT using the dedicated profile:
@@ -343,7 +361,34 @@ This is a practical starting list rather than a locked purchasing list.
 | Temp source | XIAO ESP32-C6 onboard sensor | Built in; no extra BOM item required |
 | Fan | 5V or 12V enclosure fan with tach | Optional, for true `fan_rpm` telemetry |
 
-### Build Steps
+### Firmware Features
+
+The beacon firmware now includes:
+
+**INA219 Current Sensor Support**
+- Auto-detects INA219 at I2C address 0x40 on startup
+- Reads `current_mA` from LED supply rail (high-side)
+- Calibration: `INA219_SHUNT_OHMS = 0.1` (adjust for your shunt resistor)
+- Reports `current_a` in `/api/status` telemetry
+
+**ESP32-C6 Internal Temperature Sensor**
+- Uses `temperatureRead()` (Arduino ESP32 core ≥ 3.0)
+- Reports die temperature as `temp_c` in telemetry
+- No external wiring required
+
+**Fan Tachometer Support**
+- Connect fan tach output to `PIN_FAN_TACH` (default GPIO 7)
+- Counts falling edges, computes RPM (2 pulses/rev for typical fans)
+- Reports `fan_rpm` in telemetry
+- Auto-detects at startup
+
+**OTA Firmware Updates**
+- Endpoint: `POST /api/ota` with JSON `{"url": "http://host/firmware.bin"}`
+- Uses Arduino `HTTPUpdate` library
+- Verifies firmware size, writes to flash, auto-restarts on success
+- Trigger from Python: `push_ota(beacon, firmware_url)`
+
+### Reference Schematic Notes
 
 1. Mount the ESP32-C6 board in the enclosure with access to USB and the button.
 2. Wire the OLED over I2C with short leads and a solid ground reference.
@@ -370,14 +415,26 @@ The beacon publishes a status payload to `/api/status` with a nested `telemetry`
 
 The same device also accepts posted telemetry on `/api/telemetry` so external sense data can be stored and displayed later.
 
+The same device also accepts posted telemetry on `/api/telemetry` so external sense data can be stored and displayed later.
+
+### Beacon OTA & Telemetry
+
+The beacon firmware now supports over-the-air firmware updates and extended telemetry:
+
+**OTA Firmware Updates**
+- Endpoint: `POST /api/ota` with JSON `{"url": "http://host/firmware.bin"}`
+- Uses Arduino `HTTPUpdate` library with `WiFiClient`
+- Verifies firmware size, streams to flash, auto-restarts on success
+- Python trigger: `push_ota(beacon, firmware_url)` in `beacon_network.py`
+
+**Extended Telemetry (Real Sensors)**
+- `current_a` - INA219 high-side current sensor on LED rail (mA)
+- `temp_c` - ESP32-C6 internal die temperature sensor
+- `fan_rpm` - Fan tachometer on GPIO 7 (2 pulses/rev)
+
+Sensors auto-detect at startup; missing sensors report as `0`/`null` in JSON.
+
 ### Practical Notes
-
-- Keep the IR driver supply separate from the OLED logic rail if the LED current is high.
-- Use a common ground between the ESP32, OLED, battery divider, and LED driver.
-- If the beacon is installed in a noisy RF environment, prioritize a strong Wi-Fi antenna placement and short I2C wiring.
-- If you expand the sensing hardware, preserve the current JSON field names so the monitor and dashboard stay compatible.
-
-On headless deployments, launch the  CLI to provision any stack—including the front truss node—without a desktop session:
 
 ```bash
 python3 launcher.py --cli
@@ -608,22 +665,126 @@ Run camera server on Pi or other devices:
 python3 launcher.py --node
 ```
 
-## Controls and Keyboard Shortcuts
+## ReID Acceleration
 
-### Video Display Controls
-- **Q**: Quit application
-- **+/-**: Adjust IR threshold
-- **S**: Save screenshot
-- **R**: Reset view/reload configuration
-- **Space**: Start/Stop video display
-- **O**: Toggle raw overlay
-- **G**: Toggle coordinate grid
-- **C**: Toggle coordinate info
-- **B**: Toggle IR beacon overlay
+### Apple Silicon (CoreML / Neural Engine)
+Enable Neural Engine acceleration for OSNet ReID embeddings:
 
-### Mouse Controls
-- **Click**: Show coordinates at clicked position
-- **Drag**: Pan view (when implemented)
+```json
+// config/reid_config.json
+"optimization": {
+  "coreml_reid_enabled": true,
+  "coreml_model_path": "reid/models/osnet_x0_5.mlpackage",
+  "coreml_compute_unit": "CPU_AND_NE",
+  "coreml_skip_torch": true
+}
+```
+
+Convert OSNet to CoreML:
+```bash
+python3 tools/convert_osnet_coreml.py --output reid/models/osnet_x0_5.mlpackage
+```
+
+**Compute Units:**
+- `CPU_AND_NE` - Neural Engine (lowest power)
+- `CPU_AND_GPU` - Metal GPU
+- `ALL` - Automatic
+- `CPU_ONLY` - CPU fallback
+
+### NVIDIA Jetson (TensorRT)
+Export OSNet to TensorRT engine for Jetson:
+
+```bash
+python3 tools/export_tensorrt.py --model osnet_x0_5 --output reid/models/osnet_x0_5.engine --fp16
+```
+
+Options:
+- `--precision fp16|fp32|int8`
+- `--max-batch 32`
+- `--workspace 1GB`
+
+## Configuration Validation
+
+All configuration files validated against JSON Schema:
+
+```bash
+python3 tools/validate_config.py
+```
+
+Validates:
+- `config/front_array_config.json`
+- `config/roof_array_config.json`
+- `config/spotlight_config.json`
+- `config/reid_config.json`
+
+Auto-generate documentation from schemas:
+```bash
+python3 tools/generate_config_docs.py
+```
+Outputs Markdown to `docs/config/`.
+
+## Structured Logging
+
+Structured JSON logging with correlation IDs:
+
+```python
+from utils.logging import setup_logging, info, error
+
+logger = setup_logging("my_service", level=logging.INFO)
+info(logger, "Processing frame", frame_id=42, detections=3)
+```
+
+Output:
+```json
+{"timestamp":"2026-07-19T14:30:00.123Z","level":"INFO","service":"my_service","trace_id":"a1b2c3d4","logger":"my_service","message":"Processing frame","extra":{"frame_id":42,"detections":3}}
+```
+
+Correlation IDs propagate across async boundaries via `contextvars`.
+
+## 3D Visualization
+
+Real-time 3D stage visualization with matplotlib backend:
+
+```bash
+python3 visualization_3d.py --demo
+```
+
+Features:
+- **Stage3D**: Stage geometry with floor grid, walls, and origin marker
+- **Spotlight3D**: Fixture position, beam cone visualization with pan/tilt
+- **Camera3D**: Camera positions with frustum visualization
+- **Person3D**: Tracked performers with velocity vectors and trails
+- **Real-time animation** with matplotlib FuncAnimation
+- **Demo mode** with simulated performers and spotlight tracking
+
+To integrate with live data, use the `Visualization3DServer` class to receive real-time updates via WebSocket.
+
+## DMX Output Pipeline
+
+Complete DMX512 output pipeline for driving moving-head fixtures:
+
+**Transports:**
+- **RS485 Serial** - 250kbps DMX512 with break/MAB timing
+- **Art-Net** - UDP broadcast to Ethernet-DMX gateways
+- **sACN/E1.31** - Multicast streaming ACN
+- **Stub** - Testing without hardware
+
+**Configuration** (`config/spotlight_config.json`):
+```json
+"dmx": {
+  "transport": "rs485_serial",
+  "serial_port": "/dev/ttyAMA0",
+  "universe": 1,
+  "fixture_profile": "config/fixture_profiles.json"
+}
+```
+
+**Fixture Profiles** (`config/fixture_profiles.json`):
+- Generic Moving Head (pan/tilt 16-bit, dimmer)
+- Generic LED PAR
+- Robinte Mega Pointe (25 channels)
+
+The `DMXEncoder` converts pan/tilt/brightness to 512-channel frames using fixture channel mapping.
 
 ## System Requirements
 
