@@ -1752,7 +1752,7 @@ class BeaconFlashWindow:
         self.ssid_var = tk.StringVar()
         self.pass_var = tk.StringVar()
         self.port_var = tk.StringVar()
-        self.fqbn_var = tk.StringVar(value="esp32:esp32:xiao_esp32c6")
+        self.fqbn_var = tk.StringVar(value="esp32:esp32:XIAO_ESP32C6")
         self.name_var = tk.StringVar(value="Beacon")
         self.dep_status_var = tk.StringVar(value="Checking dependencies...")
         self.deps_ok = False
@@ -1911,7 +1911,7 @@ class BeaconFlashWindow:
         password = self.pass_var.get().strip()
         port = self.port_var.get().strip()
         name = self.name_var.get().strip() or "Beacon"
-        fqbn = self.fqbn_var.get().strip() or "esp32:esp32:xiao_esp32c6"
+        fqbn = self.fqbn_var.get().strip() or "esp32:esp32:XIAO_ESP32C6"
 
         if not ssid or not password:
             messagebox.showwarning("Missing Input", "SSID and password are required.", parent=self.window)

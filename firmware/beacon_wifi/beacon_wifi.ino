@@ -5,7 +5,13 @@
 #include <WiFi.h>
 #include <WebServer.h>
 
+#if __has_include("wifi_credentials.h")
 #include "wifi_credentials.h"
+#else
+#define WIFI_SSID_DEFAULT ""
+#define WIFI_PASS_DEFAULT ""
+#define BEACON_NAME_DEFAULT "IR Beacon"
+#endif
 
 /********************************************************************
   Wi-Fi IR BEACON DRIVER – Xiao ESP32-C6
@@ -56,6 +62,9 @@ String beaconName = BEACON_NAME_DEFAULT;
 WebServer server(80);
 bool wifiReady = false;
 String lastTelemetryBody = "{}";
+float uiBatteryVoltage = VBAT_MAX;
+int uiBatteryPercent = 100;
+unsigned long uiLastDrawMs = 0;
 
 struct TelemetrySnapshot {
   float batteryVoltage;
@@ -144,6 +153,207 @@ String escapeJson(const String &src) {
     }
   }
   return out;
+}
+
+void drawFrameChrome(unsigned long nowMs, bool warningMode) {
+  int pulse = (nowMs / 180) % 8;
+  int borderInset = warningMode ? 0 : 1;
+  display.drawRect(borderInset, borderInset, OLED_W - borderInset * 2, OLED_H - borderInset * 2, SSD1306_WHITE);
+  display.drawRect(borderInset + 1, borderInset + 1, OLED_W - (borderInset + 1) * 2, OLED_H - (borderInset + 1) * 2, SSD1306_WHITE);
+
+  for (int x = 6; x < OLED_W - 6; x += 18) {
+    display.drawPixel(x, 5 + (pulse % 3), SSD1306_WHITE);
+  }
+
+  for (int y = 8; y < OLED_H - 8; y += 16) {
+    display.drawPixel(OLED_W - 7 - (pulse % 2), y, SSD1306_WHITE);
+  }
+}
+
+void drawProgressBar(int x, int y, int w, int h, int pct, bool highlight) {
+  pct = constrain(pct, 0, 100);
+  display.drawRect(x, y, w, h, SSD1306_WHITE);
+  int fillWidth = (w - 2) * pct / 100;
+  if (fillWidth > 0) {
+    display.fillRect(x + 1, y + 1, fillWidth, h - 2, SSD1306_WHITE);
+  }
+  if (highlight && fillWidth > 0) {
+    display.drawFastVLine(x + 1 + fillWidth - 1, y + 1, h - 2, SSD1306_BLACK);
+  }
+}
+
+void drawBootScreen() {
+  display.clearDisplay();
+  display.fillRect(0, 0, OLED_W, 10, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK);
+  display.setTextSize(1);
+  display.setCursor(6, 1);
+  display.print("IR BEACON SYSTEM");
+  display.setTextColor(SSD1306_WHITE);
+  display.drawRect(2, 14, OLED_W - 4, 48, SSD1306_WHITE);
+  display.fillRect(6, 18, 24, 24, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK);
+  display.setTextSize(2);
+  display.setCursor(11, 22);
+  display.print("B");
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(38, 20);
+  display.print("Name:");
+  display.setCursor(38, 30);
+  display.print(safeName(beaconName));
+  display.setCursor(38, 42);
+  display.print("ID ");
+  display.print(beaconID);
+  display.print("  Warming up");
+  display.drawFastHLine(6, 54, 116, SSD1306_WHITE);
+  display.fillRect(6, 56, 64, 4, SSD1306_WHITE);
+  display.display();
+}
+
+void drawDashboardScreen(float batteryVoltage, int batteryPercent, float freqHz) {
+  unsigned long nowMs = millis();
+  int pulse = (nowMs / 140) % 10;
+  int barWidth = 44 + pulse;
+
+  display.clearDisplay();
+  drawFrameChrome(nowMs, false);
+
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(6, 6);
+  display.print(safeName(beaconName));
+
+  display.setCursor(6, 17);
+  display.print("ID ");
+  display.print(beaconID);
+  display.print("  ");
+  display.print((int)freqHz);
+  display.print("Hz");
+
+  display.fillRect(84, 4, 38, 10, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK);
+  display.setCursor(87, 6);
+  display.print(WiFi.isConnected() ? "LIVE" : "AP");
+  display.setTextColor(SSD1306_WHITE);
+
+  display.setCursor(6, 29);
+  display.print("BAT");
+  display.setCursor(6, 39);
+  display.print(batteryVoltage, 2);
+  display.print("V");
+  drawProgressBar(44, 34, 76, 9, batteryPercent, true);
+  display.setCursor(46, 46);
+  display.print(batteryPercent);
+  display.print("%");
+
+  display.drawRoundRect(6, 50, 38, 10, 3, SSD1306_WHITE);
+  display.fillRect(8, 52, constrain(barWidth, 0, 34), 6, SSD1306_WHITE);
+
+  display.setCursor(54, 52);
+  display.print(WiFi.isConnected() ? WiFi.localIP().toString() : String("AP:") + String(beaconID));
+
+  display.drawFastHLine(6, 26, 116, SSD1306_WHITE);
+  display.drawPixel(123, 6 + pulse % 3, SSD1306_WHITE);
+  display.drawPixel(121, 8 + pulse % 2, SSD1306_WHITE);
+  display.display();
+}
+
+void drawMenuScreen() {
+  unsigned long nowMs = millis();
+  int pulse = (nowMs / 220) % 2;
+
+  display.clearDisplay();
+  display.fillRect(0, 0, OLED_W, 12, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK);
+  display.setTextSize(1);
+  display.setCursor(5, 2);
+  display.print("SYSTEM MENU");
+  display.setTextColor(SSD1306_WHITE);
+
+  drawFrameChrome(nowMs, false);
+
+  const char *labels[3] = {"BRIGHTNESS", "IR OUTPUT", "BEACON ID"};
+  for (int i = 0; i < 3; i++) {
+    int y = 18 + i * 13;
+    bool selected = (menuIdx == i);
+    if (selected) {
+      display.fillRoundRect(4, y - 1, 120, 11, 3, SSD1306_WHITE);
+      display.setTextColor(SSD1306_BLACK);
+    } else {
+      display.drawRoundRect(4, y - 1, 120, 11, 3, SSD1306_WHITE);
+      display.setTextColor(SSD1306_WHITE);
+    }
+    display.setCursor(9, y + 1);
+    display.print(selected && pulse ? ">" : " ");
+    display.print(labels[i]);
+    display.setCursor(82, y + 1);
+    if (i == 0) {
+      display.print(map(lvlIdx, 0, 5, 0, 100));
+      display.print("%");
+    } else if (i == 1) {
+      display.print(ledEnable ? "ARMED" : "OFF");
+    } else {
+      display.print(beaconID);
+    }
+  }
+
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(5, 57);
+  display.print("Tap to cycle  Hold to exit");
+  display.display();
+}
+
+void drawWarningScreen(const String &headline, const String &detail) {
+  unsigned long nowMs = millis();
+  bool flash = ((nowMs / 240) % 2) == 0;
+
+  display.clearDisplay();
+  if (flash) {
+    display.fillRect(0, 0, OLED_W, OLED_H, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK);
+  } else {
+    display.drawRect(0, 0, OLED_W, OLED_H, SSD1306_WHITE);
+    display.setTextColor(SSD1306_WHITE);
+  }
+
+  display.setTextSize(1);
+  display.setCursor(10, 6);
+  display.print("!!! ALERT !!!");
+  display.fillRect(10, 16, 108, 18, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK);
+  display.setTextSize(2);
+  display.setCursor(14, 20);
+  display.print(headline);
+  display.setTextColor(flash ? SSD1306_BLACK : SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(10, 42);
+  display.print(detail);
+  display.setCursor(10, 54);
+  display.print("Keep power stable and recheck link");
+
+  display.drawFastHLine(8, 62, 112, SSD1306_WHITE);
+  display.drawPixel(5 + (nowMs / 80) % 118, 61, SSD1306_WHITE);
+  display.display();
+}
+
+void renderBeaconDisplay(float batteryVoltage, int batteryPercent, float freqHz) {
+  if (menuMode) {
+    drawMenuScreen();
+    return;
+  }
+
+  if (lowBatt) {
+    drawWarningScreen("LOW BATT", String(batteryVoltage, 2) + "V  IR disabled");
+    return;
+  }
+
+  if (!wifiReady && !WiFi.isConnected()) {
+    drawWarningScreen("NO WIFI", String("AP ") + String(beaconID) + " active");
+    return;
+  }
+
+  drawDashboardScreen(batteryVoltage, batteryPercent, freqHz);
 }
 
 TelemetrySnapshot collectTelemetry() {
@@ -282,14 +492,7 @@ void setup() {
   loadSettings();
 
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.print("Name: "); display.println(safeName(beaconName));
-  display.setTextSize(2);
-  display.setCursor(0, 18);
-  display.print("ID "); display.println(beaconID);
-  display.display();
+  drawBootScreen();
   delay(800);
 
   for (uint16_t i = 0; i < HIST; i++) vHist[i] = VBAT_MAX;
@@ -349,25 +552,14 @@ void loop() {
     uint16_t raw = analogRead(PIN_VBAT);
     float v = (raw / 4095.0f) * 3.3f * 2.0f;   // 1:1 divider
     vHist[vPtr] = v; vPtr = (vPtr + 1) % HIST;
+    uiBatteryVoltage = v;
+    uiBatteryPercent = constrain(map((int)(v * 1000), (int)(VBAT_MIN * 1000), (int)(VBAT_MAX * 1000), 0, 100), 0, 100);
     if (v <= VBAT_CUT && !lowBatt) { lowBatt = true; analogWrite(PIN_IRLED, 0); }
-    if (!menuMode) {
-      // quick inline draw (simple to avoid reallocating)
-      display.clearDisplay();
-      display.setTextSize(1);
-      display.setCursor(0, 0);
-      display.print("Name: "); display.println(safeName(beaconName));
-      display.setCursor(0, 12);
-      display.print("ID:"); display.print(beaconID);
-      display.print(" "); display.print((int)f); display.print("Hz");
-      int pct = constrain(map((int)(v * 1000), (int)(VBAT_MIN * 1000), (int)(VBAT_MAX * 1000), 0, 100), 0, 100);
-      display.setCursor(0, 24);
-      display.print("Vbat: "); display.print(v, 2); display.println("V");
-      display.setCursor(0, 34);
-      display.print("LED: "); display.println(ledEnable ? "ON" : "OFF");
-      display.setCursor(0, 44);
-      display.print("WiFi: "); display.println(WiFi.isConnected() ? WiFi.localIP().toString() : "AP");
-      display.display();
-    }
+  }
+
+  if (millis() - uiLastDrawMs > 120) {
+    uiLastDrawMs = millis();
+    renderBeaconDisplay(uiBatteryVoltage, uiBatteryPercent, f);
   }
 
   /* ---- Button logic ---- */

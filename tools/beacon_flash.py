@@ -21,9 +21,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FW_DIR = ROOT / "firmware" / "beacon_wifi"
-CRED_TEMPLATE = FW_DIR / "wifi_credentials.h.example"
 CRED_TARGET = FW_DIR / "wifi_credentials.h"
-FQBN = os.environ.get("ARDUINO_FQBN", "esp32:esp32:xiao_esp32c6")
+FQBN = os.environ.get("ARDUINO_FQBN", "esp32:esp32:XIAO_ESP32C6")
 
 
 def write_credentials(ssid: str, password: str, name: str) -> None:
@@ -41,7 +40,25 @@ def write_credentials(ssid: str, password: str, name: str) -> None:
 
 def run(cmd: list[str]) -> None:
     print("[cmd]", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.returncode != 0:
+        if result.stderr:
+            print(result.stderr, end="")
+        raise SystemExit(result.returncode)
+
+
+def clear_arduino_sketch_cache() -> None:
+    cache_dirs = [
+        Path.home() / "Library" / "Caches" / "arduino" / "sketches",
+        Path.home() / ".cache" / "arduino" / "sketches",
+    ]
+    for cache_dir in cache_dirs:
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+            print(f"[cleanup] Removed Arduino sketch cache: {cache_dir}")
+            return
 
 
 def ensure_cli() -> None:
@@ -58,10 +75,10 @@ def validate_cli_value(value: str, label: str, pattern: str) -> str:
 
 def flash(args: argparse.Namespace) -> None:
     ensure_cli()
-    if not CRED_TARGET.exists():
-        raise SystemExit(f"wifi_credentials.h missing; expected at {CRED_TARGET}")
+    clear_arduino_sketch_cache()
 
-    safe_fqbn = validate_cli_value(FQBN, "FQBN", r"[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+")
+    fqbn = args.fqbn or FQBN
+    safe_fqbn = validate_cli_value(fqbn, "FQBN", r"[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+")
     safe_port = validate_cli_value(args.port, "serial port", r"[A-Za-z0-9_./:-]+")
 
     build_dir = FW_DIR
@@ -87,10 +104,8 @@ def main() -> None:
     parser.add_argument("--password", required=True, help="Wi-Fi password for STA mode")
     parser.add_argument("--port", required=True, help="Serial port (e.g., /dev/tty.usbmodemXYZ or COM5)")
     parser.add_argument("--name", required=False, default="Beacon", help="Display name to show on the beacon screen")
+    parser.add_argument("--fqbn", required=False, default=None, help="Arduino board FQBN override")
     args = parser.parse_args()
-
-    if not CRED_TEMPLATE.exists():
-        raise SystemExit(f"Template missing: {CRED_TEMPLATE}")
 
     try:
         write_credentials(args.ssid, args.password, args.name)
