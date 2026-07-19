@@ -82,7 +82,7 @@ def set_native_theme(style: ttk.Style) -> None:
     
     try:
         style.theme_use(theme)
-except tk.TclError:
+    except tk.TclError:
             # Fall back if theme not available
             try:
                 style.theme_use('default')
