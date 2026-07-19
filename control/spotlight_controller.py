@@ -114,8 +114,8 @@ class SpotlightController:
         command = self._compute_command(position)
         command.update(
             {
-                "target_id": target["id"],
-                "target_confidence": target["confidence"],
+                "target_id": target.get("id", target.get("point_id", 0)),
+                "target_confidence": target.get("confidence", 1.0),
                 "axis_confidence": target.get("axis_confidence", [0.0, 0.0, 0.0]),
                 "timestamp": timestamp,
             }
