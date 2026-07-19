@@ -1655,7 +1655,7 @@ class LauncherGUI:
         
         try:
             if background:
-                subprocess.Popen(cmd, cwd=script_path.parent)
+                subprocess.Popen(cmd, cwd=self.project_root)
                 self.log_to_terminal(f"{description} started in background")
             else:
                 # Run in foreground and capture output
@@ -1663,7 +1663,7 @@ class LauncherGUI:
                     try:
                         process = subprocess.Popen(
                             cmd, 
-                            cwd=script_path.parent,
+                            cwd=self.project_root,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT,
                             text=True,
