@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Beacon Monitor GUI.
+Beacon Monitor GUI - Industrial Dark Theme
+Live dashboard for ESP32-C6 IR beacon telemetry monitoring.
 """
 
 import tkinter as tk
@@ -18,96 +19,24 @@ from dataclasses import dataclass
 import math
 import sys
 
-logger = logging.getLogger("beacon_monitor_gui")
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+from control._theme import (
+    DARK_BG, DARK_BG_MED, DARK_BG_LIGHT, DARK_FG, DARK_FG_SEC, DARK_FG_MUTED,
+    GREEN_OK, AMBER_WARN, RED_ERR, BLUE_LINK,
+    FailsafeAnnunciator, StealthAnnunciator,
+    apply_treeview_style, get_status_color,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
-    from launcher_gui import ensure_window_fits_content, set_native_theme, get_adaptive_colors, get_system_appearance
     from control.beacon_network import fetch_status  # type: ignore[import-not-found]
 except Exception:
-    def ensure_window_fits_content(window, *, min_width=800, min_height=600, padding=48, center=True):
-        """Fallback window sizing helper"""
-        try:
-            window.update_idletasks()
-        except Exception:
-            return
-        width = max(min_width, window.winfo_reqwidth() + padding)
-        height = max(min_height, window.winfo_reqheight() + padding)
-        screen_width = window.winfo_screenwidth()
-        screen_height = window.winfo_screenheight()
-        width = min(width, max(320, screen_width - 80))
-        height = min(height, max(240, screen_height - 80))
-        if center:
-            x = max(0, (screen_width - width) // 2)
-            y = max(0, (screen_height - height) // 2)
-            geometry = f"{int(width)}x{int(height)}+{int(x)}+{int(y)}"
-        else:
-            geometry = f"{int(width)}x{int(height)}"
-        window.geometry(geometry)
-        window.minsize(int(width), int(height))
-    
-    def set_native_theme(style: ttk.Style) -> None:
-        """Set ttk theme to match the operating system."""
-        system = platform.system()
-        if system == "Darwin":  # macOS
-            theme = "aqua"
-        elif system == "Windows":
-            theme = "vista"
-        else:
-            theme = "clam"
-        try:
-            style.theme_use(theme)
-        except tk.TclError:
-            try:
-                style.theme_use('default')
-            except Exception:
-                pass
-    
-    def get_system_appearance() -> str:
-        """Detect system appearance (light/dark mode)."""
-        import subprocess
-        system = platform.system()
-        if system == "Darwin":
-            try:
-                result = subprocess.run(
-                    ["defaults", "read", "-g", "AppleInterfaceStyle"],
-                    capture_output=True, text=True, timeout=1
-                )
-                return "dark" if result.returncode == 0 or "Dark" in result.stdout else "light"
-            except Exception:
-                return "light"
-        return "light"
-    
-    def get_adaptive_colors() -> dict:
-        """Get color scheme that adapts to system appearance."""
-        appearance = get_system_appearance()
-        if appearance == "dark":
-            return {
-                "bg_primary": "#1e1e1e",
-                "bg_secondary": "#2d2d2d",
-                "fg_primary": "#e0e0e0",
-                "fg_secondary": "#b0b0b0",
-                "accent_green": "#4ec94e",
-                "accent_orange": "#ff9500",
-                "accent_red": "#ff5555",
-                "border": "#3d3d3d",
-            }
-        else:
-            return {
-                "bg_primary": "#ffffff",
-                "bg_secondary": "#f5f5f5",
-                "fg_primary": "#1a1a1a",
-                "fg_secondary": "#666666",
-                "accent_green": "#00cc00",
-                "accent_orange": "#ff9900",
-                "accent_red": "#ff3333",
-                "border": "#cccccc",
-            }
-    from control.beacon_network import fetch_status
+    fetch_status = None  # type: ignore[assignment]
+
+logger = logging.getLogger("beacon_monitor_gui")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
 @dataclass
@@ -133,18 +62,18 @@ class BeaconStatus:
     telemetry: Optional[Dict[str, Any]] = None
     display_name: Optional[str] = None
 
+
 class BeaconCard:
-    """Visual beacon status card"""
+    """Visual beacon status card - Industrial theme"""
     STALE_DATA_TIMEOUT_SECONDS = 2.0
     TTD_WINDOW_SIZE = 10
     TEMPERATURE_WARNING_THRESHOLD_C = 40.0
     TEMPERATURE_CRITICAL_THRESHOLD_C = 50.0
     TEMPERATURE_SHAKE_INTERVAL_MS = 140
     
-    def __init__(self, parent: tk.Frame, beacon_id: str, status: BeaconStatus, colors: dict):
+    def __init__(self, parent: tk.Frame, beacon_id: str, status: BeaconStatus):
         self.beacon_id = beacon_id
         self.status = status
-        self.colors = colors
         self.metric_bars: Dict[str, Dict[str, Any]] = {}
         self.temperature_widgets: Dict[str, Any] = {}
         self.packet_intervals: deque[float] = deque(maxlen=self.TTD_WINDOW_SIZE)
@@ -154,507 +83,402 @@ class BeaconCard:
         self.temperature_alert_state = "normal"
         self.temperature_shake_phase = 0
         self.temperature_shake_job: Optional[str] = None
-        self.frame = tk.Frame(parent, bg=colors["bg_secondary"], relief=tk.RAISED, borderwidth=1)
-        self.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Header with ID and status indicator
-        header = tk.Frame(self.frame, bg=colors["bg_secondary"], height=35)
-        header.pack(fill=tk.X, padx=1, pady=1)
+        # Card frame with subtle border
+        self.frame = tk.Frame(
+            parent, 
+            bg=DARK_BG_MED, 
+            highlightbackground=DARK_BG, 
+            highlightthickness=1
+        )
+        self.frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        
+        # Header with ID and status LED
+        header = tk.Frame(self.frame, bg=DARK_BG_MED, height=36)
+        header.pack(fill=tk.X, padx=2, pady=2)
         header.pack_propagate(False)
         
-        # Status LED (online/offline indicator)
-        self.status_led = tk.Canvas(header, width=12, height=12, bg=colors["bg_secondary"], highlightthickness=0)
-        self.status_led.pack(side=tk.LEFT, padx=8, pady=11)
+        # Status LED (canvas circle)
+        self.status_led = tk.Canvas(
+            header, width=14, height=14, 
+            bg=DARK_BG_MED, highlightthickness=0
+        )
+        self.status_led.pack(side=tk.LEFT, padx=10, pady=11)
         
         # Beacon ID label
-        id_label = tk.Label(
+        self.id_label = tk.Label(
             header,
-            text=f"{beacon_id}",
-            bg=colors["bg_secondary"],
-            fg=colors["accent_green"] if status.online else colors["accent_red"],
-            font=("System", 12, "bold")
+            text=beacon_id,
+            bg=DARK_BG_MED,
+            fg=GREEN_OK if status.online else RED_ERR,
+            font=("Segoe UI", 12, "bold")
         )
-        id_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.id_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         
         # Status text
         self.status_text = tk.Label(
             header,
             text="OFFLINE" if not status.online else "ONLINE",
-            bg=colors["bg_secondary"],
-            fg=colors["accent_red"] if not status.online else colors["accent_green"],
-            font=("System", 9, "bold")
+            bg=DARK_BG_MED,
+            fg=RED_ERR if not status.online else GREEN_OK,
+            font=("Segoe UI", 9, "bold")
         )
-        self.status_text.pack(side=tk.RIGHT, padx=8)
-
-        self.title_label = id_label
-        self.overlay = tk.Frame(self.frame, bg="#7a0000")
+        self.status_text.pack(side=tk.RIGHT, padx=10)
+        
+        self.title_label = self.id_label
+        
+        # Offline overlay
+        self.overlay = tk.Frame(self.frame, bg="#561e15")
         self.overlay_label = tk.Label(
             self.overlay,
             text="OFFLINE",
-            bg="#7a0000",
-            fg="#ffffff",
-            font=("System", 22, "bold"),
+            bg="#561e15",
+            fg="#fad2c9",
+            font=("Segoe UI", 20, "bold"),
         )
         self.overlay_label.pack(expand=True, fill=tk.BOTH)
         self.overlay.place_forget()
         
         # Content area
-        content = tk.Frame(self.frame, bg=colors["bg_secondary"])
-        content.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        content = tk.Frame(self.frame, bg=DARK_BG_MED)
+        content.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # IP and Port info
+        # IP and Port
         info_text = f"{status.ip_address}:{status.port}"
-        tk.Label(content, text=info_text, bg=colors["bg_secondary"], fg=colors["fg_secondary"], font=("System", 8)).pack(anchor=tk.W)
+        tk.Label(content, text=info_text, bg=DARK_BG_MED, fg=DARK_FG_SEC, font=("Segoe UI", 8)).pack(anchor=tk.W)
 
         endpoint_text = status.endpoint_url or f"http://{status.ip_address}:{status.port}/api/status"
         tk.Label(
             content,
             text=f"Endpoint: {endpoint_text}",
-            bg=colors["bg_secondary"],
-            fg=colors["fg_secondary"],
-            font=("System", 8),
-            wraplength=250,
-            justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(1, 0))
-
-        if status.last_telemetry:
-            telemetry_preview = status.last_telemetry.strip().replace("\n", " ")
-            if len(telemetry_preview) > 96:
-                telemetry_preview = telemetry_preview[:93] + "..."
-            tk.Label(
-                content,
-                text=f"Last telemetry: {telemetry_preview}",
-                bg=colors["bg_secondary"],
-                fg=colors["fg_secondary"],
-                font=("System", 8),
-                wraplength=250,
-                justify=tk.LEFT,
-            ).pack(anchor=tk.W, pady=(1, 0))
+            bg=DARK_BG_MED,
+            fg=DARK_FG_MUTED,
+            font=("Segoe UI", 8),
+            wraplength=260,
+        ).pack(anchor=tk.W, pady=(2, 8))
         
-        # Visual overview section
-        visuals = tk.Frame(content, bg=colors["bg_secondary"])
-        visuals.pack(fill=tk.X, pady=(8, 6))
-
-        self._create_metric_row(content, "Voltage", status.battery_voltage, "V", colors["accent_green"])
-        self._create_metric_row(content, "Current", status.current_amperage, "A", colors["accent_green"])
-        self._create_metric_row(content, "Fan Speed", status.fan_speed_rpm, "RPM", colors["accent_orange"])
-        self._create_temperature_row(content, status.temperature_c)
-        self._create_metric_row(content, "LED Brightness", status.led_brightness, "%", colors["accent_orange"])
-
-        self._create_visual_bar(
-            visuals,
-            "Battery",
-            self._metric_to_percent(status.battery_percent, 0, 100),
-            self._battery_color(status.battery_percent),
-        )
-        self._create_visual_bar(
-            visuals,
-            "Thermal",
-            self._metric_to_percent(status.temperature_c, 20, 60),
-            self._temperature_color(status.temperature_c),
-        )
-        self._create_visual_bar(
-            visuals,
-            "Fan",
-            self._metric_to_percent(status.fan_speed_rpm, 0, 3000),
-            colors["accent_orange"],
-        )
-        self._create_visual_bar(
-            visuals,
-            "LED",
-            self._metric_to_percent(status.led_brightness, 0, 100),
-            colors["accent_green"],
-        )
+        # Metrics rows
+        self._create_metric_row(content, "Voltage", "--", "V", is_battery=False)
+        self._create_metric_row(content, "Current", "--", "A", is_battery=False)
         
-        # Uptime section
-        uptime_str = self._format_uptime(status.uptime_seconds) if status.uptime_seconds else "N/A"
-        tk.Label(content, text=f"Uptime: {uptime_str}", bg=colors["bg_secondary"], fg=colors["fg_secondary"], font=("System", 8)).pack(anchor=tk.W, pady=2)
-
-        self.last_update_label = tk.Label(
-            content,
-            text="Last update: N/A",
-            bg=colors["bg_secondary"],
-            fg=colors["fg_secondary"],
-            font=("System", 7),
-        )
-        self.last_update_label.pack(anchor=tk.W)
-
-        self.ttd_label = tk.Label(
-            content,
-            text="Time to dead: N/A",
-            bg=colors["bg_secondary"],
-            fg=colors["fg_secondary"],
-            font=("System", 8, "bold"),
-        )
-        self.ttd_label.pack(anchor=tk.W, pady=(1, 0))
+        self._create_metric_row(content, "Fan", "--", "RPM", is_battery=False)
         
-        self.record_packet(status.last_update)
-        self.update_time_to_dead_display()
-        self._apply_freshness_state()
-        self.update_temperature_state(status.temperature_c)
-        self._draw_status_led()
-
-    def record_packet(self, packet_timestamp: Optional[float]) -> None:
-        """Track packet arrival timing for sliding-window cadence estimation."""
-        if packet_timestamp is None:
-            return
-
-        if self.last_seen_status_timestamp is not None and packet_timestamp <= self.last_seen_status_timestamp:
-            return
-
-        if self.last_packet_timestamp is not None:
-            interval = packet_timestamp - self.last_packet_timestamp
-            if 0.0 < interval < 30.0:
-                self.packet_intervals.append(interval)
-
-        self.last_packet_timestamp = packet_timestamp
-        self.last_seen_status_timestamp = packet_timestamp
-
-    def _sliding_window_interval(self) -> Optional[float]:
-        if not self.packet_intervals:
-            return None
-        return sum(self.packet_intervals) / len(self.packet_intervals)
-
-    def _sliding_window_jitter(self) -> Optional[float]:
-        if len(self.packet_intervals) < 2:
-            return None
-        mean = self._sliding_window_interval()
-        if mean is None:
-            return None
-        variance = sum((x - mean) ** 2 for x in self.packet_intervals) / len(self.packet_intervals)
-        return math.sqrt(variance)
-
-    def update_time_to_dead_display(self) -> None:
-        """Update last-update age and time-to-dead using a sliding timing window."""
-        now = time.time()
-        last_update = self.status.last_update
-
-        if last_update is None:
-            self.last_update_label.config(text="Last update: N/A")
-            self.ttd_label.config(text="Time to dead: 0.00s", fg=self.colors["accent_red"])
-            return
-
-        age = max(0.0, now - last_update)
-        if age < 60:
-            age_str = f"{age:.1f}s ago"
-        else:
-            age_str = f"{age/60:.1f}m ago"
-        self.last_update_label.config(text=f"Last update: {age_str}")
-
-        remaining = max(0.0, self.STALE_DATA_TIMEOUT_SECONDS - age)
-        cadence = self._sliding_window_interval()
-        jitter = self._sliding_window_jitter()
-        if cadence is not None and jitter is not None:
-            detail = f" (cadence {cadence:.2f}s ±{jitter:.2f}s)"
-        elif cadence is not None:
-            detail = f" (cadence {cadence:.2f}s)"
-        else:
-            detail = ""
-
-        if remaining <= 0.25:
-            ttd_color = self.colors["accent_red"]
-        elif remaining <= 0.75:
-            ttd_color = self.colors["accent_orange"]
-        else:
-            ttd_color = self.colors["accent_green"]
-
-        self.ttd_label.config(text=f"Time to dead: {remaining:.2f}s{detail}", fg=ttd_color)
-    
-    def _create_metric_row(self, parent: tk.Frame, label: str, value: Optional[float], unit: str, color: str):
-        """Create a metric display row"""
-        if value is None:
-            value_str = "N/A"
-        else:
-            value_str = f"{value:.1f}" if isinstance(value, float) else str(value)
+        self._create_metric_row(content, "LED", "--", "%", is_battery=False)
         
-        row = tk.Frame(parent, bg=self.colors["bg_secondary"])
-        row.pack(fill=tk.X, pady=2)
+        self._create_metric_row(content, "Battery", "--", "%", is_battery=True)
         
-        tk.Label(row, text=label, bg=self.colors["bg_secondary"], fg=self.colors["fg_secondary"], font=("System", 9), width=12, anchor=tk.W).pack(side=tk.LEFT)
-        tk.Label(row, text=f"{value_str} {unit}", bg=self.colors["bg_secondary"], fg=color, font=("System", 9, "bold")).pack(side=tk.LEFT, padx=5)
-
-    def _create_temperature_row(self, parent: tk.Frame, value: Optional[float]):
-        """Create the temperature row with visual alert affordances."""
-        row = tk.Frame(parent, bg=self.colors["bg_secondary"])
-        row.pack(fill=tk.X, pady=2)
-
-        label = tk.Label(
-            row,
-            text="Temperature",
-            bg=self.colors["bg_secondary"],
-            fg=self.colors["fg_secondary"],
-            font=("System", 9),
-            width=12,
-            anchor=tk.W,
-        )
-        label.pack(side=tk.LEFT)
-
-        icon = tk.Canvas(
-            row,
-            width=18,
-            height=18,
-            bg=self.colors["bg_secondary"],
-            highlightthickness=0,
-        )
-        icon.pack(side=tk.LEFT, padx=(0, 5))
-
-        value_label = tk.Label(
-            row,
-            text=self._format_temperature_value(value),
-            bg=self.colors["bg_secondary"],
-            fg=self._temperature_color(value),
-            font=("System", 9, "bold"),
-        )
-        value_label.pack(side=tk.LEFT, padx=5)
-
-        self.temperature_widgets = {
-            "row": row,
-            "label": label,
-            "icon": icon,
-            "value": value_label,
-        }
-        self._render_thermometer_icon(0)
-        self._apply_temperature_style(value)
-
-    def _apply_temperature_style(self, value: Optional[float]) -> str:
-        """Update the temperature row according to the current temperature state."""
-        if value is None:
-            state = "normal"
-        elif value >= self.TEMPERATURE_CRITICAL_THRESHOLD_C:
-            state = "critical"
-        elif value >= self.TEMPERATURE_WARNING_THRESHOLD_C:
-            state = "warning"
-        else:
-            state = "normal"
-
-        self.temperature_alert_state = state
-
-        label = self.temperature_widgets.get("label")
-        value_label = self.temperature_widgets.get("value")
-        if not label or not value_label:
-            return state
-
-        if state == "critical":
-            fg_color = self.colors["accent_red"]
-            font = ("System", 9, "bold")
-        elif state == "warning":
-            fg_color = "#e6c200"
-            font = ("System", 9, "bold")
-        else:
-            fg_color = self.colors["fg_secondary"]
-            font = ("System", 9)
-
-        label.config(fg=fg_color, font=font)
-        value_label.config(fg=fg_color, font=font)
-        self._render_thermometer_icon(self.temperature_shake_offset())
-        self._manage_temperature_animation()
-        return state
-
-    def _format_temperature_value(self, value: Optional[float]) -> str:
-        if value is None:
-            return "N/A"
-        return f"{value:.1f} C"
-
-    def _temperature_color(self, temperature_c: Optional[float]) -> str:
-        if temperature_c is None:
-            return self.colors["accent_orange"]
-        if temperature_c >= self.TEMPERATURE_CRITICAL_THRESHOLD_C:
-            return self.colors["accent_red"]
-        if temperature_c >= self.TEMPERATURE_WARNING_THRESHOLD_C:
-            return "#e6c200"
-        return self.colors["accent_green"]
-
-    def _render_thermometer_icon(self, x_offset: int) -> None:
-        icon = self.temperature_widgets.get("icon")
-        if not icon:
-            return
-
-        icon.delete("all")
-        base_x = 8 + x_offset
-        tube_top = 3
-        tube_bottom = 12
-        bulb_radius = 4
-        fill_color = self._temperature_color(self.status.temperature_c)
-        outline_color = fill_color if self.temperature_alert_state != "normal" else self.colors["fg_secondary"]
-
-        icon.create_line(base_x, tube_top, base_x, tube_bottom, fill=outline_color, width=2, capstyle=tk.ROUND)
-        icon.create_oval(base_x - bulb_radius, tube_bottom - 1, base_x + bulb_radius, tube_bottom + 7, fill=fill_color, outline=outline_color, width=2)
-        icon.create_rectangle(base_x - 1, tube_top + 2, base_x + 1, tube_bottom - 1, fill=fill_color, outline=fill_color)
-
-    def temperature_shake_offset(self) -> int:
-        if self.temperature_alert_state == "critical":
-            return 2 if self.temperature_shake_phase % 2 == 0 else -2
-        if self.temperature_alert_state == "warning":
-            return 1 if self.temperature_shake_phase % 2 == 0 else -1
-        return 0
-
-    def _manage_temperature_animation(self) -> None:
-        if self.temperature_shake_job is not None:
-            try:
-                self.frame.after_cancel(self.temperature_shake_job)
-            except Exception:
-                pass
-            self.temperature_shake_job = None
-
-        if self.temperature_alert_state in {"warning", "critical"}:
-            self.temperature_shake_job = self.frame.after(self.TEMPERATURE_SHAKE_INTERVAL_MS, self._temperature_animation_tick)
-
-    def _temperature_animation_tick(self) -> None:
-        self.temperature_shake_job = None
-        if not self.temperature_widgets:
-            return
-
-        if self.temperature_alert_state not in {"warning", "critical"}:
-            self._render_thermometer_icon(0)
-            return
-
-        self.temperature_shake_phase = (self.temperature_shake_phase + 1) % 8
-        self._render_thermometer_icon(self.temperature_shake_offset())
-        self.temperature_shake_job = self.frame.after(self.TEMPERATURE_SHAKE_INTERVAL_MS, self._temperature_animation_tick)
-
-    def update_temperature_state(self, temperature_c: Optional[float]) -> None:
-        """Refresh the temperature row from the latest telemetry value."""
-        self.status.temperature_c = temperature_c
-        self._apply_temperature_style(temperature_c)
-
-    def _create_visual_bar(self, parent: tk.Frame, label: str, percent: Optional[float], color: str):
-        """Create a small inline progress-style visualization."""
-        container = tk.Frame(parent, bg=self.colors["bg_secondary"])
-        container.pack(fill=tk.X, pady=3)
-
+        # Temperature row with alert icon
+        self._create_temperature_row(content)
+        
+        # TTD row
+        self.ttd_row = tk.Frame(content, bg=DARK_BG_MED)
+        self.ttd_row.pack(fill=tk.X, pady=(6, 0))
         tk.Label(
-            container,
-            text=label,
-            bg=self.colors["bg_secondary"],
-            fg=self.colors["fg_secondary"],
-            font=("System", 8),
-            width=11,
-            anchor=tk.W,
+            self.ttd_row, text="Time to Dead:",
+            bg=DARK_BG_MED, fg=DARK_FG_SEC, font=("Segoe UI", 9), width=14, anchor=tk.W
         ).pack(side=tk.LEFT)
-
-        canvas = tk.Canvas(
-            container,
-            width=140,
-            height=14,
-            bg=self.colors["bg_secondary"],
-            highlightthickness=0,
+        self.ttd_label = tk.Label(
+            self.ttd_row, text="--",
+            bg=DARK_BG_MED, fg=DARK_FG_MUTED, font=("Segoe UI", 9, "bold")
         )
-        canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
-        track = canvas.create_rectangle(1, 2, 139, 12, fill="#2a2a2a", outline=self.colors["border"])
-        fill = canvas.create_rectangle(1, 2, 1, 12, fill=color, outline=color)
-        value_text = canvas.create_text(138, 7, text=self._format_percent_text(percent), anchor=tk.E, fill=self.colors["fg_secondary"], font=("System", 8, "bold"))
-
+        self.ttd_label.pack(side=tk.LEFT, padx=5)
+        
+        # Uptime row
+        self.uptime_row = tk.Frame(content, bg=DARK_BG_MED)
+        self.uptime_row.pack(fill=tk.X, pady=(6, 0))
+        tk.Label(
+            self.uptime_row, text="Uptime:",
+            bg=DARK_BG_MED, fg=DARK_FG_SEC, font=("Segoe UI", 9), width=14, anchor=tk.W
+        ).pack(side=tk.LEFT)
+        self.uptime_label = tk.Label(
+            self.uptime_row, text="--",
+            bg=DARK_BG_MED, fg=DARK_FG_MUTED, font=("Segoe UI", 9)
+        )
+        self.uptime_label.pack(side=tk.LEFT, padx=5)
+        
+        # Stale data overlay (applied on top)
+        self.stale_overlay = tk.Frame(self.frame, bg="#584011")
+        self.stale_label = tk.Label(
+            self.stale_overlay,
+            text="STALE DATA",
+            bg="#584011",
+            fg="#fad2c9",
+            font=("Segoe UI", 14, "bold"),
+        )
+        self.stale_label.pack(expand=True, fill=tk.BOTH)
+        self.stale_overlay.place_forget()
+        
+        # Record initial packet
+        self.record_packet(time.time())
+        self._draw_status_led()
+        self.update_temperature_state(status.temperature_c)
+    
+    def _create_metric_row(self, parent: tk.Frame, label: str, value: str, unit: str, is_battery: bool = False):
+        row = tk.Frame(parent, bg=DARK_BG_MED)
+        row.pack(fill=tk.X, pady=3)
+        
+        tk.Label(
+            row, text=label,
+            bg=DARK_BG_MED, fg=DARK_FG_SEC, font=("Segoe UI", 9), width=10, anchor=tk.W
+        ).pack(side=tk.LEFT)
+        
+        val_label = tk.Label(
+            row, text=f"{value} {unit}",
+            bg=DARK_BG_MED, fg=DARK_FG, font=("Segoe UI", 9, "bold")
+        )
+        val_label.pack(side=tk.LEFT, padx=5)
+        
+        # Visual bar (canvas)
+        canvas = tk.Canvas(
+            row, width=160, height=10,
+            bg="#2a2e33", highlightthickness=0,
+            borderwidth=0
+        )
+        canvas.pack(side=tk.LEFT, padx=8)
+        
+        track = canvas.create_rectangle(1, 2, 159, 8, fill="#2a2e33", outline=DARK_BG, width=0)
+        fill = canvas.create_rectangle(1, 2, 1, 8, fill=GREEN_OK, outline="", width=0)
+        value_text = canvas.create_text(
+            158, 5, text=f"{value}{unit}", anchor=tk.E,
+            fill=DARK_FG_SEC, font=("Segoe UI", 8, "bold")
+        )
+        
         self.metric_bars[label] = {
             "canvas": canvas,
             "track": track,
             "fill": fill,
-            "text": value_text,
+            "value_text": value_text,
+            "is_battery": is_battery,
+            "unit": unit,
         }
-        self._update_visual_bar(label, percent, color)
-
-    def _update_visual_bar(self, label: str, percent: Optional[float], color: str) -> None:
+    
+    def _create_temperature_row(self, parent: tk.Frame):
+        row = tk.Frame(parent, bg=DARK_BG_MED)
+        row.pack(fill=tk.X, pady=3)
+        
+        tk.Label(
+            row, text="Temp",
+            bg=DARK_BG_MED, fg=DARK_FG_SEC, font=("Segoe UI", 9), width=10, anchor=tk.W
+        ).pack(side=tk.LEFT)
+        
+        self.temp_value = tk.Label(
+            row, text="--°C",
+            bg=DARK_BG_MED, fg=DARK_FG, font=("Segoe UI", 9, "bold")
+        )
+        self.temp_value.pack(side=tk.LEFT, padx=5)
+        
+        # Animated thermometer icon
+        self.temp_icon = tk.Canvas(
+            row, width=20, height=20,
+            bg=DARK_BG_MED, highlightthickness=0
+        )
+        self.temp_icon.pack(side=tk.LEFT, padx=8)
+        
+        # Temperature alert badge (initially hidden)
+        self.temp_badge = tk.Label(
+            row, text="⚠", bg=DARK_BG_MED, fg=AMBER_WARN,
+            font=("Segoe UI", 9, "bold")
+        )
+        self.temp_badge.pack(side=tk.LEFT, padx=4)
+        self.temp_badge.pack_forget()
+        
+        self.temperature_widgets = {
+            "value": self.temp_value,
+            "icon": self.temp_icon,
+            "badge": self.temp_badge,
+        }
+    
+    def _draw_status_led(self):
+        self.status_led.delete("led")
+        color = GREEN_OK if self.status.online else RED_ERR
+        self.status_led.create_oval(2, 2, 12, 12, fill=color, outline="#ffffff", width=1, tags="led")
+        # Inner highlight for depth
+        self.status_led.create_oval(4, 4, 8, 8, fill="#ffffff", outline="", tags="led")
+    
+    def _draw_temperature_icon(self):
+        c = self.temp_icon
+        c.delete("all")
+        temp = self.status.temperature_c or 0
+        
+        if temp >= self.TEMPERATURE_CRITICAL_THRESHOLD_C:
+            fill = RED_ERR
+        elif temp >= self.TEMPERATURE_WARNING_THRESHOLD_C:
+            fill = AMBER_WARN
+        else:
+            fill = GREEN_OK
+        
+        # Thermometer bulb
+        c.create_oval(6, 10, 14, 18, fill=fill, outline="#ffffff", width=1)
+        # Tube
+        c.create_rectangle(9, 4, 11, 10, fill=fill, outline="#ffffff", width=1)
+        # Mercury level
+        level = min(1.0, max(0.0, temp / 60.0))
+        h = 4 + (6 - 4) * (1 - level)
+        c.create_rectangle(9, h, 11, 10, fill=fill, outline="")
+    
+    def update_temperature_state(self, temp_c: Optional[float]):
+        if temp_c is None:
+            self.temp_value.configure(text="--°C", fg=DARK_FG_MUTED)
+            self.temp_badge.pack_forget()
+            self.temperature_alert_state = "normal"
+            self._stop_temperature_shake()
+            return
+        
+        self.temp_value.configure(text=f"{temp_c:.1f}°C")
+        
+        if temp_c >= self.TEMPERATURE_CRITICAL_THRESHOLD_C:
+            self.temp_value.configure(fg=RED_ERR)
+            self.temp_badge.configure(text="⚠ CRIT", fg=RED_ERR)
+            self.temp_badge.pack(side=tk.LEFT, padx=4)
+            self.temperature_alert_state = "critical"
+            self._start_temperature_shake()
+        elif temp_c >= self.TEMPERATURE_WARNING_THRESHOLD_C:
+            self.temp_value.configure(fg=AMBER_WARN)
+            self.temp_badge.configure(text="⚠ WARN", fg=AMBER_WARN)
+            self.temp_badge.pack(side=tk.LEFT, padx=4)
+            self.temperature_alert_state = "warning"
+            self._stop_temperature_shake()
+        else:
+            self.temp_value.configure(fg=GREEN_OK)
+            self.temp_badge.pack_forget()
+            self.temperature_alert_state = "normal"
+            self._stop_temperature_shake()
+        
+        self._draw_temperature_icon()
+    
+    def _start_temperature_shake(self):
+        self._stop_temperature_shake()
+        self._temperature_shake_tick()
+    
+    def _temperature_shake_tick(self):
+        self.temperature_shake_phase = (self.temperature_shake_phase + 1) % 4
+        offset = [0, 2, 0, -2][self.temperature_shake_phase]
+        self.temp_icon.place_configure(x=offset)
+        self.temperature_shake_job = self.temp_icon.after(
+            self.TEMPERATURE_SHAKE_INTERVAL_MS, self._temperature_shake_tick
+        )
+    
+    def _stop_temperature_shake(self):
+        if self.temperature_shake_job:
+            try:
+                self.temp_icon.after_cancel(self.temperature_shake_job)
+            except Exception:
+                pass
+            self.temperature_shake_job = None
+        self.temp_icon.place_configure(x=0)
+    
+    def record_packet(self, timestamp: float):
+        if self.last_packet_timestamp is not None:
+            interval = timestamp - self.last_packet_timestamp
+            if 0.05 < interval < 5.0:
+                self.packet_intervals.append(interval)
+        self.last_packet_timestamp = timestamp
+        self.last_seen_status_timestamp = timestamp
+    
+    def update_time_to_dead_display(self):
+        if not self.packet_intervals:
+            self.ttd_label.configure(text="--", fg=DARK_FG_MUTED)
+            return
+        
+        avg_interval = sum(self.packet_intervals) / len(self.packet_intervals)
+        time_since_last = time.time() - (self.last_packet_timestamp or time.time())
+        ttd = self.STALE_DATA_TIMEOUT_SECONDS - time_since_last
+        
+        if ttd <= 0:
+            self.ttd_label.configure(text="0.00s", fg=RED_ERR)
+        elif ttd < 0.25:
+            self.ttd_label.configure(text=f"{ttd:.2f}s", fg=RED_ERR)
+        elif ttd < 0.75:
+            self.ttd_label.configure(text=f"{ttd:.2f}s", fg=AMBER_WARN)
+        else:
+            self.ttd_label.configure(text=f"{ttd:.2f}s", fg=GREEN_OK)
+    
+    def update_uptime_display(self, seconds: Optional[int]):
+        if seconds is None:
+            self.uptime_label.configure(text="--", fg=DARK_FG_MUTED)
+            return
+        
+        if seconds < 60:
+            text = f"{seconds}s"
+        elif seconds < 3600:
+            text = f"{seconds//60}m {seconds%60}s"
+        elif seconds < 86400:
+            text = f"{seconds//3600}h {(seconds%3600)//60}m"
+        else:
+            text = f"{seconds//86400}d"
+        self.uptime_label.configure(text=text, fg=DARK_FG)
+    
+    def _apply_freshness_state(self):
+        is_stale = False
+        if self.last_seen_status_timestamp is not None:
+            elapsed = time.time() - self.last_seen_status_timestamp
+            is_stale = elapsed > self.STALE_DATA_TIMEOUT_SECONDS
+        
+        if is_stale != self.is_stale:
+            self.is_stale = is_stale
+            if is_stale:
+                self.stale_overlay.place(x=0, y=0, relwidth=1, relheight=1)
+                self.overlay.place(x=0, y=0, relwidth=1, relheight=1)
+            else:
+                self.stale_overlay.place_forget()
+                self.overlay.place_forget()
+    
+    def _battery_color(self, pct: Optional[float]) -> str:
+        if pct is None:
+            return DARK_FG_MUTED
+        if pct >= 50:
+            return GREEN_OK
+        if pct >= 20:
+            return AMBER_WARN
+        return RED_ERR
+    
+    def _metric_to_percent(self, value: Optional[float], min_v: float, max_v: float) -> float:
+        if value is None:
+            return 0.0
+        return max(0.0, min(1.0, (value - min_v) / (max_v - min_v)))
+    
+    def _update_visual_bar(self, label: str, percent: float, color: str):
         bar = self.metric_bars.get(label)
         if not bar:
             return
-
-        canvas: tk.Canvas = bar["canvas"]
-        fill = bar["fill"]
-        value_text = bar["text"]
-        width = 138
-
-        if percent is None:
-            percent_value = 0.0
-        else:
-            percent_value = max(0.0, min(100.0, float(percent)))
-
-        fill_width = max(1, int(round(width * (percent_value / 100.0)))) if percent is not None else 1
-        canvas.coords(fill, 1, 2, fill_width, 12)
-        canvas.itemconfig(fill, fill=color, outline=color)
-        canvas.itemconfig(value_text, text=self._format_percent_text(percent))
-
-    @staticmethod
-    def _metric_to_percent(value: Optional[float], low: float, high: float) -> Optional[float]:
-        if value is None:
-            return None
-        if high <= low:
-            return None
-        clamped = max(low, min(high, float(value)))
-        return ((clamped - low) / (high - low)) * 100.0
-
-    def _battery_color(self, battery_percent: Optional[float]) -> str:
-        if battery_percent is None:
-            return self.colors["accent_orange"]
-        if battery_percent < 20:
-            return self.colors["accent_red"]
-        if battery_percent < 50:
-            return self.colors["accent_orange"]
-        return self.colors["accent_green"]
-
-    @staticmethod
-    def _format_percent_text(percent: Optional[float]) -> str:
-        if percent is None:
-            return "N/A"
-        return f"{percent:.0f}%"
-
-    def _apply_freshness_state(self) -> None:
-        """Render the card as stale when telemetry stops updating."""
-        last_update = self.status.last_update
-        now = time.time()
-        is_stale = last_update is None or (now - last_update) > self.STALE_DATA_TIMEOUT_SECONDS
-
-        if is_stale == self.is_stale:
-            self._sync_visual_state()
-            return
-
-        self.is_stale = is_stale
-        self._sync_visual_state()
-
-    def _sync_visual_state(self) -> None:
-        base_id_color = self.colors["accent_red"] if self.is_stale else self.colors["accent_green"]
-        base_status_text = "OFFLINE" if self.is_stale or not self.status.online else "ONLINE"
-        base_status_color = self.colors["accent_red"] if base_status_text == "OFFLINE" else self.colors["accent_green"]
-
-        self.title_label.config(fg=base_id_color)
-        self.status_text.config(text=base_status_text, fg=base_status_color)
-
-        if self.is_stale:
-            self.overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
-            self.overlay.lift()
-            self.overlay_label.config(text="OFFLINE\nSTALE DATA")
-        else:
-            self.overlay.place_forget()
+        c = bar["canvas"]
+        w = 158
+        fill_w = 1 + int(w * percent)
+        c.coords(bar["fill"], 1, 2, fill_w, 8)
+        c.itemconfig(bar["fill"], fill=color)
+        val = bar.get("value", "--")
+        unit = bar.get("unit", "")
+        c.itemconfig(bar["value_text"], text=f"{val}{unit}", fill=color)
     
     def _draw_status_led(self):
-        """Draw the online/offline status LED"""
-        color = "#00ff00" if self.status.online and not self.is_stale else "#ff4444"
-        self.status_led.create_oval(1, 1, 11, 11, fill=color, outline=color)
-        if self.status.online and not self.is_stale:
-            self.status_led.create_oval(3, 3, 9, 9, fill="#ffffff", outline=color)
-    
-    @staticmethod
-    def _format_uptime(seconds: int) -> str:
-        """Format uptime in human readable format"""
-        if seconds < 60:
-            return f"{seconds}s"
-        elif seconds < 3600:
-            return f"{seconds//60}m"
-        elif seconds < 86400:
-            return f"{seconds//3600}h"
-        else:
-            return f"{seconds//86400}d"
+        self.status_led.delete("led")
+        color = GREEN_OK if self.status.online else RED_ERR
+        self.status_led.create_oval(2, 2, 12, 12, fill=color, outline="#ffffff", width=1, tags="led")
+        self.status_led.create_oval(4, 4, 8, 8, fill="#ffffff", outline="", tags="led")
+
 
 class BeaconMonitorGUI:
-    """Main beacon monitoring dashboard"""
+    """Main beacon monitoring dashboard - Industrial Dark Theme"""
     
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Beacon Monitor - Live Dashboard")
         self.root.geometry("1400x900")
         
-        # Get adaptive colors for light/dark mode
-        self.colors = get_adaptive_colors()
-        self.root.configure(bg=self.colors["bg_primary"])
+        # Industrial dark theme
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        self._setup_styles(style)
         
+        self.root.configure(bg=DARK_BG)
+        
+        # Failsafe annunciator (top banner)
+        self.annunciator = FailsafeAnnunciator(self.root, max_alarms=4)
+        self.annunciator.pack(fill=tk.X, side=tk.TOP)
+
         self.beacons_config: Dict[str, Dict[str, Any]] = {}
         self.beacon_status: Dict[str, BeaconStatus] = {}
         self.beacon_cards: Dict[str, BeaconCard] = {}
@@ -684,34 +508,94 @@ class BeaconMonitorGUI:
             )
         
         # Setup GUI
-        self._setup_styles()
         self._create_ui()
         self._start_stale_watchdog()
         self._start_monitoring()
         
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
     
-    def _setup_styles(self):
-        """Setup ttk styles"""
-        style = ttk.Style()
-        set_native_theme(style)
+    def _setup_styles(self, style: ttk.Style):
+        """Setup ttk styles for industrial dark theme"""
+        # Base colours
+        style.configure(".",
+            background=DARK_BG,
+            foreground=DARK_FG,
+            fieldbackground=DARK_BG_MED,
+            selectbackground=DARK_BG_LIGHT,
+            selectforeground=DARK_FG,
+            bordercolor=DARK_BG,
+            lightcolor=DARK_BG_MED,
+            darkcolor=DARK_BG_MED,
+        )
+
+        style.configure("TFrame", background=DARK_BG)
+        style.configure("TLabelframe", background=DARK_BG, foreground=DARK_FG_SEC)
+        style.configure("TLabelframe.Label", background=DARK_BG, foreground=DARK_FG_SEC, font=("Segoe UI", 9, "bold"))
+
+        style.configure("TLabel", background=DARK_BG, foreground=DARK_FG, font=("Segoe UI", 9))
         
-        # Use system colors and fonts
-        style.configure('Header.TLabel', font=('System', 14, 'bold'))
+        style.configure("TButton",
+            font=("Segoe UI", 9), padding=6,
+            background=DARK_BG_MED, foreground=DARK_FG,
+            bordercolor=DARK_BG, focuscolor=DARK_BG,
+        )
+        style.map("TButton",
+            background=[("active", DARK_BG_LIGHT), ("pressed", DARK_BG)],
+            foreground=[("active", DARK_FG), ("disabled", DARK_FG_MUTED)],
+        )
+        
+        style.configure("Primary.TButton",
+            font=("Segoe UI", 10, "bold"), padding=10,
+            background=BLUE_LINK, foreground=DARK_FG,
+        )
+        style.map("Primary.TButton",
+            background=[("active", "#3a8fc2"), ("pressed", "#1e5a8a")],
+        )
+        
+        style.configure("Treeview",
+            background=DARK_BG_MED, foreground=DARK_FG,
+            fieldbackground=DARK_BG_MED,
+            bordercolor=DARK_BG_MED, lightcolor=DARK_BG_MED, darkcolor=DARK_BG_MED,
+            font=("Segoe UI", 9), rowheight=24,
+        )
+        style.map("Treeview",
+            background=[("selected", DARK_BG_LIGHT)],
+            foreground=[("selected", DARK_FG)],
+        )
+        style.configure("Treeview.Heading",
+            background=DARK_BG, foreground=DARK_FG_SEC,
+            font=("Segoe UI", 9, "bold"), bordercolor=DARK_BG,
+        )
+        
+        style.configure("Vertical.TScrollbar",
+            background=DARK_BG_MED, troughcolor=DARK_BG,
+            bordercolor=DARK_BG, arrowcolor=DARK_FG,
+            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED,
+        )
+        style.configure("Horizontal.TScrollbar",
+            background=DARK_BG_MED, troughcolor=DARK_BG,
+            bordercolor=DARK_BG, arrowcolor=DARK_FG,
+            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED,
+        )
+        
+        style.configure("TProgressbar",
+            background=GREEN_OK, troughcolor=DARK_BG_MED,
+            bordercolor=DARK_BG, lightcolor=GREEN_OK, darkcolor=GREEN_OK,
+        )
     
     def _create_ui(self):
         """Create the main UI"""
         # Header
-        header = tk.Frame(self.root, bg=self.colors["bg_secondary"], height=60)
+        header = tk.Frame(self.root, bg=DARK_BG_MED, height=60)
         header.pack(fill=tk.X, padx=0, pady=0)
         header.pack_propagate(False)
         
         title = tk.Label(
             header,
             text="BEACON MONITOR - Live Dashboard",
-            bg=self.colors["bg_secondary"],
-            fg=self.colors["accent_green"],
-            font=("System", 16, "bold")
+            bg=DARK_BG_MED,
+            fg=GREEN_OK,
+            font=("Segoe UI", 16, "bold")
         )
         title.pack(side=tk.LEFT, padx=20, pady=15)
         
@@ -720,30 +604,29 @@ class BeaconMonitorGUI:
         summary_label = tk.Label(
             header,
             textvariable=self.summary_var,
-            bg=self.colors["bg_secondary"],
-            fg=self.colors["accent_orange"],
-            font=("System", 11)
+            bg=DARK_BG_MED,
+            fg=AMBER_WARN,
+            font=("Segoe UI", 11)
         )
         summary_label.pack(side=tk.RIGHT, padx=20, pady=15)
-
+        
         self.link_summary_var = tk.StringVar(value="Telemetry links: checking...")
         link_summary = tk.Label(
             header,
             textvariable=self.link_summary_var,
-            bg=self.colors["bg_secondary"],
-            fg=self.colors["fg_secondary"],
-            font=("System", 9)
+            bg=DARK_BG_MED,
+            fg=DARK_FG_SEC,
+            font=("Segoe UI", 9)
         )
         link_summary.pack(side=tk.RIGHT, padx=20, pady=15)
         
-        # Main content area with scrollbar
-        main_frame = tk.Frame(self.root, bg=self.colors["bg_primary"])
+        # Main content area with scrollable grid
+        main_frame = tk.Frame(self.root, bg=DARK_BG)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Canvas for scrolling
-        canvas = tk.Canvas(main_frame, bg=self.colors["bg_primary"], highlightthickness=0)
+        canvas = tk.Canvas(main_frame, bg=DARK_BG, highlightthickness=0)
         scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas, bg=self.colors["bg_primary"])
+        scrollable_frame = tk.Frame(canvas, bg=DARK_BG)
         
         scrollable_frame.bind(
             "<Configure>",
@@ -753,104 +636,81 @@ class BeaconMonitorGUI:
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         
-        # Grid layout for beacon cards
-        self.cards_frame = scrollable_frame
-        self._arrange_beacon_cards()
-        
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
+        self.cards_frame = scrollable_frame
+        self._layout_cards()
+        
         # Footer with controls
-        footer = tk.Frame(self.root, bg=self.colors["bg_secondary"], height=50)
-        footer.pack(fill=tk.X, padx=0, pady=0)
+        footer = tk.Frame(self.root, bg=DARK_BG_MED, height=50)
+        footer.pack(fill=tk.X, padx=10, pady=10)
         footer.pack_propagate(False)
         
-        # Create button frame with proper styling
-        button_frame = tk.Frame(footer, bg=self.colors["bg_secondary"])
-        button_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
+        button_frame = tk.Frame(footer, bg=DARK_BG_MED)
+        button_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
         
-        # Refresh button
-        refresh_btn = ttk.Button(
-            button_frame,
-            text="Refresh Now",
-            command=self._force_refresh
-        )
-        refresh_btn.pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            button_frame, text="Refresh Now",
+            command=self._trigger_manual_refresh,
+            style="Primary.TButton"
+        ).pack(side=tk.LEFT, padx=5)
         
-        # Connection status button
-        conn_btn = ttk.Button(
-            button_frame,
-            text="Connection Status",
-            command=self._show_connection_status
-        )
-        conn_btn.pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            button_frame, text="Open Connection Status",
+            command=self._open_connection_status
+        ).pack(side=tk.LEFT, padx=5)
         
-        # Export button
-        export_btn = ttk.Button(
-            button_frame,
-            text="Export Report",
-            command=self._export_report
-        )
-        export_btn.pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            button_frame, text="Configure Beacons",
+            command=self._open_beacon_config
+        ).pack(side=tk.LEFT, padx=5)
         
-        # Close button
-        close_btn = ttk.Button(
-            button_frame,
-            text="Close",
-            command=self.on_closing
+        self.status_label = tk.Label(
+            footer,
+            text="Monitoring active",
+            bg=DARK_BG_MED,
+            fg=GREEN_OK,
+            font=("Segoe UI", 9)
         )
-        close_btn.pack(side=tk.RIGHT, padx=5)
+        self.status_label.pack(side=tk.RIGHT, padx=10)
     
-    def _arrange_beacon_cards(self):
-        """Arrange beacon cards in grid layout"""
-        # Clear existing cards
-        for card in self.beacon_cards.values():
-            card.frame.destroy()
-        self.beacon_cards.clear()
+    def _layout_cards(self):
+        """Arrange beacon cards in a responsive grid"""
+        for widget in self.cards_frame.winfo_children():
+            widget.destroy()
         
-        # Calculate grid columns based on number of beacons
-        num_beacons = len(self.beacons_config)
-        if num_beacons == 0:
-            empty_label = tk.Label(
-                self.cards_frame,
-                text="No beacons configured",
-                bg=self.colors["bg_primary"],
-                fg=self.colors["fg_secondary"],
-                font=("System", 12)
-            )
-            empty_label.pack(pady=20)
+        n = len(self.beacons_config)
+        if n == 0:
             return
         
-        cols = min(4, max(1, math.ceil(math.sqrt(num_beacons))))
-        rows = max(1, math.ceil(num_beacons / cols))
-
-        # Place cards from the center outward so the grid grows in expanding rings
-        center_row = (rows - 1) / 2.0
-        center_col = (cols - 1) / 2.0
-        positions = [(r, c) for r in range(rows) for c in range(cols)]
-        positions.sort(
-            key=lambda rc: (
-                abs(rc[0] - center_row) + abs(rc[1] - center_col),
-                (rc[0] - center_row) ** 2 + (rc[1] - center_col) ** 2,
-                rc[0],
-                rc[1],
-            )
-        )
+        # Calculate grid dimensions
+        cols = min(4, max(1, int(math.ceil(math.sqrt(n)))))
+        rows = int(math.ceil(n / cols))
         
-        # Create grid structure
-        grid_frame = tk.Frame(self.cards_frame, bg=self.colors["bg_primary"])
-        grid_frame.pack(fill=tk.BOTH, expand=True)
+        grid_frame = tk.Frame(self.cards_frame, bg=DARK_BG)
+        grid_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        for idx, beacon_id in enumerate(sorted(self.beacons_config.keys())):
-            row, col = positions[idx]
+        beacon_items = list(self.beacons_config.items())
+        
+        for idx, (beacon_id, config) in enumerate(beacon_items):
+            row = idx // cols
+            col = idx % cols
             
-            # Create cell frame
-            cell = tk.Frame(grid_frame, bg=self.colors["bg_primary"])
-            cell.grid(row=row, column=col, sticky="nsew", padx=5, pady=5)
+            cell = tk.Frame(grid_frame, bg=DARK_BG)
+            cell.grid(row=row, column=col, sticky="nsew", padx=6, pady=6)
             
-            # Create beacon card
-            status = self.beacon_status.get(beacon_id, BeaconStatus(beacon_id=beacon_id))
-            card = BeaconCard(cell, beacon_id, status, self.colors)
+            status = self.beacon_status.get(beacon_id)
+            if status is None:
+                status = BeaconStatus(
+                    beacon_id=beacon_id,
+                    ip_address=config.get("ip_address", "0.0.0.0"),
+                    port=config.get("port", 5000),
+                    display_name=config.get("display_name"),
+                )
+                self.beacon_status[beacon_id] = status
+            
+            card = BeaconCard(cell, beacon_id, status)
             self.beacon_cards[beacon_id] = card
         
         # Configure grid weights
@@ -861,6 +721,7 @@ class BeaconMonitorGUI:
     
     def _update_cards(self):
         """Update beacon cards with latest status"""
+        online_count = 0
         for beacon_id, card in self.beacon_cards.items():
             status = self.beacon_status.get(beacon_id)
             if status:
@@ -870,404 +731,173 @@ class BeaconMonitorGUI:
                 card.update_temperature_state(status.temperature_c)
                 card.update_time_to_dead_display()
                 card._draw_status_led()
+                card.update_uptime_display(status.uptime_seconds)
+                
+                # Update metric bars
                 card._update_visual_bar("Battery", card._metric_to_percent(status.battery_percent, 0, 100), card._battery_color(status.battery_percent))
-                card._update_visual_bar("Thermal", card._metric_to_percent(status.temperature_c, 20, 60), card._temperature_color(status.temperature_c))
-                card._update_visual_bar("Fan", card._metric_to_percent(status.fan_speed_rpm, 0, 3000), self.colors["accent_orange"])
-                card._update_visual_bar("LED", card._metric_to_percent(status.led_brightness, 0, 100), self.colors["accent_green"])
+                card._update_visual_bar("Voltage", card._metric_to_percent(status.battery_voltage, 3.0, 4.2), BLUE_LINK)
+                card._update_visual_bar("Current", card._metric_to_percent(status.current_amperage, 0, 2.0), AMBER_WARN)
+                card._update_visual_bar("Fan", card._metric_to_percent(status.fan_speed_rpm, 0, 3000), GREEN_OK)
+                card._update_visual_bar("LED", card._metric_to_percent(status.led_brightness, 0, 100), BLUE_LINK)
+                
+                if status.online:
+                    online_count += 1
         
-        # Update summary
-        online_count = sum(1 for s in self.beacon_status.values() if s.online)
-        total_count = len(self.beacon_status)
-        link_count = sum(1 for s in self.beacon_status.values() if s.endpoint_url)
-        self.summary_var.set(f"Online: {online_count}/{total_count} beacons • Last update: {time.strftime('%H:%M:%S')}")
-        self.link_summary_var.set(f"Telemetry links: {link_count}/{total_count} ready")
-
-    def _default_beacon_configs(self) -> Dict[str, Dict[str, Any]]:
-        """Provide a non-empty offline beacon set when no saved config exists."""
-        return {
-            "Beacon-1": {
-                "beacon_id": "Beacon-1",
-                "display_name": "Beacon-1",
-                "ip_address": "192.168.1.50",
-                "port": 5000,
-                "poll_interval": 1.0,
-            },
-            "Beacon-2": {
-                "beacon_id": "Beacon-2",
-                "display_name": "Beacon-2",
-                "ip_address": "192.168.1.51",
-                "port": 5000,
-                "poll_interval": 1.0,
-            },
-        }
-
-    def _start_stale_watchdog(self):
-        """Start a UI watchdog that marks cards stale when their data ages out."""
-        self.root.after(250, self._watchdog_tick)
-
-    def _watchdog_tick(self):
-        """Check all beacon cards for stale telemetry and refresh their visual state."""
-        if not self.monitoring_active:
-            self.root.after(250, self._watchdog_tick)
-            return
-
-        for card in self.beacon_cards.values():
-            card._apply_freshness_state()
-            card.update_time_to_dead_display()
-
-        self.root.after(250, self._watchdog_tick)
-    
-    def _monitoring_loop(self):
-        """Background thread for monitoring beacons"""
-        next_poll_times: Dict[str, float] = {}
-
-        while self.monitoring_active:
-            try:
-                now = time.time()
-                next_due_time = now + max(0.2, float(self.poll_interval))
-
-                for beacon_id, config in self.beacons_config.items():
-                    interval = config.get("poll_interval", self.poll_interval)
-                    try:
-                        poll_interval = max(0.2, float(interval))
-                    except (TypeError, ValueError):
-                        poll_interval = max(0.2, float(self.poll_interval))
-
-                    due_time = next_poll_times.get(beacon_id, 0.0)
-                    if now >= due_time:
-                        status = self._poll_beacon(beacon_id, config)
-                        if status:
-                            self.beacon_status[beacon_id] = status
-                        due_time = now + poll_interval
-                        next_poll_times[beacon_id] = due_time
-
-                    next_due_time = min(next_due_time, due_time)
-
-                # Update UI
-                self.root.after(0, self._update_cards)
-
-                sleep_for = max(0.05, next_due_time - time.time())
-                time.sleep(sleep_for)
-            except Exception as e:
-                logger.error(f"Monitoring loop error: {e}")
-                time.sleep(1)
-    
-    def _poll_beacon(self, beacon_id: str, config: Dict[str, Any]) -> Optional[BeaconStatus]:
-        """Poll a single beacon for live status."""
+        total_count = len(self.beacon_cards)
+        self.summary_var.set(f"Beacons: {online_count}/{total_count} ONLINE")
         
-        status = self.beacon_status.get(beacon_id, BeaconStatus(beacon_id=beacon_id))
-        status.ip_address = config.get("ip_address", "0.0.0.0")
-        status.port = config.get("port", 5000)
-        status.endpoint_url = config.get("status_url") or f"http://{status.ip_address}:{status.port}/api/status"
-
-        beacon = SimpleNamespace(ip_address=status.ip_address, port=status.port)
+        if self.link_summary_var:
+            offline_names = [
+                self.beacon_status[bid].display_name or bid
+                for bid, s in self.beacon_status.items()
+                if not s.online
+            ]
+            if offline_names:
+                self.link_summary_var.set(f"Offline: {', '.join(offline_names)}")
+            else:
+                self.link_summary_var.set("All beacons online ✓")
+    
+    def _trigger_manual_refresh(self):
+        self.annunciator.scroll_message("Manual refresh triggered", "info")
+        threading.Thread(target=self._poll_all_beacons, daemon=True).start()
+    
+    def _open_connection_status(self):
+        # Reuse the connection status window
         try:
-            payload = fetch_status(beacon, timeout=2.5)
-            telemetry = payload.get("telemetry") if isinstance(payload, dict) else None
-            if not isinstance(telemetry, dict):
-                telemetry = payload if isinstance(payload, dict) else {}
-            status.online = True
-            status.last_update = time.time()
-            status.last_error = None
-            status.telemetry = telemetry
-            status.battery_voltage = telemetry.get("battery_v")
-            status.battery_percent = telemetry.get("battery_pct")
-            status.current_amperage = telemetry.get("current_a")
-            status.fan_speed_rpm = telemetry.get("fan_rpm")
-            status.led_brightness = telemetry.get("brightness_pct")
-            status.temperature_c = telemetry.get("temp_c")
-            status.uptime_seconds = telemetry.get("uptime_s")
-            status.wifi_ssid = telemetry.get("wifi_ssid")
-            signal_value = telemetry.get("wifi_rssi_dbm", telemetry.get("signal_dbm"))
-            try:
-                status.signal_dbm = float(signal_value) if signal_value is not None else None
-            except (TypeError, ValueError):
-                status.signal_dbm = None
-            telemetry_value = payload.get("last_telemetry")
-            status.last_telemetry = str(telemetry_value) if telemetry_value is not None else None
+            from launcher_gui import ConnectionStatusWindow  # type: ignore
         except Exception as exc:
-            status.online = False
-            status.last_error = str(exc)
-            logger.debug("Beacon poll failed for %s (%s:%s): %s", beacon_id, status.ip_address, status.port, exc)
+            logger.error("Cannot open connection status: %s", exc)
+            return
         
-        return status
+        class _LauncherProxy:
+            def __init__(self, root: tk.Tk):
+                self.root = root
+            
+            @staticmethod
+            def log_to_terminal(message: str):
+                logger.info("[ConnectionStatus] %s", message)
+        
+        roof_config = PROJECT_ROOT / "config" / "roof_array_config.json"
+        front_config = PROJECT_ROOT / "config" / "front_array_config.json"
+        
+        try:
+            launcher_proxy = _LauncherProxy(self.root)
+            ConnectionStatusWindow(
+                launcher=launcher_proxy,
+                roof_config_path=str(roof_config),
+                front_config_path=str(front_config),
+                launch_callback=None,
+                modal=False,
+                allow_launch=False,
+            )
+        except Exception as exc:
+            logger.error("Unable to open connection status: %s", exc)
     
-    def _force_refresh(self):
-        """Force immediate refresh of all beacon status"""
-        logger.info("Forcing beacon status refresh...")
-        for beacon_id, config in self.beacons_config.items():
-            status = self._poll_beacon(beacon_id, config)
-            if status:
-                self.beacon_status[beacon_id] = status
-        self._update_cards()
-    
-    def _export_report(self):
-        """Export beacon status report"""
-        report_data = {
-            "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
-            "beacons": []
-        }
+    def _open_beacon_config(self):
+        try:
+            from control.beacon_config_gui import BeaconConfigGUI  # type: ignore
+        except Exception as exc:
+            logger.error("Cannot open beacon config: %s", exc)
+            return
         
-        for beacon_id, status in self.beacon_status.items():
-            report_data["beacons"].append({
-                "beacon_id": beacon_id,
-                "ip_address": status.ip_address,
-                "port": status.port,
-                "endpoint_url": status.endpoint_url,
-                "online": status.online,
-                "battery_percent": status.battery_percent,
-                "battery_voltage": status.battery_voltage,
-                "current_amperage": status.current_amperage,
-                "fan_speed_rpm": status.fan_speed_rpm,
-                "led_brightness": status.led_brightness,
-                "temperature_c": status.temperature_c,
-                "uptime_seconds": status.uptime_seconds,
-                "wifi_ssid": status.wifi_ssid,
-                "signal_dbm": status.signal_dbm,
-                "last_error": status.last_error,
-                "last_telemetry": status.last_telemetry,
-            })
-        
-        # Save to file
-        report_file = PROJECT_ROOT / "backups" / f"beacon_report_{time.strftime('%Y%m%d_%H%M%S')}.json"
-        report_file.parent.mkdir(exist_ok=True)
-        
-        with open(report_file, 'w') as f:
-            json.dump(report_data, f, indent=2)
-        
-        logger.info(f"Report exported to {report_file}")
-    
-    def _show_connection_status(self):
-        """Show beacon connection status window"""
-        # Create connection status window
-        conn_window = tk.Toplevel(self.root)
-        conn_window.title("Beacon Connection Status")
-        conn_window.geometry("800x500")
-        conn_window.configure(bg=self.colors["bg_primary"])
-        
-        # Header
-        header = tk.Frame(conn_window, bg=self.colors["bg_secondary"], height=40)
-        header.pack(fill=tk.X)
-        header.pack_propagate(False)
-        
-        title = tk.Label(
-            header,
-            text="BEACON CONNECTION STATUS",
-            bg=self.colors["bg_secondary"],
-            fg=self.colors["accent_green"],
-            font=("System", 14, "bold"),
-            anchor=tk.W
-        )
-        title.pack(side=tk.LEFT, padx=15, pady=10)
-        
-        # Summary
-        online_count = sum(1 for s in self.beacon_status.values() if s.online)
-        total_count = len(self.beacon_status)
-        
-        summary_frame = tk.Frame(conn_window, bg=self.colors["bg_primary"])
-        summary_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        summary_text = f"Online: {online_count}/{total_count} beacons ({100*online_count//max(1,total_count)}%)"
-        tk.Label(
-            summary_frame,
-            text=summary_text,
-            bg=self.colors["bg_primary"],
-            fg=self.colors["accent_green"] if online_count == total_count else self.colors["accent_orange"],
-            font=("System", 11, "bold")
-        ).pack(anchor=tk.W, padx=10, pady=5)
-        
-        # Connection list
-        list_frame = tk.Frame(conn_window, bg=self.colors["bg_primary"])
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Canvas for scrolling
-        canvas = tk.Canvas(list_frame, bg=self.colors["bg_primary"], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas, bg=self.colors["bg_primary"])
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        # Add beacon connection items
-        for beacon_id in sorted(self.beacon_status.keys()):
-            status = self.beacon_status[beacon_id]
-            self._create_connection_item(scrollable_frame, beacon_id, status)
-        
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Footer
-        footer = tk.Frame(conn_window, bg="#1a1a1a", height=40)
-        footer.pack(fill=tk.X)
-        footer.pack_propagate(False)
-        
-        close_btn = tk.Button(
-            footer,
-            text="Close",
-            bg="#8f2d2d",
-            fg="#ffffff",
-            activebackground="#cc3333",
-            activeforeground="#ffffff",
-            font=("Arial", 10),
-            relief=tk.RAISED,
-            borderwidth=2,
-            padx=12,
-            pady=6,
-            command=conn_window.destroy
-        )
-        close_btn.pack(side=tk.RIGHT, padx=10, pady=8)
-        
-        ensure_window_fits_content(conn_window, min_width=800, min_height=500, padding=60, center=True)
-    
-    def _create_connection_item(self, parent: tk.Frame, beacon_id: str, status: BeaconStatus):
-        """Create a connection status item"""
-        item_frame = tk.Frame(parent, bg="#222222", relief=tk.SUNKEN, borderwidth=1)
-        item_frame.pack(fill=tk.X, pady=3, padx=2)
-        
-        # Status indicator and ID
-        header_frame = tk.Frame(item_frame, bg="#222222")
-        header_frame.pack(fill=tk.X, padx=8, pady=6)
-        
-        # Online/Offline status
-        status_color = "#00ff00" if status.online else "#ff4444"
-        status_text = "ONLINE" if status.online else "OFFLINE"
-        
-        tk.Label(
-            header_frame,
-            text=status_text,
-            bg="#222222",
-            fg=status_color,
-            font=("Arial", 10, "bold"),
-            width=10,
-            anchor=tk.W
-        ).pack(side=tk.LEFT, padx=5)
-        
-        tk.Label(
-            header_frame,
-            text=beacon_id,
-            bg="#222222",
-            fg="#cccccc",
-            font=("Arial", 10, "bold")
-        ).pack(side=tk.LEFT, padx=5)
-        
-        # Network info
-        tk.Label(
-            header_frame,
-            text=f"{status.ip_address}:{status.port}",
-            bg="#222222",
-            fg="#888888",
-            font=("Arial", 9)
-        ).pack(side=tk.LEFT, padx=5)
-
-        endpoint = status.endpoint_url or f"http://{status.ip_address}:{status.port}/api/status"
-        tk.Label(
-            item_frame,
-            text=endpoint,
-            bg="#222222",
-            fg="#555555",
-            font=("Arial", 8),
-            wraplength=720,
-            justify=tk.LEFT,
-        ).pack(fill=tk.X, padx=12, pady=(0, 4), anchor=tk.W)
-
-        if status.wifi_ssid or status.signal_dbm is not None:
-            wifi_parts = []
-            if status.wifi_ssid:
-                wifi_parts.append(f"SSID: {status.wifi_ssid}")
-            if status.signal_dbm is not None:
-                wifi_parts.append(f"RSSI: {status.signal_dbm:.0f} dBm")
-            tk.Label(
-                item_frame,
-                text=" • ".join(wifi_parts),
-                bg="#222222",
-                fg="#888888",
-                font=("Arial", 8),
-            ).pack(fill=tk.X, padx=12, pady=(0, 4), anchor=tk.W)
-        
-        # Last update
-        if status.last_update:
-            last_update_age = time.time() - status.last_update
-            age_str = f"{last_update_age:.0f}s ago" if last_update_age < 60 else f"{last_update_age/60:.1f}m ago"
-            tk.Label(
-                header_frame,
-                text=age_str,
-                bg="#222222",
-                fg="#666666",
-                font=("Arial", 8)
-            ).pack(side=tk.RIGHT, padx=5)
-
-        if status.last_error:
-            tk.Label(
-                item_frame,
-                text=f"Last error: {status.last_error}",
-                bg="#222222",
-                fg="#aa6666",
-                font=("Arial", 8),
-                wraplength=720,
-                justify=tk.LEFT,
-            ).pack(fill=tk.X, padx=12, pady=(0, 4), anchor=tk.W)
-
-        if status.last_telemetry:
-            telemetry_preview = status.last_telemetry.strip().replace("\n", " ")
-            if len(telemetry_preview) > 120:
-                telemetry_preview = telemetry_preview[:117] + "..."
-            tk.Label(
-                item_frame,
-                text=f"Last telemetry: {telemetry_preview}",
-                bg="#222222",
-                fg="#8888aa",
-                font=("Arial", 8),
-                wraplength=720,
-                justify=tk.LEFT,
-            ).pack(fill=tk.X, padx=12, pady=(0, 4), anchor=tk.W)
+        BeaconConfigGUI().run()
     
     def load_config(self):
-        """Load beacon configuration"""
-        if self.config_file.exists():
-            try:
-                with open(self.config_file, 'r') as f:
-                    config_data = json.load(f)
-                    self.beacons_config = config_data.get("beacons", {})
-                    logger.info(f"Loaded {len(self.beacons_config)} beacons from config")
-            except Exception as e:
-                logger.error(f"Failed to load config: {e}")
-                self.beacons_config = self._default_beacon_configs()
-        else:
-            self.beacons_config = self._default_beacon_configs()
-            logger.warning(
-                "Beacon configuration file not found at %s. Configure beacons first in Beacon Configuration & Monitor.",
-                self.config_file,
-            )
+        """Load beacon configuration from JSON file"""
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    self.beacons_config = json.load(f)
+            else:
+                self.beacons_config = {}
+        except Exception as e:
+            logger.error("Failed to load beacon config: %s", e)
+            self.beacons_config = {}
+    
+    def _default_beacon_configs(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            "BEACON-01": {
+                "ip_address": "192.168.1.101",
+                "port": 5000,
+                "display_name": "Stage Left",
+            },
+            "BEACON-02": {
+                "ip_address": "192.168.1.102",
+                "port": 5000,
+                "display_name": "Stage Center",
+            },
+            "BEACON-03": {
+                "ip_address": "192.168.1.103",
+                "port": 5000,
+                "display_name": "Stage Right",
+            },
+            "BEACON-04": {
+                "ip_address": "192.168.1.104",
+                "port": 5000,
+                "display_name": "FOH",
+            },
+        }
     
     def _start_monitoring(self):
-        """Start the monitoring background thread"""
+        """Start background monitoring thread"""
         self.monitoring_active = True
         self.update_thread = threading.Thread(target=self._monitoring_loop, daemon=True)
         self.update_thread.start()
-        logger.info("Monitoring started")
+        # Initial poll
+        threading.Thread(target=self._poll_all_beacons, daemon=True).start()
+    
+    def _monitoring_loop(self):
+        """Background loop that polls beacons"""
+        while self.monitoring_active:
+            self._poll_all_beacons()
+            time.sleep(self.poll_interval)
+    
+    def _poll_all_beacons(self):
+        """Poll all configured beacons"""
+        if fetch_status is None:
+            return
+        
+        results = []
+        for beacon_id, config in self.beacons_config.items():
+            ip = config.get("ip_address", "0.0.0.0")
+            port = config.get("port", 5000)
+            try:
+                status = fetch_status(ip, port)
+                if status:
+                    status.beacon_id = beacon_id
+                    status.display_name = config.get("display_name")
+                    results.append((beacon_id, status))
+            except Exception as e:
+                logger.debug("Beacon %s poll failed: %s", beacon_id, e)
+        
+        if results:
+            self.root.after(0, self._apply_poll_results, results)
+    
+    def _apply_poll_results(self, results: List[Tuple[str, BeaconStatus]]):
+        for beacon_id, status in results:
+            self.beacon_status[beacon_id] = status
+        self._update_cards()
+    
+    def _start_stale_watchdog(self):
+        """Watchdog to update staleness indicators"""
+        def watchdog_tick():
+            if self.monitoring_active:
+                for card in self.beacon_cards.values():
+                    card._apply_freshness_state()
+                    card.update_time_to_dead_display()
+                self.root.after(250, watchdog_tick)
+        self.root.after(250, watchdog_tick)
     
     def on_closing(self):
-        """Handle window closing"""
+        """Clean shutdown"""
         self.monitoring_active = False
-        if self.update_thread:
-            self.update_thread.join(timeout=2.0)
         self.root.destroy()
-        logger.info("Monitor closed")
     
     def run(self):
-        """Run the GUI"""
-        ensure_window_fits_content(self.root, min_width=1400, min_height=900, padding=80, center=True)
+        """Run the GUI main loop"""
         self.root.mainloop()
 
-def main():
-    """Entry point"""
-    monitor = BeaconMonitorGUI()
-    monitor.run()
 
 if __name__ == "__main__":
-    main()
+    app = BeaconMonitorGUI()
+    app.run()
