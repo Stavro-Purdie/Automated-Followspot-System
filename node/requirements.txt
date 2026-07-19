@@ -6,3 +6,4 @@ aiortc
 picamera2 Commented for debug purpoes (will be put back later)
 scikit-image
 requests
+pyserial

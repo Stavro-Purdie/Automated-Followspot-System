@@ -1,25 +1,11 @@
 {
   "rig": {
-    "fixture_position_m": [
-      0.0,
-      -5.0,
-      6.5
-    ],
-    "stage_origin_m": [
-      0.0,
-      0.0,
-      0.0
-    ],
+    "fixture_position_m": [0.0, -5.0, 6.5],
+    "stage_origin_m": [0.0, 0.0, 0.0],
     "pan_zero_angle_deg": 0.0,
     "tilt_zero_angle_deg": -35.0,
-    "pan_limits_deg": [
-      -120.0,
-      120.0
-    ],
-    "tilt_limits_deg": [
-      -120.0,
-      10.0
-    ],
+    "pan_limits_deg": [-120.0, 120.0],
+    "tilt_limits_deg": [-120.0, 10.0],
     "smoothing": {
       "pan_alpha": 0.2,
       "tilt_alpha": 0.25
@@ -31,9 +17,14 @@
     "tilt_address": 3,
     "pan_scale": 1.0,
     "tilt_scale": 1.0,
+    "brightness_pct": 100.0,
     "transport": "http_bridge",
     "endpoint_url": "http://192.168.0.50:8000/dmx",
     "serial_port": "/dev/ttyAMA0",
-    "baud_rate": 115200
+    "baud_rate": 115200,
+    "fixture_profile": "config/fixture_profiles.json",
+    "artnet_ip": "2.0.0.1",
+    "artnet_net": 0,
+    "artnet_subnet": 0
   }
 }

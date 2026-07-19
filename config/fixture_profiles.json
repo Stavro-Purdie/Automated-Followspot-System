@@ -1,0 +1,66 @@
+{
+  "fixture_profiles": {
+    "generic_moving_head": {
+      "name": "Generic Moving Head",
+      "description": "Generic 16-bit moving head profile for followspot",
+      "universe": 1,
+      "pan_coarse": 1,
+      "pan_fine": 2,
+      "tilt_coarse": 3,
+      "tilt_fine": 4,
+      "dimmer": 5,
+      "pan_scale": 1.0,
+      "tilt_scale": 1.0,
+      "pan_min_deg": -180.0,
+      "pan_max_deg": 180.0,
+      "tilt_min_deg": -90.0,
+      "tilt_max_deg": 90.0,
+      "channels": {
+        "1": "Pan Coarse",
+        "2": "Pan Fine",
+        "3": "Tilt Coarse",
+        "4": "Tilt Fine",
+        "5": "Dimmer",
+        "6": "Strobe",
+        "7": "Color Wheel",
+        "8": "Gobo Wheel",
+        "9": "Prism",
+        "10": "Focus",
+        "11": "Zoom"
+      }
+    },
+    "generic_led_par": {
+      "name": "Generic LED PAR",
+      "channels": 4,
+      "pan_coarse": 1,
+      "pan_fine": 2,
+      "tilt_coarse": 3,
+      "tilt_fine": 4,
+      "dimmer": 5,
+      "pan_scale": 1.0,
+      "tilt_scale": 1.0,
+      "pan_min_deg": -180.0,
+      "pan_max_deg": 180.0,
+      "tilt_min_deg": -90.0,
+      "tilt_max_deg": 90.0,
+      "universe": 1
+    },
+    "robinte_mega_pointe": {
+      "name": "Robinte Mega Pointe",
+      "channels": 25,
+      "pan_coarse": 1,
+      "pan_fine": 2,
+      "tilt_coarse": 3,
+      "tilt_fine": 4,
+      "dimmer": 5,
+      "pan_scale": 1.0,
+      "tilt_scale": 1.0,
+      "pan_min_deg": -180.0,
+      "pan_max_deg": 180.0,
+      "tilt_min_deg": -90.0,
+      "tilt_max_deg": 90.0,
+      "universe": 1
+    }
+  },
+  "default_profile": "generic_moving_head"
+}

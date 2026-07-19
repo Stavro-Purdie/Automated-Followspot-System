@@ -49,11 +49,56 @@ class SpotlightController:
         self.transport_timeout = float(self.dmx_config.get("timeout_s", 2.0))
         self._bridge_health_cache: Optional[Dict] = None
 
+        # Load fixture profile for DMX encoding
+        self.fixture_profile = self._load_fixture_profile()
+
         self.last_pan: Optional[float] = None
         self.last_tilt: Optional[float] = None
         self.last_command: Optional[Dict] = None
 
         logger.info("SpotlightController initialized at %s", self.config_path)
+
+    def _load_fixture_profile(self) -> Dict:
+        """Load fixture profile from config path."""
+        profile_path = self.dmx_config.get("fixture_profile", "")
+        if not profile_path:
+            logger.warning("No fixture_profile path in config, using defaults")
+            return {
+                "pan_coarse": 1,
+                "pan_fine": 2,
+                "tilt_coarse": 3,
+                "tilt_fine": 4,
+                "dimmer": 5,
+                "pan_scale": 1.0,
+                "tilt_scale": 1.0,
+                "pan_min_deg": -180.0,
+                "pan_max_deg": 180.0,
+                "tilt_min_deg": -90.0,
+                "tilt_max_deg": 90.0,
+            }
+        try:
+            path = Path(profile_path)
+            if not path.is_absolute():
+                path = self.config_path.parent / path
+            with open(path, "r") as f:
+                profile = json.load(f)
+            logger.info("Loaded fixture profile from %s", path)
+            return profile
+        except Exception as e:
+            logger.warning("Failed to load fixture profile: %s, using defaults", e)
+            return {
+                "pan_coarse": 1,
+                "pan_fine": 2,
+                "tilt_coarse": 3,
+                "tilt_fine": 4,
+                "dimmer": 5,
+                "pan_scale": 1.0,
+                "tilt_scale": 1.0,
+                "pan_min_deg": -180.0,
+                "pan_max_deg": 180.0,
+                "tilt_min_deg": -90.0,
+                "tilt_max_deg": 90.0,
+            }
 
     # ---------------------------------------------------------------------
     # Public API

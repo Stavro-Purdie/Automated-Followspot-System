@@ -7,6 +7,7 @@ import socket
 import termios
 import time
 import fractions
+from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
@@ -17,6 +18,9 @@ from aiortc.contrib.media import MediaRelay
 from picamera2 import Picamera2
 from libcamera import controls, Transform
 from aiortc.mediastreams import MediaStreamError
+
+# Local DMX transport
+from dmx_transport import create_transport, DMXEncoder, DMXFrame
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -83,105 +87,43 @@ active_tracks = set()
 track_lock = asyncio.Lock()
 
 
-class DMXController:
-    """Lighting command bridge for the RS485 HAT."""
+# DMX transport is now handled by dmx_transport module
+# DMXController class removed - use create_transport() from dmx_transport
 
-    def __init__(self, *, serial_port: str = "/dev/ttyAMA0", baudrate: int = 115200) -> None:
-        self.initialized = False
-        self.serial_port = serial_port
-        self.baudrate = int(baudrate)
-        self._serial_handle = None
-        self.last_command: Dict[str, Any] | None = None
-        self.last_frame: Dict[str, Any] | None = None
 
-    def _baud_constant(self) -> int:
-        return getattr(termios, f"B{self.baudrate}", termios.B115200)
-
-    def _open_serial(self):
-        if self._serial_handle is not None:
-            return self._serial_handle
-
-        if not self.serial_port:
-            raise RuntimeError("No serial port configured for RS485 transport")
-
-        handle = open(self.serial_port, "wb", buffering=0)
-        fd = handle.fileno()
-        attrs = termios.tcgetattr(fd)
-        attrs[0] = 0
-        attrs[1] = 0
-        attrs[2] = termios.CLOCAL | termios.CREAD | termios.CS8
-        attrs[3] = 0
-        attrs[4] = self._baud_constant()
-        attrs[5] = self._baud_constant()
-        termios.tcsetattr(fd, termios.TCSANOW, attrs)
-        self._serial_handle = handle
-        logger.info("RS485 lighting transport opened on %s @ %s baud", self.serial_port, self.baudrate)
-        return handle
-
-    def _normalize_frame(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        command = payload.get("command") if isinstance(payload.get("command"), dict) else payload
-        command = command or {}
-        frame = {
-            "protocol": str(payload.get("protocol", "followspot-lighting")),
-            "version": int(payload.get("version", 1)),
-            "transport": str(payload.get("transport", "rs485_serial")),
-            "timestamp": float(payload.get("timestamp", time.time())),
-            "command": {
-                "pan_deg": float(command.get("pan_deg", 0.0)),
-                "tilt_deg": float(command.get("tilt_deg", 0.0)),
-                "brightness_pct": float(command.get("brightness_pct", 100.0)),
-                "source": str(command.get("source", payload.get("source", "control"))),
-                "target_id": command.get("target_id"),
-            },
+def load_fixture_profile(profile_name: str = None) -> Dict[str, Any]:
+    """Load fixture profile from config/fixture_profiles.json."""
+    config_path = Path(__file__).parent.parent / "config" / "fixture_profiles.json"
+    if not config_path.exists():
+        logger.warning("Fixture profile config not found at %s, using defaults", config_path)
+        return {
+            "pan_coarse": 1,
+            "pan_fine": 2,
+            "tilt_coarse": 3,
+            "tilt_fine": 4,
+            "dimmer": 5,
+            "pan_scale": 1.0,
+            "tilt_scale": 1.0,
+            "pan_min_deg": -180.0,
+            "pan_max_deg": 180.0,
+            "tilt_min_deg": -90.0,
+            "tilt_max_deg": 90.0,
+            "universe": 1,
         }
-        return frame
-
-    def _serialize_frame(self, frame: Dict[str, Any]) -> bytes:
-        encoded = json.dumps(frame, separators=(",", ":"), sort_keys=True)
-        return f"{encoded}\n".encode("utf-8")
-
-    def send_command(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        frame = self._normalize_frame(payload)
-        command = frame["command"]
-        transport_mode = str(frame.get("transport", "rs485_serial"))
-        self.last_command = command
-        self.last_frame = frame
-
-        if transport_mode == "stub":
-            logger.info("Stub lighting frame accepted: %s", frame)
-            return {"ok": True, "transport": transport_mode, "frame": frame, "written": False}
-
-        try:
-            handle = self._open_serial()
-            handle.write(self._serialize_frame(frame))
-            handle.flush()
-            self.initialized = True
-            logger.info(
-                "Lighting frame sent to RS485 transport: pan=%.2f tilt=%.2f brightness=%.1f",
-                command["pan_deg"],
-                command["tilt_deg"],
-                command["brightness_pct"],
-            )
-            return {"ok": True, "transport": transport_mode, "frame": frame, "written": True}
-        except Exception as exc:
-            logger.error("Failed to send lighting command over RS485: %s", exc)
-            return {"ok": False, "transport": transport_mode, "frame": frame, "error": str(exc)}
-
-    async def handle_update(self, request: web.Request) -> web.Response:
-        """Bridge an incoming lighting command to the RS485 transport."""
-        try:
-            if request.content_type == "application/json":
-                payload = await request.json()
-            else:
-                form_data = await request.post()
-                payload = dict(form_data)
-
-            result = self.send_command(payload)
-            status = 200 if result.get("ok") else 502
-            return web.json_response(result, status=status)
-        except Exception as exc:
-            logger.error("Lighting update handler failed: %s", exc)
-            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    try:
+        with open(config_path, "r") as f:
+            data = json.load(f)
+        default = data.get("default_profile", "generic_moving_head")
+        profile_name = profile_name or default
+        profile = data["fixture_profiles"].get(profile_name)
+        if not profile:
+            logger.warning("Profile '%s' not found, using default", profile_name)
+            profile = data["fixture_profiles"][default]
+        logger.info("Loaded fixture profile: %s", profile.get("name", profile_name))
+        return profile
+    except Exception as e:
+        logger.error("Failed to load fixture profile: %s", e)
+        return {}
 
 def get_ip_address():
     """Get the server's local IP address"""
@@ -493,17 +435,64 @@ async def handle_camera_info(request):
 
 async def handle_lighting_status(request):
     """Return the latest lighting transport state."""
-    controller: DMXController = request.app["dmx_controller"]
+    transport = request.app["dmx_transport"]
+    encoder = request.app["dmx_encoder"]
+    config = request.app["dmx_config"]
     return web.json_response(
         {
-            "transport": "rs485_serial" if controller.initialized else "stub",
-            "serial_port": controller.serial_port,
-            "baudrate": controller.baudrate,
-            "last_command": controller.last_command,
-            "last_frame": controller.last_frame,
-            "initialized": controller.initialized,
+            "transport": config.get("transport", "unknown"),
+            "serial_port": config.get("serial_port", ""),
+            "universe": config.get("universe", 1),
+            "initialized": transport.is_ready,
+            "fixture_profile": encoder.profile,
         }
     )
+
+
+async def handle_dmx_update(request: web.Request) -> web.Response:
+    """Bridge an incoming lighting command to the DMX transport."""
+    try:
+        if request.content_type == "application/json":
+            payload = await request.json()
+        else:
+            form_data = await request.post()
+            payload = dict(form_data)
+
+        # Extract command from payload
+        command = payload.get("command") if isinstance(payload.get("command"), dict) else payload
+        command = command or {}
+
+        pan_deg = float(command.get("pan_deg", 0.0))
+        tilt_deg = float(command.get("tilt_deg", 0.0))
+        brightness_pct = float(command.get("brightness_pct", 100.0))
+
+        # Encode to DMX frame
+        encoder = request.app["dmx_encoder"]
+        frame = encoder.encode(pan_deg, tilt_deg, brightness_pct)
+
+        # Send via transport
+        transport = request.app["dmx_transport"]
+        success = transport.send(frame)
+
+        result = {
+            "ok": success,
+            "transport": request.app["dmx_config"].get("transport", "unknown"),
+            "pan_deg": pan_deg,
+            "tilt_deg": tilt_deg,
+            "brightness_pct": brightness_pct,
+            "dmx_channels": {
+                "pan_coarse": frame.data[encoder.pan_coarse],
+                "pan_fine": frame.data[encoder.pan_fine],
+                "tilt_coarse": frame.data[encoder.tilt_coarse],
+                "tilt_fine": frame.data[encoder.tilt_fine],
+                "dimmer": frame.data[encoder.dimmer],
+            },
+        }
+        status = 200 if success else 502
+        return web.json_response(result, status=status)
+    except Exception as exc:
+        logger.error("DMX update handler failed: %s", exc)
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 async def on_server_shutdown(app):
     """Cleanup when server shuts down"""
@@ -524,31 +513,62 @@ async def on_server_shutdown(app):
         camera_obj.close()
         logger.info("Camera stopped and closed")
 
-async def run_server(host: str, port: int, profile: str, *, dmx_port: str = "/dev/ttyAMA0", dmx_baudrate: int = 115200):
-    """Set up and run the web server"""
-    # Initialize the camera
+async def run_server(
+    host: str, 
+    port: int, 
+    profile: str, 
+    *, 
+    dmx_port: str = "/dev/ttyAMA0", 
+    dmx_baudrate: int = 115200,
+    dmx_transport: str = "rs485_serial",
+    dmx_universe: int = 1,
+    artnet_ip: str = "2.0.0.1",
+    fixture_profile_path: str = ""
+):
+    """Set up and run the web server."""
+    # Initialize camera
     if not init_picamera(profile):
         logger.error("Failed to initialize camera, exiting")
         return
+
+    # Load fixture profile if provided
+    fixture_profile = {}
+    if fixture_profile_path:
+        try:
+            with open(fixture_profile_path, 'r') as f:
+                fixture_profile = json.load(f)
+            logger.info("Loaded fixture profile from %s", fixture_profile_path)
+        except Exception as e:
+            logger.warning("Failed to load fixture profile: %s", e)
+
+    # Create DMX transport from config
+    transport_config = {
+        "transport": dmx_transport,
+        "serial_port": dmx_port,
+        "universe": dmx_universe,
+        "artnet_ip": artnet_ip,
+        "fixture_profile": fixture_profile,
+    }
     
+    from dmx_transport import create_transport, DMXEncoder
+    dmx_transport_obj = create_transport(transport_config)
+    dmx_encoder = DMXEncoder(fixture_profile or RS485Transport._default_profile())
+
     # Set up web server
     app = web.Application()
     app.on_shutdown.append(on_server_shutdown)
-    dmx_controller = DMXController(serial_port=dmx_port, baudrate=dmx_baudrate)
-    app["dmx_controller"] = dmx_controller
+    app["dmx_transport"] = dmx_transport_obj
+    app["dmx_encoder"] = dmx_encoder
+    app["dmx_config"] = transport_config
     
     # Define routes
     app.router.add_post("/offer", handle_offer)
     app.router.add_post("/focus", handle_focus)
     app.router.add_get("/camera/info", handle_camera_info)
-    app.router.add_post("/dmx", dmx_controller.handle_update)
+    app.router.add_post("/dmx", handle_dmx_update)
     app.router.add_get("/dmx/status", handle_lighting_status)
-    logger.info("DMX endpoint registered")
-    
-    # Add simple root endpoint
-    async def handle_root(request):
-        return web.Response(text="WebRTC Camera Server Running")
     app.router.add_get("/", handle_root)
+    logger.info("DMX endpoint registered (transport=%s)", dmx_transport)
     
     # Start the server
     runner = web.AppRunner(app)
@@ -578,7 +598,7 @@ async def run_server(host: str, port: int, profile: str, *, dmx_port: str = "/de
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="WebRTC Camera Server")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind server to")
     parser.add_argument("--port", type=int, default=8080, help="Port to bind server to")
@@ -590,8 +610,17 @@ if __name__ == "__main__":
     )
     parser.add_argument("--dmx-port", default="/dev/ttyAMA0", help="RS485 serial port for lighting output")
     parser.add_argument("--dmx-baudrate", type=int, default=115200, help="Serial baudrate for lighting output")
+    parser.add_argument(
+        "--dmx-transport",
+        default="rs485_serial",
+        choices=["stub", "rs485_serial", "artnet", "sacn"],
+        help="DMX transport backend",
+    )
+    parser.add_argument("--dmx-universe", type=int, default=1, help="DMX universe number")
+    parser.add_argument("--artnet-ip", default="2.0.0.1", help="Art-Net target IP address")
+    parser.add_argument("--fixture-profile", default="", help="Path to fixture profile JSON (optional)")
     args = parser.parse_args()
-    
+
     try:
         asyncio.run(
             run_server(
@@ -600,6 +629,10 @@ if __name__ == "__main__":
                 args.profile,
                 dmx_port=args.dmx_port,
                 dmx_baudrate=args.dmx_baudrate,
+                dmx_transport=args.dmx_transport,
+                dmx_universe=args.dmx_universe,
+                artnet_ip=args.artnet_ip,
+                fixture_profile_path=args.fixture_profile,
             )
         )
     except KeyboardInterrupt:
