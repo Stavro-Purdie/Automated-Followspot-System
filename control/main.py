@@ -7,6 +7,13 @@ launch the demos.
 
 import sys
 import os
+from pathlib import Path
+
+# Ensure project root is on sys.path so package-qualified imports resolve
+_proj = Path(__file__).resolve().parent.parent
+if str(_proj) not in sys.path:
+    sys.path.insert(0, str(_proj))
+
 import logging
 import argparse
 import re

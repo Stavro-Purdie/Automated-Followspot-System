@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
 import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path so package-qualified imports resolve
+_proj = Path(__file__).resolve().parent.parent
+if str(_proj) not in sys.path:
+    sys.path.insert(0, str(_proj))
 
 from control.beacon_network import fetch_status, push_config, push_name
 
