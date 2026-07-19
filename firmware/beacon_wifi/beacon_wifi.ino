@@ -5,6 +5,14 @@
 #include <WiFi.h>
 #include <WebServer.h>
 
+// Optional INA219 current sensor library
+#if __has_include(<Adafruit_INA219.h>)
+  #include <Adafruit_INA219.h>
+  #define HAS_INA219 1
+#else
+  #define HAS_INA219 0
+#endif
+
 #if __has_include("wifi_credentials.h")
 #include "wifi_credentials.h"
 #else
@@ -19,6 +27,7 @@
   * Stores beacon ID, brightness, Wi-Fi credentials in NVS.
   * Simple HTTP API for status + config: /api/status, /api/config, /api/wifi
   * Falls back to SoftAP if STA connect fails (SSID: Beacon-Setup-<id>, pass: beacon1234)
+  * Optional sensors: INA219 (current), ESP32-C6 internal temp, fan tach
 ********************************************************************/
 
 /* ---------- USER CONSTANTS ---------- */
@@ -26,6 +35,13 @@
 #define FREQ_STEP_HZ   5         // Hz per ID step
 #define PULSE_WIDTH_MS 3         // LED ON time (ms)
 #define MAX_ID         15
+
+// Sensor pins
+constexpr uint8_t PIN_FAN_TACH = 7;   // Optional fan tachometer input
+
+// INA219 configuration
+constexpr uint8_t INA219_ADDR = 0x40;  // Default I2C address
+constexpr float INA219_SHUNT_OHMS = 0.1f;  // Shunt resistor value (ohms)
 
 /* ---------- DISPLAY ---------- */
 #define OLED_W 128
@@ -76,7 +92,37 @@ struct TelemetrySnapshot {
   bool ledEnabled;
   float currentAmps;
   float temperatureC;
+  uint32_t fanRpm;
 };
+
+/* ---------- BUTTON ---------- */
+bool btnPrev = HIGH;        // previous physical state
+unsigned long btnStart = 0; // press timer
+bool menuMode = false;
+uint8_t menuIdx = 0;
+unsigned long menuT = 0;
+
+/* ---------- BATTERY HISTORY ---------- */
+#define HIST 120            // 120 s history
+float vHist[HIST];
+uint16_t vPtr = 0;
+
+/* ---------- SENSOR STATE ---------- */
+#if HAS_INA219
+Adafruit_INA219 ina219(INA219_ADDR);
+bool hasINA219 = false;
+float ina219_current_amps = 0.0f;
+#endif
+
+// ESP32-C6 internal temperature sensor
+float internal_temp_c = 0.0f;
+bool hasInternalTemp = false;
+
+// Fan tachometer
+volatile uint32_t fanPulseCount = 0;
+uint32_t fanRpm = 0;
+unsigned long lastFanRpmCalc = 0;
+bool hasFanTach = false;
 
 /* ---------- BUTTON ---------- */
 bool btnPrev = HIGH;        // previous physical state
@@ -253,6 +299,22 @@ void drawDashboardScreen(float batteryVoltage, int batteryPercent, float freqHz)
   display.setCursor(54, 52);
   display.print(WiFi.isConnected() ? WiFi.localIP().toString() : String("AP:") + String(beaconID));
 
+  // Sensor status line
+  display.setCursor(54, 60);
+  display.setTextSize(1);
+  if (hasInternalTemp) {
+    display.print(internal_temp_c, 1);
+    display.print("C ");
+  }
+  if (hasINA219) {
+    display.print(ina219_current_amps * 1000, 0);
+    display.print("mA ");
+  }
+  if (hasFanTach) {
+    display.print(fanRpm);
+    display.print("RPM ");
+  }
+
   display.drawFastHLine(6, 26, 116, SSD1306_WHITE);
   display.drawPixel(123, 6 + pulse % 3, SSD1306_WHITE);
   display.drawPixel(121, 8 + pulse % 2, SSD1306_WHITE);
@@ -356,6 +418,70 @@ void renderBeaconDisplay(float batteryVoltage, int batteryPercent, float freqHz)
   drawDashboardScreen(batteryVoltage, batteryPercent, freqHz);
 }
 
+/* ---------- SENSOR INIT ---------- */
+void initSensors() {
+  // INA219 current sensor
+  #if HAS_INA219
+  if (ina219.begin()) {
+    hasINA219 = true;
+    ina219.setCalibration_32V_2A();  // 32V, 2A range
+    Serial.println("INA219 found at 0x40");
+  } else {
+    Serial.println("INA219 not found at 0x40");
+  }
+  #endif
+
+  // ESP32-C6 internal temperature sensor
+  #if CONFIG_IDF_TARGET_ESP32C6
+  // ESP32-C6 has internal temperature sensor accessible via temperatureRead()
+  hasInternalTemp = true;
+  Serial.println("Internal temperature sensor available");
+  #endif
+
+  // Fan tachometer
+  if (digitalRead(PIN_FAN_TACH) != -1) {
+    pinMode(PIN_FAN_TACH, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(PIN_FAN_TACH), fanPulseISR, FALLING);
+    hasFanTach = true;
+    Serial.println("Fan tachometer enabled on pin " + String(PIN_FAN_TACH));
+  }
+}
+
+/* ---------- FAN TACH ISR ---------- */
+void IRAM_ATTR fanPulseISR() {
+  fanPulseCount++;
+}
+
+/* ---------- UPDATE SENSOR READINGS ---------- */
+void updateSensors() {
+  // INA219 current sensor
+  #if HAS_INA219
+  if (hasINA219) {
+    // getCurrent_mA returns current in milliamps
+    ina219_current_amps = ina219.getCurrent_mA() / 1000.0f;
+  }
+  #endif
+
+  // Internal temperature sensor
+  if (hasInternalTemp) {
+    #if CONFIG_IDF_TARGET_ESP32C6
+    internal_temp_c = temperatureRead();
+    #endif
+  }
+
+  // Fan RPM calculation (2 pulses per revolution for typical 2-wire fan)
+  if (hasFanTach) {
+    unsigned long now = millis();
+    if (now - lastFanRpmCalc >= 1000) {
+      // Typical fan: 2 pulses per revolution
+      fanRpm = (fanPulseCount * 60) / 2;
+      fanPulseCount = 0;
+      lastFanRpmCalc = now;
+    }
+  }
+}
+
+/* ================================================================ */
 TelemetrySnapshot collectTelemetry() {
   uint16_t raw = analogRead(PIN_VBAT);
   float voltage = (raw / 4095.0f) * 3.3f * 2.0f;
@@ -371,8 +497,9 @@ TelemetrySnapshot collectTelemetry() {
     static_cast<uint32_t>(millis() / 1000),
     brightnessPct,
     ledEnable,
-    0.0f,
-    0.0f,
+    ina219_current_amps,
+    internal_temp_c,
+    fanRpm,
   };
   return telemetry;
 }
@@ -395,7 +522,7 @@ String buildStatusJson() {
   json += "\"wifi_ssid\":\"" + safeName(telemetry.wifiSsid) + "\",";
   json += "\"current_a\":" + String(telemetry.currentAmps, 3) + ",";
   json += "\"temp_c\":" + String(telemetry.temperatureC, 2) + ",";
-  json += "\"fan_rpm\":0,";
+  json += "\"fan_rpm\":" + String(telemetry.fanRpm) + ",";
   json += "\"last_telemetry\":\"" + escapeJson(lastTelemetryBody) + "\"";
   json += ",\"telemetry\":{";
   json += "\"id\":" + String(beaconID) + ",";
@@ -403,7 +530,7 @@ String buildStatusJson() {
   json += "\"battery_v\":" + String(telemetry.batteryVoltage, 3) + ",";
   json += "\"battery_pct\":" + String(telemetry.batteryPercent) + ",";
   json += "\"current_a\":" + String(telemetry.currentAmps, 3) + ",";
-  json += "\"fan_rpm\":0,";
+  json += "\"fan_rpm\":" + String(telemetry.fanRpm) + ",";
   json += "\"brightness_pct\":" + String(telemetry.ledBrightnessPct) + ",";
   json += "\"temp_c\":" + String(telemetry.temperatureC, 2) + ",";
   json += "\"uptime_s\":" + String(telemetry.uptimeSeconds) + ",";
@@ -483,6 +610,9 @@ void handleOptions() {
 
 /* ================================================================ */
 void setup() {
+  Serial.begin(115200);
+  Serial.println("\n=== IR Beacon Starting ===");
+
   pinMode(PIN_IRLED, OUTPUT);
   pinMode(PIN_BTN, INPUT_PULLUP);
   analogWrite(PIN_IRLED, 0);
@@ -496,6 +626,9 @@ void setup() {
   delay(800);
 
   for (uint16_t i = 0; i < HIST; i++) vHist[i] = VBAT_MAX;
+
+  // Initialize sensors
+  initSensors();
 
   wifiReady = connectSta();
   if (!wifiReady) {
@@ -513,11 +646,14 @@ void setup() {
   server.on("/api/wifi", HTTP_OPTIONS, handleOptions);
   server.on("/api/telemetry", HTTP_OPTIONS, handleOptions);
   server.begin();
+
+  Serial.println("Beacon ready");
 }
 
 /* ================================================================ */
 void loop() {
   server.handleClient();
+  updateSensors();
 
   /* ---- LED Pulse driver ---- */
   float f = BASE_FREQ_HZ + beaconID * FREQ_STEP_HZ;

@@ -378,7 +378,8 @@ class OptimizedReIDProcessor:
         input_data = {self.coreml_input_name: array}
 
         try:
-            result = self.coreml_model.predict(input_data, useCPUOnly=self.coreml_use_cpu_only)
+            # useCPUOnly deprecated in coremltools >= 8.0; compute unit set at load time
+            result = self.coreml_model.predict(input_data)
         except Exception as exc:
             logger.error(f"CoreML ReID inference failed: {exc}")
             return None
