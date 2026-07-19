@@ -46,7 +46,7 @@ def main():
     # If no specific mode is requested and no-dialog is not set, show the connection dialog
     if not args.demo and not args.configure and not args.no_dialog:
         try:
-from control.camera_aggregator import show_connection_dialog
+            from control.camera_aggregator import show_connection_dialog
             logger.info("Showing connection dialog...")
             dialog_fn = show_connection_dialog
             if not callable(dialog_fn):
@@ -90,29 +90,29 @@ from control.camera_aggregator import show_connection_dialog
             from control.camera_aggregator import MultiCameraManager
             from control.video_display_gui import VideoDisplayGUI
         
-        # Create camera manager
-        manager = MultiCameraManager(args.config, demo_mode=args.demo)
+            # Create camera manager
+            manager = MultiCameraManager(args.config, demo_mode=args.demo)
         
-        if not manager.cameras:
-            if args.demo:
-                logger.info("No cameras configured; demo mode will run with placeholder feeds.")
-            else:
-                logger.warning(
-                    "No cameras configured; live mode will open with placeholders and wait for connections."
-                )
+            if not manager.cameras:
+                if args.demo:
+                    logger.info("No cameras configured; demo mode will run with placeholder feeds.")
+                else:
+                    logger.warning(
+                        "No cameras configured; live mode will open with placeholders and wait for connections."
+                    )
         
-        # Create and run GUI
-        mode_text = "Demo Mode" if args.demo else "Live Mode"
-        logger.info(f"Starting Multi-Camera IR Beacon Tracker GUI in {mode_text}...")
-        gui = VideoDisplayGUI(manager)
-        gui.run()
+            # Create and run GUI
+            mode_text = "Demo Mode" if args.demo else "Live Mode"
+            logger.info(f"Starting Multi-Camera IR Beacon Tracker GUI in {mode_text}...")
+            gui = VideoDisplayGUI(manager)
+            gui.run()
         
-    except ImportError as e:
-        logger.error("Could not import required modules: %s", _sanitize_for_log(e))
-        logger.info("Please ensure all dependencies are installed with: pip install -r requirements.txt")
-    except Exception as e:
-        logger.error("Error starting application: %s", _sanitize_for_log(e))
-        sys.exit(1)
+        except ImportError as e:
+            logger.error("Could not import required modules: %s", _sanitize_for_log(e))
+            logger.info("Please ensure all dependencies are installed with: pip install -r requirements.txt")
+        except Exception as e:
+            logger.error("Error starting application: %s", _sanitize_for_log(e))
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()
