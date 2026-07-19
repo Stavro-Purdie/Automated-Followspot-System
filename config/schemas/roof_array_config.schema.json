@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Roof Array Camera Configuration",
+  "type": "object",
+  "required": ["grid_config", "cameras"],
+  "properties": {
+    "grid_config": {
+      "type": "object",
+      "required": ["cameras_per_row", "total_cameras", "cell_width", "cell_height", "auto_arrange"],
+      "properties": {
+        "cameras_per_row": {"type": "integer", "minimum": 1, "maximum": 16},
+        "total_cameras": {"type": "integer", "minimum": 1, "maximum": 64},
+        "cell_width": {"type": "integer", "minimum": 64, "maximum": 1920},
+        "cell_height": {"type": "integer", "minimum": 48, "maximum": 1080},
+        "auto_arrange": {"type": "boolean"}
+      }
+    },
+    "cameras": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["server_url", "crop_rect", "position", "camera_id", "enabled", "auto_crop", "overlap_threshold"],
+        "properties": {
+          "server_url": {"type": "string", "format": "uri"},
+          "crop_rect": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 4, "maxItems": 4},
+          "position": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+          "camera_id": {"type": "string", "minLength": 1, "maxLength": 64},
+          "enabled": {"type": "boolean"},
+          "auto_crop": {"type": "boolean"},
+          "overlap_threshold": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Spotlight Configuration",
+  "type": "object",
+  "required": ["rig", "dmx"],
+  "properties": {
+    "rig": {
+      "type": "object",
+      "required": ["fixture_position_m", "stage_origin_m", "pan_zero_angle_deg", "tilt_zero_angle_deg", "pan_limits_deg", "tilt_limits_deg", "smoothing"],
+      "properties": {
+        "fixture_position_m": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "stage_origin_m": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "pan_zero_angle_deg": {"type": "number", "minimum": -180, "maximum": 180},
+        "tilt_zero_angle_deg": {"type": "number", "minimum": -180, "maximum": 180},
+        "pan_limits_deg": {"type": "array", "items": {"type": "number", "minimum": -180, "maximum": 180}, "minItems": 2, "maxItems": 2},
+        "tilt_limits_deg": {"type": "array", "items": {"type": "number", "minimum": -180, "maximum": 180}, "minItems": 2, "maxItems": 2},
+        "smoothing": {
+          "type": "object",
+          "required": ["pan_alpha", "tilt_alpha"],
+          "properties": {
+            "pan_alpha": {"type": "number", "minimum": 0, "maximum": 1},
+            "tilt_alpha": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        }
+      }
+    },
+    "dmx": {
+      "type": "object",
+      "required": ["universe", "pan_address", "tilt_address", "pan_scale", "tilt_scale", "transport", "endpoint_url", "serial_port", "baud_rate"],
+      "properties": {
+        "universe": {"type": "integer", "minimum": 1, "maximum": 128},
+        "pan_address": {"type": "integer", "minimum": 1, "maximum": 511},
+        "tilt_address": {"type": "integer", "minimum": 1, "maximum": 511},
+        "pan_scale": {"type": "number", "minimum": 0.1, "maximum": 10.0},
+        "tilt_scale": {"type": "number", "minimum": 0.1, "maximum": 10.0},
+        "brightness_pct": {"type": "number", "minimum": 0, "maximum": 100, "default": 100},
+        "transport": {"type": "string", "enum": ["stub", "http_bridge", "rs485_serial", "artnet", "sacn"]},
+        "endpoint_url": {"type": "string", "format": "uri"},
+        "serial_port": {"type": "string", "minLength": 1},
+        "baud_rate": {"type": "integer", "enum": [115200, 250000, 500000, 1000000]}
+      }
+    }
+  },
+  "additionalProperties": false
+}

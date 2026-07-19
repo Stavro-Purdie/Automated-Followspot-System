@@ -1,0 +1,149 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReID Configuration",
+  "type": "object",
+  "required": ["performance", "models", "identities", "optimization", "camera", "stage_geometry", "tracking", "data_fusion"],
+  "additionalProperties": true,
+  "properties": {
+    "performance": {
+      "type": "object",
+      "required": ["target_fps", "input_resolution", "detection_resolution", "max_persons", "confidence_threshold", "nms_threshold"],
+      "properties": {
+        "target_fps": {"type": "integer", "minimum": 1, "maximum": 60},
+        "input_resolution": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 2, "maxItems": 2},
+        "detection_resolution": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 2, "maxItems": 2},
+        "max_persons": {"type": "integer", "minimum": 1, "maximum": 50},
+        "confidence_threshold": {"type": "number", "minimum": 0.1, "maximum": 1.0},
+        "nms_threshold": {"type": "number", "minimum": 0.1, "maximum": 1.0}
+      }
+    },
+    "models": {
+      "type": "object",
+      "required": ["detector", "reid"],
+      "properties": {
+        "detector": {
+          "type": "object",
+          "required": ["name", "device", "batch_size", "model_path"],
+          "properties": {
+            "name": {"type": "string", "enum": ["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"]},
+            "device": {"type": "string", "enum": ["auto", "cpu", "cuda", "mps"]},
+            "batch_size": {"type": "integer", "minimum": 1, "maximum": 32},
+            "model_path": {"type": "string"}
+          }
+        },
+        "reid": {
+          "type": "object",
+          "required": ["name", "feature_dim", "device", "model_path"],
+          "properties": {
+            "name": {"type": "string", "enum": ["osnet_x0_5", "osnet_x1_0", "osnet_ibn_x1_0"]},
+            "feature_dim": {"type": "integer", "enum": [512, 1024, 2048]},
+            "device": {"type": "string", "enum": ["auto", "cpu", "cuda", "mps"]},
+            "model_path": {"type": "string"}
+          }
+        }
+      }
+    },
+    "identities": {
+      "type": "object",
+      "required": ["gallery_path", "manifest_path", "match_threshold", "reload_interval_sec"],
+      "properties": {
+        "gallery_path": {"type": "string"},
+        "manifest_path": {"type": "string"},
+        "match_threshold": {"type": "number", "minimum": 0.1, "maximum": 1.0},
+        "reload_interval_sec": {"type": "number", "minimum": 0.1, "maximum": 3600}
+      }
+    },
+    "optimization": {
+      "type": "object",
+      "required": ["use_half_precision", "tensorrt_optimization", "detection_interval", "reid_interval", "max_tracking_age", "coreml_reid_enabled", "coreml_model_path", "coreml_compute_unit", "coreml_skip_torch"],
+      "properties": {
+        "use_half_precision": {"type": "boolean"},
+        "tensorrt_optimization": {"type": "boolean"},
+        "detection_interval": {"type": "integer", "minimum": 1, "maximum": 10},
+        "reid_interval": {"type": "integer", "minimum": 1, "maximum": 10},
+        "max_tracking_age": {"type": "integer", "minimum": 1, "maximum": 100},
+        "coreml_reid_enabled": {"type": "boolean"},
+        "coreml_model_path": {"type": "string"},
+        "coreml_compute_unit": {"type": "string", "enum": ["ALL", "CPU_AND_GPU", "CPU_AND_NE", "CPU_ONLY"]},
+        "coreml_skip_torch": {"type": "boolean"}
+      }
+    },
+    "camera": {
+      "type": "object",
+      "required": ["front_camera"],
+      "properties": {
+        "front_camera": {
+          "type": "object",
+          "required": ["position", "angle", "fov", "focal_length", "resolution", "extrinsics", "depth", "calibration_matrix", "distortion_coeffs"],
+          "properties": {
+            "position": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+            "angle": {"type": "number"},
+            "fov": {"type": "number", "minimum": 1, "maximum": 180},
+            "focal_length": {"type": "number", "minimum": 1},
+            "resolution": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 2, "maxItems": 2},
+            "extrinsics": {
+              "type": "object",
+              "required": ["rotation_matrix", "translation_vector", "reference_frame", "calibrated"],
+              "properties": {
+                "rotation_matrix": {"type": "array", "items": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}, "minItems": 3, "maxItems": 3},
+                "translation_vector": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+                "reference_frame": {"type": "string"},
+                "calibrated": {"type": "boolean"},
+                "calibration_date": {"type": ["string", "null"], "format": "date-time"}
+              }
+            },
+            "depth": {
+              "type": "object",
+              "required": ["enabled", "confidence_floor", "fallback_height", "smoothing_window"],
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "confidence_floor": {"type": "number", "minimum": 0, "maximum": 1},
+                "fallback_height": {"type": "number", "minimum": 0.1, "maximum": 3.0},
+                "smoothing_window": {"type": "integer", "minimum": 1, "maximum": 30}
+              }
+            },
+            "calibration_matrix": {"type": "array", "items": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}, "minItems": 3, "maxItems": 3},
+            "distortion_coeffs": {"type": "array", "items": {"type": "number"}, "minItems": 5, "maxItems": 5}
+          }
+        }
+      }
+    },
+    "stage_geometry": {
+      "type": "object",
+      "required": ["width", "depth", "height", "origin"],
+      "properties": {
+        "width": {"type": "number", "minimum": 0.1, "maximum": 100},
+        "depth": {"type": "number", "minimum": 0.1, "maximum": 100},
+        "height": {"type": "number", "minimum": 0.1, "maximum": 50},
+        "origin": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "units": {"type": "string", "enum": ["meters", "feet"]}
+      }
+    },
+    "tracking": {
+      "type": "object",
+      "required": ["max_disappeared", "max_distance", "reid_threshold", "depth_estimation_method", "feature_similarity_threshold", "max_tracking_distance", "track_memory_frames", "new_track_confidence_threshold"],
+      "properties": {
+        "max_disappeared": {"type": "integer", "minimum": 1, "maximum": 100},
+        "max_distance": {"type": "number", "minimum": 1, "maximum": 1000},
+        "reid_threshold": {"type": "number", "minimum": 0.1, "maximum": 1.0},
+        "depth_estimation_method": {"type": "string", "enum": ["simple", "height_based", "geometric", "hybrid"]},
+        "feature_similarity_threshold": {"type": "number", "minimum": 0.1, "maximum": 1.0},
+        "max_tracking_distance": {"type": "number", "minimum": 0.1, "maximum": 10.0},
+        "track_memory_frames": {"type": "integer", "minimum": 1, "maximum": 100},
+        "new_track_confidence_threshold": {"type": "number", "minimum": 0.1, "maximum": 1.0}
+      }
+    },
+    "data_fusion": {
+      "type": "object",
+      "required": ["position_match_threshold", "time_sync_tolerance", "reid_weight", "ir_weight", "fusion_memory_time"],
+      "properties": {
+        "position_match_threshold": {"type": "number", "minimum": 0.01, "maximum": 10.0},
+        "time_sync_tolerance": {"type": "number", "minimum": 0.001, "maximum": 1.0},
+        "reid_weight": {"type": "number", "minimum": 0, "maximum": 1},
+        "ir_weight": {"type": "number", "minimum": 0, "maximum": 1},
+        "fusion_memory_time": {"type": "number", "minimum": 0.1, "maximum": 30.0}
+      }
+    }
+  },
+  "additionalProperties": true
+}
