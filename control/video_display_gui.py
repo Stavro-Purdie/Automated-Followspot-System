@@ -594,11 +594,9 @@ class VideoDisplayGUI:
 
         # Main container with proper margins
         main_frame = ttk.Frame(self.root, padding="0")
-        main_frame.grid(row=1, column=0, sticky="nsew")
+        main_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
 
         # Configure grid weights
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
         main_frame.columnconfigure(1, weight=3)
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(0, weight=1)
