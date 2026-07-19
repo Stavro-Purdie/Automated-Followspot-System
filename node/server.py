@@ -494,6 +494,62 @@ async def handle_dmx_update(request: web.Request) -> web.Response:
         logger.error("DMX update handler failed: %s", exc)
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
+
+async def handle_health(request):
+    """Health check endpoint for monitoring and systemd watchdog.
+
+    Returns JSON with service status, camera status, DMX transport status, and uptime.
+    """
+    import time
+    import psutil
+    
+    # Check camera status
+    camera_status = "unknown"
+    if camera_obj:
+        try:
+            # Try to capture a test frame
+            test_frame = camera_obj.capture_array("main")
+            if test_frame is not None and test_frame.size > 0:
+                camera_status = "ok"
+            else:
+                camera_status = "no_frame"
+        except Exception:
+            camera_status = "error"
+    else:
+        camera_status = "not_initialized"
+    
+    # Check DMX transport
+    dmx_transport_obj = request.app.get("dmx_transport")
+    dmx_status = "ok" if dmx_transport_obj and dmx_transport_obj.is_ready else "unavailable"
+    
+    # Get uptime
+    uptime_seconds = time.time() - _start_time if '_start_time' in globals() else 0
+    
+    # Get system stats
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        system_stats = {
+            "cpu_percent": cpu_percent,
+            "memory_percent": memory.percent,
+            "memory_available_mb": memory.available // (1024 * 1024),
+            "disk_percent": disk.percent,
+            "disk_free_gb": disk.free // (1024 * 1024 * 1024),
+        }
+    except Exception:
+        system_stats = {}
+    
+    return web.json_response({
+        "status": "healthy" if camera_status == "ok" else "degraded",
+        "timestamp": time.time(),
+        "uptime_seconds": uptime_seconds,
+        "camera": camera_status,
+        "dmx_transport": dmx_status,
+        "system": system_stats,
+    })
+
+
 async def on_server_shutdown(app):
     """Cleanup when server shuts down"""
     # Stop all tracks first
@@ -567,6 +623,7 @@ async def run_server(
     app.router.add_get("/camera/info", handle_camera_info)
     app.router.add_post("/dmx", handle_dmx_update)
     app.router.add_get("/dmx/status", handle_lighting_status)
+    app.router.add_get("/health", handle_health)
     app.router.add_get("/", handle_root)
     logger.info("DMX endpoint registered (transport=%s)", dmx_transport)
     
