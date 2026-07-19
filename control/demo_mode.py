@@ -15,7 +15,7 @@ import threading
 import logging
 from typing import Dict, List, Tuple, Optional, Any, Callable
 
-from demo_stage_state import DemoStageState, get_demo_stage_state
+from .demo_stage_state import DemoStageState, get_demo_stage_state
 
 logger = logging.getLogger("demo_mode")
 

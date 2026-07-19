@@ -1,0 +1,7 @@
+# Tools requirements
+coremltools>=6.4
+torch>=2.0.0
+torchreid>=0.2.0
+opencv-python>=4.5.0
+numpy>=1.20.0
+pillow>=8.0.0

@@ -4,8 +4,12 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ArduinoJson.h>
+#include <HTTPUpdate.h>
+#include <HTTPClient.h>
+#include <Update.h>
 
-// Optional INA219 current sensor library
+  // Optional INA219 current sensor library
 #if __has_include(<Adafruit_INA219.h>)
   #include <Adafruit_INA219.h>
   #define HAS_INA219 1
@@ -601,6 +605,76 @@ void handleTelemetry() {
   sendJson(String("{\"ok\":true,\"stored_bytes\":") + String(body.length()) + "}");
 }
 
+void handleOta() {
+  if (!server.hasArg("plain")) {
+    sendJson("{\"error\":\"JSON body required\"}", 400);
+    return;
+  }
+  String body = server.arg("plain");
+  DynamicJsonDocument doc(256);
+  DeserializationError err = deserializeJson(doc, body);
+  if (err) {
+    sendJson("{\"error\":\"Invalid JSON\"}", 400);
+    return;
+  }
+  const char* url = doc["url"];
+  if (!url) {
+    sendJson("{\"error\":\"url required\"}", 400);
+    return;
+  }
+  
+  sendJson("{\"restart\":true,\"ota_started\":true}");
+  delay(200);
+  
+  // Trigger OTA update
+  t_httpUpdate_return ret = ESPhttpUpdate.update(url);
+  if (ret == HTTP_UPDATE_FAILED) {
+    Serial.printf("OTA failed: %s\n", ESPhttpUpdate.getLastErrorString().c_str());
+  } else if (ret == HTTP_UPDATE_NO_UPDATES) {
+    Serial.println("OTA: No updates");
+  } else if (ret == HTTP_UPDATE_OK) {
+    Serial.println("OTA: Success");
+  }
+}
+
+void handleOta() {
+  if (!server.hasArg("plain")) {
+    sendJson("{\"error\":\"ota url required\"}", 400);
+    return;
+  }
+  String body = server.arg("plain");
+  
+  // Parse JSON to extract URL
+  int urlStart = body.indexOf("\"url\":\"");
+  if (urlStart == -1) {
+    sendJson("{\"error\":\"url field required in JSON\"}", 400);
+    return;
+  }
+  urlStart += 7; // length of "\"url\":\""
+  int urlEnd = body.indexOf("\"", urlStart);
+  if (urlEnd == -1) {
+    sendJson("{\"error\":\"invalid url format\"}", 400);
+    return;
+  }
+  String otaUrl = body.substring(urlStart, urlEnd);
+  
+  sendJson("{\"ok\":true,\"message\":\"OTA starting\"}");
+  delay(200);
+  
+  // Start OTA update using ESPhttpUpdate (simpler and more reliable)
+  WiFiClient client;
+  t_httpUpdate_return ret = ESPhttpUpdate.update(client, otaUrl);
+  if (ret == HTTP_UPDATE_FAILED) {
+    sendJson("{\"error\":\"OTA failed: \" + ESPhttpUpdate.getLastErrorString()}", 500);
+  } else if (ret == HTTP_UPDATE_NO_UPDATES) {
+    sendJson("{\"error\":\"No updates available\"}", 500);
+  } else if (ret == HTTP_UPDATE_OK) {
+    sendJson("{\"ok\":true,\"message\":\"OTA successful, restarting\"}");
+    delay(500);
+    ESP.restart();
+  }
+}
+
 void handleOptions() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -640,11 +714,13 @@ void setup() {
   server.on("/api/config", HTTP_POST, handleConfig);
   server.on("/api/wifi", HTTP_POST, handleWifi);
   server.on("/api/telemetry", HTTP_POST, handleTelemetry);
+  server.on("/api/ota", HTTP_POST, handleOta);
   server.onNotFound(handleStatus);
   server.on("/api/status", HTTP_OPTIONS, handleOptions);
   server.on("/api/config", HTTP_OPTIONS, handleOptions);
   server.on("/api/wifi", HTTP_OPTIONS, handleOptions);
   server.on("/api/telemetry", HTTP_OPTIONS, handleOptions);
+  server.on("/api/ota", HTTP_OPTIONS, handleOptions);
   server.begin();
 
   Serial.println("Beacon ready");

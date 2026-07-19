@@ -79,3 +79,18 @@ def push_wifi(beacon, *, ssid: str, password: str, timeout: float = DEFAULT_TIME
     url = f"http://{beacon.ip_address}:{beacon.port}/api/wifi"
     payload = {"ssid": ssid, "pass": password}
     return _request(url, data=payload, timeout=timeout)
+
+
+def push_ota(beacon, *, firmware_url: str, timeout: float = 30.0) -> Dict[str, Any]:
+    """Trigger OTA firmware update from a URL.
+
+    Firmware accepts POST /api/ota with JSON {"url": "http://.../firmware.bin"}
+    """
+    url = f"http://{beacon.ip_address}:{beacon.port}/api/ota"
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    body = json.dumps({"url": firmware_url}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        charset = resp.headers.get_content_charset() or "utf-8"
+        payload = resp.read().decode(charset)
+    return json.loads(payload)

@@ -27,7 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 try:
     from launcher_gui import ensure_window_fits_content, set_native_theme, get_adaptive_colors, get_system_appearance
-    from beacon_network import fetch_status
+    from .beacon_network import fetch_status
 except Exception:
     def ensure_window_fits_content(window, *, min_width=800, min_height=600, padding=48, center=True):
         """Fallback window sizing helper"""
