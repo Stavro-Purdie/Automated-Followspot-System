@@ -1,0 +1,65 @@
+[
+  {
+    "name": "Stage Center",
+    "x": 0.0,
+    "y": 0.0,
+    "z": 1.75,
+    "point_id": 1
+  },
+  {
+    "name": "Front Left (Downstage Left)",
+    "x": -5.0,
+    "y": -4.0,
+    "z": 1.75,
+    "point_id": 2
+  },
+  {
+    "name": "Front Right (Downstage Right)",
+    "x": 5.0,
+    "y": -4.0,
+    "z": 1.75,
+    "point_id": 3
+  },
+  {
+    "name": "Back Left (Upstage Left)",
+    "x": -5.0,
+    "y": 4.0,
+    "z": 1.75,
+    "point_id": 4
+  },
+  {
+    "name": "Back Right (Upstage Right)",
+    "x": 5.0,
+    "y": 4.0,
+    "z": 1.75,
+    "point_id": 5
+  },
+  {
+    "name": "Center Left",
+    "x": -5.0,
+    "y": 0.0,
+    "z": 1.75,
+    "point_id": 6
+  },
+  {
+    "name": "Center Right",
+    "x": 5.0,
+    "y": 0.0,
+    "z": 1.75,
+    "point_id": 7
+  },
+  {
+    "name": "Front Center",
+    "x": 0.0,
+    "y": -4.0,
+    "z": 1.75,
+    "point_id": 8
+  },
+  {
+    "name": "Back Center",
+    "x": 0.0,
+    "y": 4.0,
+    "z": 1.75,
+    "point_id": 9
+  }
+]
