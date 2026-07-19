@@ -12,7 +12,7 @@ from typing import Dict, Any, List
 import numpy as np
 import cv2
 
-from demo_stage_state import get_demo_stage_state
+from control.demo_stage_state import get_demo_stage_state
 
 
 class DemoReIDRunner:

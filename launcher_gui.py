@@ -82,12 +82,12 @@ def set_native_theme(style: ttk.Style) -> None:
     
     try:
         style.theme_use(theme)
-    except tk.TclError:
-        # Fall back if theme not available
-        try:
-            style.theme_use('default')
-        except:
-            pass
+except tk.TclError:
+            # Fall back if theme not available
+            try:
+                style.theme_use('default')
+            except Exception:
+                pass
 
 
 def get_system_appearance() -> str:
@@ -107,7 +107,7 @@ def get_system_appearance() -> str:
             )
             if result.returncode == 0 or "Dark" in result.stdout:
                 return "dark"
-        except:
+        except Exception:
             pass
         return "light"
     elif system == "Windows":
@@ -121,7 +121,7 @@ def get_system_appearance() -> str:
             )
             value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
             return "light" if value == 1 else "dark"
-        except:
+        except Exception:
             pass
         return "light"
     else:  # Linux
@@ -886,7 +886,7 @@ class LauncherGUI:
             with open('/proc/cpuinfo', 'r') as f:
                 cpuinfo = f.read()
             return 'BCM' in cpuinfo or 'Raspberry Pi' in cpuinfo
-        except:
+        except Exception:
             return False
     
     def update_deps_status(self, deps_ok):
@@ -1021,7 +1021,7 @@ class LauncherGUI:
                             last_check_dt = datetime.fromisoformat(check_date.replace('Z', '+00:00'))
                             if last_check is None or last_check_dt < last_check:
                                 last_check = last_check_dt
-                        except:
+                        except Exception:
                             pass
             
             # Check if we need to run dependency check
@@ -3362,7 +3362,7 @@ class StatusWindow:
             info_text += f"  Total: {total // (1024**3)} GB\n"
             info_text += f"  Used: {used // (1024**3)} GB\n"
             info_text += f"  Free: {free // (1024**3)} GB\n\n"
-        except:
+        except Exception:
             info_text += "Disk Space: Unable to determine\n\n"
         
         # Project structure
@@ -3374,7 +3374,7 @@ class StatusWindow:
                     info_text += f"  📁 {item.name}/\n"
                 else:
                     info_text += f"  📄 {item.name}\n"
-        except:
+        except Exception:
             info_text += "  Unable to read project structure\n"
         
         text_widget.insert(tk.END, info_text)

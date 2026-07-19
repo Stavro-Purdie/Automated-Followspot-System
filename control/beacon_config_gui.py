@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
 import sys
 
-from beacon_network import fetch_status, push_config, push_name
+from control.beacon_network import fetch_status, push_config, push_name
 
 logger = logging.getLogger("beacon_config_gui")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -31,7 +31,7 @@ except Exception:
         """Fallback window sizing helper"""
         try:
             window.update_idletasks()
-        except:
+        except Exception:
             return
         width = max(min_width, window.winfo_reqwidth() + padding)
         height = max(min_height, window.winfo_reqheight() + padding)
@@ -62,7 +62,7 @@ except Exception:
         except tk.TclError:
             try:
                 style.theme_use('default')
-            except:
+            except Exception:
                 pass
     
     def get_system_appearance() -> str:
@@ -75,7 +75,7 @@ except Exception:
                     capture_output=True, text=True, timeout=1
                 )
                 return "dark" if result.returncode == 0 or "Dark" in result.stdout else "light"
-            except:
+            except Exception:
                 return "light"
         return "light"
     

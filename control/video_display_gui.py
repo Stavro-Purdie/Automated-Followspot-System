@@ -82,7 +82,7 @@ def set_native_theme(style: ttk.Style) -> None:
         # Fall back if theme not available
         try:
             style.theme_use('default')
-        except:
+        except Exception:
             pass
 
 
@@ -97,7 +97,7 @@ except Exception:
 
 try:
     # Optional import; GUI can run without ReID runner
-    from reid_runner import ReIDRunner  # type: ignore
+    from control.reid_runner import ReIDRunner  # type: ignore
 except Exception:
     try:
         ReIDRunner = importlib.import_module('control.reid_runner').ReIDRunner  # type: ignore
@@ -117,7 +117,7 @@ except Exception:
                     capture_output=True, text=True, timeout=1
                 )
                 return "dark" if result.returncode == 0 or "Dark" in result.stdout else "light"
-            except:
+            except Exception:
                 return "light"
         return "light"
     

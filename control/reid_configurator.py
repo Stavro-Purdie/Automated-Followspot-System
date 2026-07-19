@@ -38,7 +38,7 @@ def set_native_theme(style: ttk.Style) -> None:
     except tk.TclError:
         try:
             style.theme_use('default')
-        except:
+        except Exception:
             pass
 
 

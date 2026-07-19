@@ -34,7 +34,7 @@ def _sanitize_for_log(value: Any) -> str:
     return "".join(ch if (ch == "\t" or ord(ch) >= 32) else "?" for ch in text)
 
 try:
-    from demo_stage_state import get_demo_stage_state
+    from .demo_stage_state import get_demo_stage_state
 except Exception:
     get_demo_stage_state = None  # type: ignore[assignment]
 
@@ -44,7 +44,7 @@ logger = logging.getLogger("multi_camera_client")
 
 # Import demo mode support; connection dialog is optional
 try:
-    from demo_mode import DemoCameraManager
+    from .demo_mode import DemoCameraManager
     DEMO_MODE_AVAILABLE = True
 except ImportError as e:
     DemoCameraManager = None  # type: ignore[misc]
@@ -53,7 +53,7 @@ except ImportError as e:
 
 _show_connection_dialog: Optional[Callable[..., str]] = None
 try:
-    from connection_dialog import show_connection_dialog as _imported_connection_dialog  # type: ignore[import]
+    from .connection_dialog import show_connection_dialog as _imported_connection_dialog  # type: ignore[import]
 except ImportError:
     logger.debug("Connection dialog not available; proceeding without GUI prompts.")
 else:

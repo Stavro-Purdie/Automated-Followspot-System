@@ -75,7 +75,7 @@ except Exception:
         except tk.TclError:
             try:
                 style.theme_use('default')
-            except:
+            except Exception:
                 pass
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -650,7 +650,13 @@ Auto Crop: {camera.auto_crop}"""
         
         # Start async preview in separate thread
         def run_preview():
-            asyncio.run(self.connect_all_cameras())
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self.connect_all_cameras())
+            finally:
+                loop.close()
         
         preview_thread = threading.Thread(target=run_preview, daemon=True)
         preview_thread.start()

@@ -33,7 +33,7 @@ except Exception:
         """Fallback window sizing helper"""
         try:
             window.update_idletasks()
-        except:
+        except Exception:
             return
         width = max(min_width, window.winfo_reqwidth() + padding)
         height = max(min_height, window.winfo_reqheight() + padding)
@@ -64,7 +64,7 @@ except Exception:
         except tk.TclError:
             try:
                 style.theme_use('default')
-            except:
+            except Exception:
                 pass
     
     def get_system_appearance() -> str:
@@ -78,7 +78,7 @@ except Exception:
                     capture_output=True, text=True, timeout=1
                 )
                 return "dark" if result.returncode == 0 or "Dark" in result.stdout else "light"
-            except:
+            except Exception:
                 return "light"
         return "light"
     
@@ -107,7 +107,7 @@ except Exception:
                 "accent_red": "#ff3333",
                 "border": "#cccccc",
             }
-    from beacon_network import fetch_status
+    from control.beacon_network import fetch_status
 
 
 @dataclass

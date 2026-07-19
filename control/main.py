@@ -46,7 +46,7 @@ def main():
     # If no specific mode is requested and no-dialog is not set, show the connection dialog
     if not args.demo and not args.configure and not args.no_dialog:
         try:
-            from camera_aggregator import show_connection_dialog
+from control.camera_aggregator import show_connection_dialog
             logger.info("Showing connection dialog...")
             dialog_fn = show_connection_dialog
             if not callable(dialog_fn):
@@ -74,21 +74,21 @@ def main():
         except Exception as e:
             logger.warning("Error showing connection dialog: %s", _sanitize_for_log(e))
             logger.info("Continuing with command line arguments...")
-    
-    # Launch configuration GUI if requested
-    if args.configure:
+        
+        # Launch configuration GUI if requested
+        if args.configure:
+            try:
+                from control.camera_config_gui import main as config_main
+                config_main()
+            except ImportError as e:
+                logger.error("Could not import configuration GUI: %s", _sanitize_for_log(e))
+                logger.info("Please ensure all dependencies are installed")
+            return
+        
         try:
-            from camera_config_gui import main as config_main
-            config_main()
-        except ImportError as e:
-            logger.error("Could not import configuration GUI: %s", _sanitize_for_log(e))
-            logger.info("Please ensure all dependencies are installed")
-        return
-    
-    try:
-        # Import required modules
-        from camera_aggregator import MultiCameraManager
-        from video_display_gui import VideoDisplayGUI
+            # Import required modules
+            from control.camera_aggregator import MultiCameraManager
+            from control.video_display_gui import VideoDisplayGUI
         
         # Create camera manager
         manager = MultiCameraManager(args.config, demo_mode=args.demo)

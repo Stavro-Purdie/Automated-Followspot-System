@@ -413,7 +413,15 @@ class ReIDRunner:
                             loop.create_task(self.pc.close())
                     else:
                         if self.pc is not None:
-                            asyncio.run(self.pc.close())
+                            try:
+                                if loop and loop.is_running():
+                                    asyncio.run_coroutine_threadsafe(self.pc.close(), loop)
+                                elif loop and not loop.is_closed():
+                                    loop.run_until_complete(self.pc.close())
+                                else:
+                                    asyncio.run(self.pc.close())
+                            except Exception:
+                                pass
             except Exception:
                 pass
         # Stop background loop if any

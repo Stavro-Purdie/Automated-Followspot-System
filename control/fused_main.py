@@ -17,10 +17,10 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from camera_aggregator import MultiCameraManager
-from reid_runner import ReIDRunner
+from control.camera_aggregator import MultiCameraManager
+from control.reid_runner import ReIDRunner
 from fusion.data_fusion import DataFusion
-from spotlight_controller import SpotlightController
+from control.spotlight_controller import SpotlightController
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("fused_main")
@@ -69,7 +69,7 @@ class FusedController:
 
     async def _connect_camera(self, cfg):
         """Wrapper around the aggregator's connect helper with friendlier logging."""
-        from camera_aggregator import connect_to_camera
+        from control.camera_aggregator import connect_to_camera
         try:
             await connect_to_camera(cfg, self.roof_manager)
         except Exception as e:
