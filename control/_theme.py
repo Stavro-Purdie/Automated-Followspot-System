@@ -64,13 +64,30 @@ SEVERITY_COLORS = {
 }
 
 
+def hex_to_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+
 # Exported colour helpers
+def _darken(h: str, factor: float = 0.15) -> str:
+    r, g, b = hex_to_rgb(h)
+    f = max(0.0, 1.0 - factor)
+    return f"#{int(r*f):02x}{int(g*f):02x}{int(b*f):02x}"
+
+
+def _brighten(h: str, factor: float = 0.15) -> str:
+    r, g, b = hex_to_rgb(h)
+    f = min(2.0, 1.0 + factor)
+    return f"#{int(min(r*f,255)):02x}{int(min(g*f,255)):02x}{int(min(b*f,255)):02x}"
+
+
 def darken_color(h: str, factor: float = 0.15) -> str:
-    return darken(h, factor)
+    return _darken(h, factor)
 
 
 def brighten_color(h: str, factor: float = 0.15) -> str:
-    return brighten(h, factor)
+    return _brighten(h, factor)
 
 
 def get_status_color(s: str) -> str:
@@ -379,7 +396,10 @@ class DarkTerminal:
         self.text.configure(yscrollcommand=self.scroll.set)
 
     def pack(self, **kw: Any) -> None:
-        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, **kw)
+        kw.setdefault("side", tk.LEFT)
+        kw.setdefault("fill", tk.BOTH)
+        kw.setdefault("expand", True)
+        self.text.pack(**kw)
         self.scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
     def grid(self, **kw: Any) -> None:

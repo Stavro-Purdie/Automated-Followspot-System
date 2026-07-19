@@ -201,9 +201,10 @@ class LauncherGUI:
         self.spinner_index = 0
         self.spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         
-        # Failsafe annunciator (top banner)
+        # Failsafe annunciator (top banner) - use grid
         self.annunciator = FailsafeAnnunciator(self.root, max_alarms=4)
-        self.annunciator.pack(fill=tk.X, side=tk.TOP)
+        self.annunciator.frame.grid(row=0, column=0, sticky="ew")
+        self.root.rowconfigure(0, weight=0)  # annunciator row
         
         # Failsafe override gates
         self.uninstall_control_gate = FailsafeOverride(
