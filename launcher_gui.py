@@ -26,6 +26,12 @@ import urllib.request
 
 from update_manager import UpdateManager, UpdateError, CommitInfo
 from node import setup_utils
+from control._theme import (
+    DARK_BG, DARK_BG_MED, DARK_BG_LIGHT, DARK_FG, DARK_FG_SEC, DARK_FG_MUTED,
+    GREEN_OK, AMBER_WARN, RED_ERR, BLUE_LINK,
+    SEVERITY_COLORS, FailsafeAnnunciator, DarkTerminal, FailsafeOverride,
+    apply_treeview_style, darken_color, brighten_color,
+)
 
 
 def ensure_window_fits_content(
@@ -174,9 +180,9 @@ class LauncherGUI:
         self.colors = get_adaptive_colors()
         self.root.configure(bg=self.colors["bg_primary"])
         
-        # Use native OS theme
+        # Industrial theme styles
         style = ttk.Style()
-        set_native_theme(style)
+        self.setup_styles()
         
         self.project_root = Path(__file__).resolve().parent
         self.update_check_in_progress = False
@@ -197,12 +203,30 @@ class LauncherGUI:
         self.spinner_index = 0
         self.spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         
+        # Failsafe annunciator (top banner) - use grid
+        self.annunciator = FailsafeAnnunciator(self.root, max_alarms=4)
+        self.annunciator.frame.grid(row=0, column=0, sticky="ew")
+        self.root.rowconfigure(0, weight=0)  # annunciator row
+        
+        # Failsafe override gates
+        self.uninstall_control_gate = FailsafeOverride(
+            self.annunciator, self._do_uninstall_control,
+            title="Uninstall Control Stack", timeout=5, retries=1
+        )
+        self.uninstall_node_gate = FailsafeOverride(
+            self.annunciator, self._do_uninstall_node,
+            title="Uninstall Node Stack", timeout=5, retries=1
+        )
+        self.uninstall_front_gate = FailsafeOverride(
+            self.annunciator, self._do_uninstall_front,
+            title="Uninstall Front Node", timeout=5, retries=1
+        )
+        
         # Setup GUI
-        self.setup_styles()
         self.create_widgets()
         self.build_common_menubar(self.root)
         self.update_ui_state()
-        ensure_window_fits_content(self.root, min_width=920, min_height=720, padding=60, center=True)
+        ensure_window_fits_content(self.root, min_width=1020, min_height=780, padding=60, center=True)
         self.root.after(2000, lambda: self.check_updates(auto_triggered=True))
         
         # Start periodic checks and animations
@@ -307,7 +331,7 @@ class LauncherGUI:
             messagebox.showerror("Configuration Error", f"Failed to save config: {e}")
     
     def setup_styles(self):
-        """Setup styles using native OS theme"""
+        """Setup industrial dark theme styles"""
         self.style = ttk.Style()
         # Use native OS theme - aqua on macOS, vista/win10 on Windows, clam on Linux
         # The theme_use will automatically select the system-appropriate theme
@@ -328,10 +352,10 @@ class LauncherGUI:
     def create_widgets(self):
         """Create the main GUI widgets"""
         main_frame = ttk.Frame(self.root, padding="20")
-        main_frame.grid(row=0, column=0, sticky="nsew")
+        main_frame.grid(row=1, column=0, sticky="nsew")
 
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
         for col in range(3):
             main_frame.columnconfigure(col, weight=1)
 
@@ -738,22 +762,13 @@ class LauncherGUI:
         terminal_frame = ttk.LabelFrame(parent, text="Terminal Output", padding="10")
         terminal_frame.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
 
-        self.terminal_text = scrolledtext.ScrolledText(
-            terminal_frame,
-            height=15,
-            width=80,
-            font=('Consolas', 9),
-            bg='black',
-            fg='white',
-        )
-        self.terminal_text.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        self.terminal = DarkTerminal(terminal_frame, height=15)
+        self.terminal.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Button(terminal_frame, text="Clear", command=self.clear_terminal).grid(
-            row=1, column=0, sticky="w", pady=(5, 0)
-        )
-        ttk.Button(terminal_frame, text="Save Log", command=self.save_terminal_log).grid(
-            row=1, column=1, sticky="e", pady=(5, 0)
-        )
+        btn_frame = ttk.Frame(terminal_frame)
+        btn_frame.pack(fill=tk.X, pady=(5, 0))
+        ttk.Button(btn_frame, text="Clear", command=self.clear_terminal).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Save Log", command=self.save_terminal_log).pack(side=tk.RIGHT)
 
         terminal_frame.columnconfigure(0, weight=1)
         terminal_frame.rowconfigure(0, weight=1)
@@ -1071,13 +1086,11 @@ class LauncherGUI:
     def log_to_terminal(self, message):
         """Add message to terminal output"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.terminal_text.insert(tk.END, f"[{timestamp}] {message}\n")
-        self.terminal_text.see(tk.END)
-        self.root.update_idletasks()
+        self.terminal.log(f"[{timestamp}] {message}")
     
     def clear_terminal(self):
         """Clear terminal output"""
-        self.terminal_text.delete(1.0, tk.END)
+        self.terminal.clear()
     
     def save_terminal_log(self):
         """Save terminal log to file"""
@@ -1088,7 +1101,7 @@ class LauncherGUI:
         if filename:
             try:
                 with open(filename, 'w') as f:
-                    f.write(self.terminal_text.get(1.0, tk.END))
+                    f.write(self.terminal.text.get("1.0", tk.END))
                 messagebox.showinfo("Success", f"Log saved to {filename}")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save log: {e}")
@@ -1245,17 +1258,46 @@ class LauncherGUI:
                              "This will reinstall dependencies and verify the installation. Continue?"):
             self.run_installer("control", repair_mode=True)
     
+    def _do_uninstall_control(self):
+        """Actually uninstall control stack after confirmation"""
+        self.config['installations']['control_stack']['installed'] = False
+        self.config['installations']['control_stack']['version'] = None
+        self.config['installations']['control_stack']['install_date'] = None
+        self.save_config()
+        self.update_ui_state()
+        self.log_to_terminal("Control stack uninstalled")
+
     def uninstall_control(self):
-        """Uninstall control stack"""
-        if messagebox.askyesno("Uninstall Control Stack", 
-                             "This will remove the control stack installation. Continue?"):
-            self.config['installations']['control_stack']['installed'] = False
-            self.config['installations']['control_stack']['version'] = None
-            self.config['installations']['control_stack']['install_date'] = None
-            self.save_config()
-            self.update_ui_state()
-            self.log_to_terminal("Control stack uninstalled")
-    
+        """Uninstall control stack with failsafe override"""
+        self.uninstall_control_gate.request()
+
+    def _do_uninstall_node(self):
+        """Actually uninstall node stack after confirmation"""
+        self.config['installations']['node_stack']['installed'] = False
+        self.config['installations']['node_stack']['version'] = None
+        self.config['installations']['node_stack']['install_date'] = None
+        self.config['installations']['node_stack']['cron_enabled'] = False
+        self.save_config()
+        self.update_ui_state()
+        self.log_to_terminal("Node stack uninstalled")
+
+    def uninstall_node(self):
+        """Uninstall node stack with failsafe override"""
+        self.uninstall_node_gate.request()
+
+    def _do_uninstall_front(self):
+        """Actually uninstall front node stack after confirmation"""
+        self.config['installations']['front_node_stack']['installed'] = False
+        self.config['installations']['front_node_stack']['version'] = None
+        self.config['installations']['front_node_stack']['install_date'] = None
+        self.save_config()
+        self.update_ui_state()
+        self.log_to_terminal("Front node stack uninstalled")
+
+    def uninstall_front_node(self):
+        """Uninstall front node stack with failsafe override"""
+        self.uninstall_front_gate.request()
+
     # Node stack methods
     def start_node_server(self):
         """Start node server"""
@@ -1339,36 +1381,7 @@ class LauncherGUI:
         if messagebox.askyesno("Reinstall Node Stack", 
                              "This will completely reinstall the node stack. Continue?"):
             self.run_installer("node", reinstall_mode=True)
-    
-    def uninstall_node(self):
-        """Uninstall node stack"""
-        if messagebox.askyesno("Uninstall Node Stack", 
-                             "This will remove the node stack installation. Continue?"):
-            self.config['installations']['node_stack']['installed'] = False
-            self.config['installations']['node_stack']['version'] = None
-            self.config['installations']['node_stack']['install_date'] = None
-            self.config['installations']['node_stack']['cron_enabled'] = False
-            self.save_config()
-            self.update_ui_state()
-            self.log_to_terminal("Node stack uninstalled")
-
-    def uninstall_front_node(self):
-        """Uninstall front node stack"""
-        if messagebox.askyesno(
-            "Uninstall Front Node",
-            "This will remove the front node installation metadata. Continue?",
-        ):
-            front_cfg = self.config['installations'].setdefault('front_node_stack', {})
-            front_cfg['installed'] = False
-            front_cfg['version'] = None
-            front_cfg['install_date'] = None
-            front_cfg['dependencies_verified'] = False
-            front_cfg['last_dependency_check'] = None
-            self.save_config()
-            self.update_ui_state()
-            self.front_node_status_label.config(text="Status: Not Installed")
-            self.log_to_terminal("Front node stack uninstalled")
-    
+     
     # General methods
     def show_about(self):
         """Show about dialog"""
