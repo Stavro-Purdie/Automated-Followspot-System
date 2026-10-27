@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 GUI Launcher for Automated Followspot System
-This launcher wraps every maintenance task—installing updates, opening the
-control suite, logs, into one semi-approachable window.
+This launcher brings setup, updates, diagnostics, and show controls into one
+focused operator workspace.
 """
 
 import tkinter as tk
@@ -23,6 +23,8 @@ import shutil
 from urllib.parse import urlparse, urlsplit, urlunsplit
 from typing import Callable, Dict, Optional, List, Tuple, Any
 import urllib.request
+import importlib
+from datetime import timezone
 
 from update_manager import UpdateManager, UpdateError, CommitInfo
 from node import setup_utils
@@ -89,11 +91,10 @@ def set_native_theme(style: ttk.Style) -> None:
     try:
         style.theme_use(theme)
     except tk.TclError:
-            # Fall back if theme not available
-            try:
-                style.theme_use('default')
-            except Exception:
-                pass
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            return
 
 
 def get_system_appearance() -> str:
@@ -145,29 +146,27 @@ def get_adaptive_colors() -> Dict[str, str]:
         Dictionary of color names to hex values
     """
     appearance = get_system_appearance()
-    
     if appearance == "dark":
         return {
-            "bg_primary": "#1e1e1e",      # Dark background
-            "bg_secondary": "#2d2d2d",    # Slightly lighter
-            "fg_primary": "#e0e0e0",      # Light text
-            "fg_secondary": "#b0b0b0",    # Medium text
-            "accent_green": "#4ec94e",    # Softer green for dark mode
-            "accent_orange": "#ff9500",   # Softer orange
-            "accent_red": "#ff5555",      # Softer red
-            "border": "#3d3d3d",          # Dark borders
+            "bg_primary": "#1e1e1e",
+            "bg_secondary": "#2d2d2d",
+            "fg_primary": "#e0e0e0",
+            "fg_secondary": "#b0b0b0",
+            "accent_green": "#4ec94e",
+            "accent_orange": "#ff9500",
+            "accent_red": "#ff5555",
+            "border": "#3d3d3d",
         }
-    else:
-        return {
-            "bg_primary": "#ffffff",      # Light background
-            "bg_secondary": "#f5f5f5",    # Slightly darker
-            "fg_primary": "#1a1a1a",      # Dark text
-            "fg_secondary": "#666666",    # Medium text
-            "accent_green": "#00cc00",    # Bright green
-            "accent_orange": "#ff9900",   # Bright orange
-            "accent_red": "#ff3333",      # Bright red
-            "border": "#cccccc",          # Light borders
-        }
+    return {
+        "bg_primary": "#ffffff",
+        "bg_secondary": "#f5f5f5",
+        "fg_primary": "#1a1a1a",
+        "fg_secondary": "#666666",
+        "accent_green": "#00cc00",
+        "accent_orange": "#ff9900",
+        "accent_red": "#ff3333",
+        "border": "#cccccc",
+    }
 
 
 class LauncherGUI:
@@ -180,8 +179,6 @@ class LauncherGUI:
         self.colors = get_adaptive_colors()
         self.root.configure(bg=self.colors["bg_primary"])
         
-        # Industrial theme styles
-        style = ttk.Style()
         self.setup_styles()
         
         self.project_root = Path(__file__).resolve().parent
@@ -203,10 +200,9 @@ class LauncherGUI:
         self.spinner_index = 0
         self.spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         
-        # Failsafe annunciator (top banner) - use grid
+        # Keep the alarm coordinator for destructive-action gates without adding
+        # a second status strip above the launcher content.
         self.annunciator = FailsafeAnnunciator(self.root, max_alarms=4)
-        self.annunciator.frame.grid(row=0, column=0, sticky="ew")
-        self.root.rowconfigure(0, weight=0)  # annunciator row
         
         # Failsafe override gates
         self.uninstall_control_gate = FailsafeOverride(
@@ -331,12 +327,9 @@ class LauncherGUI:
             messagebox.showerror("Configuration Error", f"Failed to save config: {e}")
     
     def setup_styles(self):
-        """Setup industrial dark theme styles"""
+        """Setup the original industrial dark theme styles."""
         self.style = ttk.Style()
-        # Use native OS theme - aqua on macOS, vista/win10 on Windows, clam on Linux
-        # The theme_use will automatically select the system-appropriate theme
-        
-        # Configure typography with improved hierarchy (OS-native)
+        # Keep the platform-native widget theme while retaining the original hierarchy.
         self.style.configure('Title.TLabel', font=('SF Pro Display', 20, 'bold'))
         self.style.configure('Subtitle.TLabel', font=('SF Pro Text', 11), foreground=self.colors["fg_secondary"])
         self.style.configure('Status.TLabel', font=('System', 10))
@@ -889,22 +882,36 @@ class LauncherGUI:
                 requirements = [line.strip() for line in f if line.strip() and not line.startswith('#')]
             
             # Check each requirement
+            import_names = {
+                "opencv-python": "cv2",
+                "opencv-python-headless": "cv2",
+                "pillow": "PIL",
+                "pyserial": "serial",
+                "scikit-image": "skimage",
+            }
             for requirement in requirements:
                 try:
-                    # Simple package name extraction (handles basic cases)
-                    package_name = requirement.split('>=')[0].split('==')[0].split('[')[0].strip()
-                    
+                    requirement_name = requirement.split(";", 1)[0].strip()
+                    package_name = (
+                        requirement_name.split(">=")[0]
+                        .split("==")[0]
+                        .split("~=")[0]
+                        .split("[")[0]
+                        .strip()
+                    ).lower()
+
                     if package_name == 'opencv-python':
                         import cv2
-                    elif package_name == 'pillow':
-                        from PIL import Image
                     elif package_name == 'picamera2':
                         # Skip picamera2 on non-Pi systems
                         if not self.is_raspberry_pi():
                             continue
                         import picamera2  # type: ignore[import]
                     else:
-                        __import__(package_name.replace('-', '_'))
+                        module_name = import_names.get(
+                            package_name, package_name.replace("-", "_")
+                        )
+                        importlib.import_module(module_name)
                 except ImportError:
                     return False
             
@@ -1051,12 +1058,11 @@ class LauncherGUI:
                 if self.config['installations'][stack]['installed']:
                     check_date = self.config['installations'][stack].get('last_dependency_check')
                     if check_date:
-                        try:
-                            last_check_dt = datetime.fromisoformat(check_date.replace('Z', '+00:00'))
-                            if last_check is None or last_check_dt < last_check:
-                                last_check = last_check_dt
-                        except Exception:
-                            pass
+                        last_check_dt = self._parse_iso_datetime(check_date)
+                        if last_check_dt is not None and (
+                            last_check is None or last_check_dt < last_check
+                        ):
+                            last_check = last_check_dt
             
             # Check if we need to run dependency check
             if last_check is None or (datetime.now() - last_check).days >= self.config['settings']['check_interval_days']:
@@ -1664,7 +1670,10 @@ class LauncherGUI:
         if not value:
             return None
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
         except ValueError:
             return None
     

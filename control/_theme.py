@@ -1,4 +1,4 @@
-"""Industrial UI theme and gates/wall/annunciator widgets.
+"""System UI theme and gates/wall/annunciator widgets.
 
 Exports:
   IND_PALETTE, DARK_*, GREEN_OK, AMBER_WARN, RED_ERR

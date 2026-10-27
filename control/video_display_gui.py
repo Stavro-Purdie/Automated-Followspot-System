@@ -27,7 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from control._theme import (
     DARK_BG, DARK_BG_MED, DARK_BG_LIGHT, DARK_FG, DARK_FG_SEC, DARK_FG_MUTED,
     GREEN_OK, AMBER_WARN, RED_ERR, BLUE_LINK,
-    FailsafeAnnunciator, StealthAnnunciator,
+    StealthAnnunciator,
     apply_treeview_style, get_status_color,
 )
 
@@ -289,10 +289,6 @@ class VideoDisplayGUI:
             pass
         self._setup_styles(style)
         
-        # Failsafe annunciator (top banner)
-        self.annunciator = FailsafeAnnunciator(self.root, max_alarms=4)
-        self.annunciator.pack(fill=tk.X, side=tk.TOP)
-
         # Video display variables
         self.video_label = None
         self.current_frame = None
@@ -393,7 +389,7 @@ class VideoDisplayGUI:
             return False
 
     def _setup_styles(self, style: ttk.Style) -> None:
-        """Configure industrial dark theme styles."""
+        """Configure the operator dashboard with a focused macOS-style hierarchy."""
         # Base colours
         style.configure(".",
             background=DARK_BG,
@@ -409,14 +405,14 @@ class VideoDisplayGUI:
         # Frames & panels
         style.configure("TFrame", background=DARK_BG)
         style.configure("TLabelframe", background=DARK_BG, foreground=DARK_FG_SEC)
-        style.configure("TLabelframe.Label", background=DARK_BG, foreground=DARK_FG_SEC, font=("Segoe UI", 9, "bold"))
+        style.configure("TLabelframe.Label", background=DARK_BG, foreground=DARK_FG_SEC, font=("SF Pro Text", 10, "bold"))
 
         # Labels
-        style.configure("TLabel", background=DARK_BG, foreground=DARK_FG, font=("Segoe UI", 9))
+        style.configure("TLabel", background=DARK_BG, foreground=DARK_FG, font=("SF Pro Text", 10))
 
         # Buttons
         style.configure("TButton",
-            font=("Segoe UI", 9), padding=6,
+            font=("SF Pro Text", 10), padding=(10, 7),
             background=DARK_BG_MED, foreground=DARK_FG,
             bordercolor=DARK_BG, focuscolor=DARK_BG,
         )
@@ -430,7 +426,7 @@ class VideoDisplayGUI:
             background=DARK_BG_MED, foreground=DARK_FG,
             fieldbackground=DARK_BG_MED,
             bordercolor=DARK_BG_MED, lightcolor=DARK_BG_MED, darkcolor=DARK_BG_MED,
-            font=("Segoe UI", 9), rowheight=24,
+            font=("SF Pro Text", 10), rowheight=26,
         )
         style.map("Treeview",
             background=[("selected", DARK_BG_LIGHT)],
@@ -438,7 +434,7 @@ class VideoDisplayGUI:
         )
         style.configure("Treeview.Heading",
             background=DARK_BG, foreground=DARK_FG_SEC,
-            font=("Segoe UI", 9, "bold"),
+            font=("SF Pro Text", 10, "bold"),
             bordercolor=DARK_BG,
         )
 
@@ -654,61 +650,6 @@ class VideoDisplayGUI:
         
     def setup_ui(self):
         """Assemble the main layout: controls on the left, video wall on the right."""
-        # Industrial dark theme
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-
-        # Base colours
-        style.configure(".",
-            background=DARK_BG,
-            foreground=DARK_FG,
-            fieldbackground=DARK_BG_MED,
-            selectbackground=DARK_BG_LIGHT,
-            selectforeground=DARK_FG,
-            bordercolor=DARK_BG,
-            lightcolor=DARK_BG_MED,
-            darkcolor=DARK_BG_MED,
-        )
-        style.configure("TFrame", background=DARK_BG)
-        style.configure("TLabelframe", background=DARK_BG, foreground=DARK_FG_SEC)
-        style.configure("TLabelframe.Label", background=DARK_BG, foreground=DARK_FG_SEC, font=("Segoe UI", 9, "bold"))
-        style.configure("TLabel", background=DARK_BG, foreground=DARK_FG, font=("Segoe UI", 9))
-        style.configure("TButton", font=("Segoe UI", 9), padding=6,
-            background=DARK_BG_MED, foreground=DARK_FG,
-            bordercolor=DARK_BG, focuscolor=DARK_BG)
-        style.map("TButton",
-            background=[("active", DARK_BG_LIGHT), ("pressed", DARK_BG)],
-            foreground=[("active", DARK_FG), ("disabled", DARK_FG_MUTED)])
-        style.configure("Treeview",
-            background=DARK_BG_MED, foreground=DARK_FG,
-            fieldbackground=DARK_BG_MED, bordercolor=DARK_BG_MED,
-            font=("Segoe UI", 9), rowheight=24)
-        style.map("Treeview",
-            background=[("selected", DARK_BG_LIGHT)],
-            foreground=[("selected", DARK_FG)])
-        style.configure("Treeview.Heading",
-            background=DARK_BG, foreground=DARK_FG_SEC,
-            font=("Segoe UI", 9, "bold"), bordercolor=DARK_BG)
-        style.configure("Vertical.TScrollbar",
-            background=DARK_BG_MED, troughcolor=DARK_BG,
-            bordercolor=DARK_BG, arrowcolor=DARK_FG,
-            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED)
-        style.configure("Horizontal.TScrollbar",
-            background=DARK_BG_MED, troughcolor=DARK_BG,
-            bordercolor=DARK_BG, arrowcolor=DARK_FG,
-            darkcolor=DARK_BG_MED, lightcolor=DARK_BG_MED)
-        style.configure("TProgressbar",
-            background=GREEN_OK, troughcolor=DARK_BG_MED,
-            bordercolor=DARK_BG, lightcolor=GREEN_OK, darkcolor=GREEN_OK)
-        self.root.configure(bg=DARK_BG)
-
-        # Failsafe annunciator (top banner)
-        self.annunciator = FailsafeAnnunciator(self.root, max_alarms=4)
-        self.annunciator.pack(fill=tk.X, side=tk.TOP)
-
         # Main container with proper margins
         main_frame = ttk.Frame(self.root, padding="0")
         main_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
