@@ -1,8 +1,8 @@
-# Beacon Live Monitor - Graphical Dashboard
+# Beacon Configurator & Live Monitor
 
 ## Overview
 
-The **Beacon Live Monitor** (`beacon_monitor_gui.py`) is a comprehensive graphical dashboard for real-time monitoring of multiple IR beacon units across your lighting rig. Designed for instant visual feedback during live shows and rehearsals.
+The **Beacon Configurator & Live Monitor** (`beacon_config_gui.py`) is the single graphical dashboard for configuring and monitoring IR beacon units across your lighting rig. It combines live status cards, hardware controls, beacon discovery, and configuration in one window.
 
 ## Features
 
@@ -62,16 +62,16 @@ Reports are saved to: `./backups/beacon_report_YYYYMMDD_HHMMSS.json`
 
 ### From Launcher
 1. Open **Launcher GUI**
-2. Select **Tools** menu → **Beacon Live Monitor**
+2. Select **Tools** menu → **Beacon Configurator & Live Monitor**
 
 ### From Live Mode
 1. While running video display
-2. Select **Tools** menu → **Beacon Live Monitor**
+2. Select **Tools** menu → **Beacon Configurator & Live Monitor**
 
 ### Command Line
 ```bash
-cd /path/to/Automated-Followspot-System/control
-python3 beacon_monitor_gui.py
+cd /path/to/Automated-Followspot-System
+python3 control/beacon_config_gui.py
 ```
 
 ## Configuration

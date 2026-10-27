@@ -1,0 +1,73 @@
+{
+  "beacons": {
+    "Beacon-1": {
+      "beacon_id": "Beacon-1",
+      "ip_address": "192.168.1.50",
+      "port": 80,
+      "display_name": "Beacon",
+      "battery_enabled": true,
+      "battery_low_threshold": 20.0,
+      "fan_enabled": true,
+      "fan_auto": true,
+      "fan_speed_pwm": 100,
+      "fan_temp_start": 40.0,
+      "fan_temp_full": 55.0,
+      "fan_min_pwm": 80,
+      "fan_max_pwm": 255,
+      "led_duty_cycle": 100,
+      "voltage_nominal": 12.0,
+      "amperage_limit": 5.0,
+      "poll_interval": 1.0
+    },
+    "Beacon-2": {
+      "beacon_id": "Beacon-2",
+      "ip_address": "192.168.1.51",
+      "port": 80,
+      "display_name": "Beacon",
+      "battery_enabled": true,
+      "battery_low_threshold": 20.0,
+      "fan_enabled": true,
+      "fan_auto": true,
+      "fan_speed_pwm": 100,
+      "fan_temp_start": 40.0,
+      "fan_temp_full": 55.0,
+      "fan_min_pwm": 80,
+      "fan_max_pwm": 255,
+      "led_duty_cycle": 100,
+      "voltage_nominal": 12.0,
+      "amperage_limit": 5.0,
+      "poll_interval": 1.0
+    },
+    "beacon-4": {
+      "beacon_id": "beacon-4",
+      "ip_address": "192.168.1.5",
+      "port": 80,
+      "display_name": "Beacon",
+      "battery_enabled": true,
+      "battery_low_threshold": 20.0,
+      "fan_enabled": true,
+      "fan_auto": true,
+      "fan_speed_pwm": 100,
+      "fan_temp_start": 40.0,
+      "fan_temp_full": 55.0,
+      "fan_min_pwm": 80,
+      "fan_max_pwm": 255,
+      "led_duty_cycle": 100,
+      "voltage_nominal": 12.0,
+      "amperage_limit": 5.0,
+      "poll_interval": 1.0
+    }
+  },
+  "discovery": {
+    "enabled": true,
+    "network": null,
+    "udp_port": 4210,
+    "http_ports": [
+      5000,
+      80
+    ],
+    "timeout_seconds": 0.25,
+    "max_hosts": 254,
+    "poll_interval_seconds": 1.0
+  }
+}

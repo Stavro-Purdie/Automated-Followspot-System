@@ -41,7 +41,7 @@
     "max_tracking_age": 30,
     "coreml_reid_enabled": true,
     "coreml_model_path": "reid/models/osnet_x0_5.mlpackage",
-    "coreml_compute_unit": "ALL",
+    "coreml_compute_unit": "CPU_AND_NE",
     "coreml_skip_torch": true
   },
   "camera": {
@@ -135,7 +135,9 @@
     "feature_similarity_threshold": 0.6,
     "max_tracking_distance": 2.0,
     "track_memory_frames": 30,
-    "new_track_confidence_threshold": 0.5
+    "new_track_confidence_threshold": 0.5,
+    "max_occlusion_frames": 5,
+    "prediction_confidence_floor": 0.2
   },
   "fusion": {
     "ir_reid_max_distance": 0.5,
@@ -150,7 +152,9 @@
     "time_sync_tolerance": 0.1,
     "reid_weight": 0.4,
     "ir_weight": 0.6,
-    "fusion_memory_time": 3.0
+    "fusion_memory_time": 3.0,
+    "max_occlusion_time": 0.75,
+    "prediction_confidence_floor": 0.2
   },
   "last_updated": "2025-08-12T19:59:41.178009"
 }

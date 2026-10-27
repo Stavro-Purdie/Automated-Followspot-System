@@ -3,6 +3,7 @@
 #include <Adafruit_SSD1306.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <WiFiUdp.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <HTTPUpdate.h>
@@ -39,6 +40,7 @@
 #define FREQ_STEP_HZ   5         // Hz per ID step
 #define PULSE_WIDTH_MS 3         // LED ON time (ms)
 #define MAX_ID         15
+#define DISCOVERY_PORT 4210
 
 // Sensor pins
 constexpr uint8_t PIN_FAN_TACH = 7;   // Optional fan tachometer input
@@ -80,6 +82,7 @@ String wifiSsid = WIFI_SSID_DEFAULT;
 String wifiPass = WIFI_PASS_DEFAULT;
 String beaconName = BEACON_NAME_DEFAULT;
 WebServer server(80);
+WiFiUDP discoveryUdp;
 bool wifiReady = false;
 String lastTelemetryBody = "{}";
 float uiBatteryVoltage = VBAT_MAX;
@@ -554,6 +557,25 @@ void sendJson(const String &body, int code = 200) {
 
 void handleStatus() { sendJson(buildStatusJson()); }
 
+void handleDiscovery() {
+  int packetSize = discoveryUdp.parsePacket();
+  if (packetSize <= 0) {
+    return;
+  }
+  char request[64] = {0};
+  int length = discoveryUdp.read(request, sizeof(request) - 1);
+  request[length] = '\0';
+  if (String(request).indexOf("AFS_BEACON_DISCOVER") < 0) {
+    return;
+  }
+  String response = "{\"beacon_id\":\"" + String(beaconID) +
+                   "\",\"name\":\"" + safeName(beaconName) +
+                   "\",\"port\":80,\"protocol\":\"http\"}";
+  discoveryUdp.beginPacket(discoveryUdp.remoteIP(), discoveryUdp.remotePort());
+  discoveryUdp.print(response);
+  discoveryUdp.endPacket();
+}
+
 void handleConfig() {
   bool changed = false;
   if (server.hasArg("id")) {
@@ -722,6 +744,7 @@ void setup() {
   server.on("/api/telemetry", HTTP_OPTIONS, handleOptions);
   server.on("/api/ota", HTTP_OPTIONS, handleOptions);
   server.begin();
+  discoveryUdp.begin(DISCOVERY_PORT);
 
   Serial.println("Beacon ready");
 }
@@ -729,6 +752,7 @@ void setup() {
 /* ================================================================ */
 void loop() {
   server.handleClient();
+  handleDiscovery();
   updateSensors();
 
   /* ---- LED Pulse driver ---- */

@@ -157,6 +157,113 @@ except Exception:
 
 logger = logging.getLogger("video_display_gui")
 
+
+class TrackingFallbackWindow:
+    """Operator controls for leaving automated tracking and recovering it."""
+
+    def __init__(self, owner: "VideoDisplayGUI", reason: str = ""):
+        self.owner = owner
+        self.window = tk.Toplevel(owner.root)
+        self.window.title("Tracking Fallback & Manual Control")
+        self.window.resizable(True, True)
+        self.window.protocol("WM_DELETE_WINDOW", self.hide)
+        self.mode = tk.StringVar(value=owner.fallback_mode)
+        self.reason = tk.StringVar(value=reason or "Operator opened the fallback controls.")
+        self.pan = tk.DoubleVar(value=0.0)
+        self.tilt = tk.DoubleVar(value=0.0)
+        self.brightness = tk.DoubleVar(value=100.0)
+        self._build()
+        ensure_window_fits_content(self.window, min_width=620, min_height=520, padding=48)
+        self.window.lift()
+        self.window.focus_force()
+
+    def _build(self) -> None:
+        frame = ttk.Frame(self.window, padding=18)
+        frame.grid(row=0, column=0, sticky="nsew")
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            frame, text="Tracking fallback and operator control",
+            font=("Arial", 16, "bold"),
+        ).grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(
+            frame,
+            text="Automated tracking must never prevent the lighting designer from managing the show.",
+            wraplength=560,
+        ).grid(row=1, column=0, sticky=tk.W, pady=(4, 12))
+
+        fault_frame = ttk.LabelFrame(frame, text="Detected condition", padding=10)
+        fault_frame.grid(row=2, column=0, sticky="we", pady=(0, 12))
+        ttk.Label(fault_frame, textvariable=self.reason, wraplength=540).grid(
+            row=0, column=0, sticky=tk.W
+        )
+
+        action_frame = ttk.LabelFrame(frame, text="When tracking is unavailable", padding=10)
+        action_frame.grid(row=3, column=0, sticky="we", pady=(0, 12))
+        for row, (value, label) in enumerate((
+            ("hold", "Hold the last reliable position"),
+            ("safe", "Stop automated movement and use a safe state"),
+            ("manual", "Restore manual control"),
+        )):
+            ttk.Radiobutton(
+                action_frame, text=label, value=value, variable=self.mode,
+                command=self._select_mode,
+            ).grid(row=row, column=0, sticky=tk.W, pady=3)
+
+        manual_frame = ttk.LabelFrame(frame, text="Manual position", padding=10)
+        manual_frame.grid(row=4, column=0, sticky="we", pady=(0, 12))
+        manual_frame.columnconfigure(1, weight=1)
+        for row, (label, variable, limits) in enumerate((
+            ("Pan", self.pan, (-120, 120)),
+            ("Tilt", self.tilt, (-120, 10)),
+            ("Brightness", self.brightness, (0, 100)),
+        )):
+            ttk.Label(manual_frame, text=label).grid(row=row, column=0, sticky=tk.W, padx=(0, 8))
+            ttk.Scale(
+                manual_frame, from_=limits[0], to=limits[1], variable=variable,
+                orient=tk.HORIZONTAL,
+            ).grid(row=row, column=1, sticky="we")
+            ttk.Label(manual_frame, textvariable=variable, width=7).grid(
+                row=row, column=2, sticky=tk.E
+            )
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=5, column=0, sticky="we")
+        ttk.Button(
+            button_frame, text="Apply manual position", command=self.apply_manual
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            button_frame, text="Resume automated tracking", command=self.resume_tracking
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(button_frame, text="Close", command=self.hide).pack(side=tk.RIGHT)
+
+    def _select_mode(self) -> None:
+        self.owner.set_fallback_mode(self.mode.get())
+
+    def apply_manual(self) -> None:
+        self.owner.set_fallback_mode("manual")
+        self.owner.apply_manual_position(self.pan.get(), self.tilt.get(), self.brightness.get())
+
+    def resume_tracking(self) -> None:
+        self.owner.resume_tracking()
+        self.hide()
+
+    def update_reason(self, reason: str) -> None:
+        self.reason.set(reason)
+        self.window.lift()
+
+    def hide(self) -> None:
+        self.window.withdraw()
+
+    def show(self, reason: str = "") -> None:
+        if reason:
+            self.update_reason(reason)
+        self.window.deiconify()
+        self.window.lift()
+        self.window.focus_force()
+
+
 class VideoDisplayGUI:
     """Handles live playback, overlays, and operator controls in one place."""
 
@@ -245,6 +352,20 @@ class VideoDisplayGUI:
         
         # Help window reference
         self.help_window = None
+        self.fallback_window: Optional[TrackingFallbackWindow] = None
+        self.fallback_mode = "hold"
+        self.automated_tracking_enabled = True
+        self._tracking_loss_since: Optional[float] = None
+        self._fallback_fault_shown = False
+        self._tracking_loss_timeout = 3.0
+        self.spotlight_controller = None
+        try:
+            from control.spotlight_controller import SpotlightController
+            self.spotlight_controller = SpotlightController(
+                PROJECT_ROOT / "config" / "spotlight_config.json"
+            )
+        except Exception as exc:
+            logger.warning("Manual lighting output unavailable: %s", exc)
         
         self.setup_menu()
         self.setup_ui()
@@ -279,12 +400,8 @@ class VideoDisplayGUI:
 
         tools_menu = tk.Menu(menubar, tearoff=0)
         tools_menu.add_command(
-            label="Open Camera Configurator",
-            command=lambda: self._launch_tool("camera_config_gui.py", "Camera Configurator"),
-        )
-        tools_menu.add_command(
-            label="Open ReID Configurator",
-            command=lambda: self._launch_tool("reid_configurator.py", "ReID Configurator"),
+            label="Open Camera Rig Configurator",
+            command=lambda: self._launch_tool("camera_rig_configurator.py", "Camera Rig Configurator"),
         )
         tools_menu.add_command(
             label="Open Identity Configurator",
@@ -292,15 +409,15 @@ class VideoDisplayGUI:
         )
         tools_menu.add_separator()
         tools_menu.add_command(
-            label="Beacon Configuration & Monitor",
+            label="Beacon Configurator & Live Monitor",
             command=lambda: self._launch_tool("beacon_config_gui.py", "Beacon Config"),
-        )
-        tools_menu.add_command(
-            label="Beacon Live Monitor",
-            command=lambda: self._launch_tool("beacon_monitor_gui.py", "Beacon Monitor"),
         )
         tools_menu.add_separator()
         tools_menu.add_command(label="Connection Status", command=self.show_connection_status)
+        tools_menu.add_command(
+            label="Tracking Fallback & Manual Control",
+            command=self.show_fallback_window,
+        )
         menubar.add_cascade(label="Tools", menu=tools_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -549,6 +666,11 @@ class VideoDisplayGUI:
 
         ttk.Button(button_frame, text="Save Screenshot", command=self.save_screenshot).grid(row=0, column=0, pady=5)
         ttk.Button(button_frame, text="Reset View", command=self.reset_view).grid(row=1, column=0, pady=5)
+        ttk.Button(
+            button_frame,
+            text="Tracking fallback / manual control",
+            command=self.show_fallback_window,
+        ).grid(row=2, column=0, pady=(12, 5), sticky="we")
         
     def setup_video_display(self, parent):
         """Setup the video display area"""
@@ -648,6 +770,61 @@ class VideoDisplayGUI:
         
         # Focus to receive key events
         self.root.focus_set()
+
+    def show_fallback_window(self, reason: str = "") -> None:
+        """Open the fallback controls without stopping the tracking application."""
+        if self.fallback_window is None or not self.fallback_window.window.winfo_exists():
+            self.fallback_window = TrackingFallbackWindow(self, reason)
+        else:
+            self.fallback_window.show(reason)
+
+    def set_fallback_mode(self, mode: str) -> None:
+        if mode not in {"hold", "safe", "manual"}:
+            raise ValueError(f"Unknown fallback mode: {mode}")
+        self.fallback_mode = mode
+        self.automated_tracking_enabled = False
+        if mode == "safe" and self.spotlight_controller is not None:
+            last_command = self.spotlight_controller.get_last_command() or {}
+            try:
+                self.spotlight_controller.send_manual_command(
+                    float(last_command.get("pan_deg", 0.0)),
+                    float(last_command.get("tilt_deg", 0.0)),
+                    0.0,
+                )
+            except (OSError, ValueError, RuntimeError) as exc:
+                logger.error("Could not apply safe lighting state: %s", exc)
+        self.status_var.set(f"Fallback selected: {mode}")
+        self._update_status_highlighting()
+
+    def apply_manual_position(self, pan: float, tilt: float, brightness: float) -> None:
+        """Send an operator command when the configured lighting bridge is available."""
+        self.set_fallback_mode("manual")
+        if self.spotlight_controller is None:
+            messagebox.showwarning(
+                "Manual lighting unavailable",
+                "The lighting controller could not be loaded; manual UI state was restored.",
+                parent=self.root,
+            )
+            return
+        try:
+            self.spotlight_controller.send_manual_command(pan, tilt, brightness)
+            self.status_var.set("Manual lighting control active")
+        except (OSError, ValueError, RuntimeError) as exc:
+            logger.error("Manual lighting command failed: %s", exc)
+            messagebox.showerror(
+                "Manual command failed",
+                f"The manual command could not be sent:\n{exc}",
+                parent=self.root,
+            )
+
+    def resume_tracking(self) -> None:
+        """Return to automatic operation without restarting the application."""
+        self.fallback_mode = "hold"
+        self.automated_tracking_enabled = True
+        self._tracking_loss_since = None
+        self._fallback_fault_shown = False
+        self.status_var.set("Automated tracking resumed")
+        self._update_status_highlighting()
     
     def _update_status_highlighting(self) -> None:
         """Update status bar colors based on error state"""
@@ -672,6 +849,22 @@ class VideoDisplayGUI:
             self.front_status_label.config(fg="#ffff00", bg="#331100")  # Yellow on dark red-brown background
         else:
             self.front_status_label.config(fg="#00ff00", bg="#1a1a1a")  # Green on dark background
+
+    def _check_tracking_health(self, tracking_available: bool, reason: str) -> None:
+        """Open the fallback window once a sustained tracking or system fault is seen."""
+        now = time.time()
+        if tracking_available:
+            self._tracking_loss_since = None
+            self._fallback_fault_shown = False
+            return
+        if self._tracking_loss_since is None:
+            self._tracking_loss_since = now
+        if (
+            now - self._tracking_loss_since >= self._tracking_loss_timeout
+            and not self._fallback_fault_shown
+        ):
+            self._fallback_fault_shown = True
+            self.show_fallback_window(reason)
     
     def _flash_error(self, label, cycles: int = 3) -> None:
         """Flash a label red to indicate error"""
@@ -704,6 +897,8 @@ class VideoDisplayGUI:
             self.on_closing()
         elif key == 'h':
             self.show_help_window()
+        elif key == 'f':
+            self.show_fallback_window()
         elif key == 'plus' or key == 'equal':
             self.ir_threshold.set(min(255, self.ir_threshold.get() + 5))
         elif key == 'minus':
@@ -862,6 +1057,11 @@ class VideoDisplayGUI:
                         self.status_var.set("Streaming live feeds")
                     else:
                         self.status_var.set("Connecting to cameras...")
+                    self._check_tracking_health(
+                        bool(self.last_fused_positions),
+                        "No reliable tracked target has been received for "
+                        f"{self._tracking_loss_timeout:.0f} seconds.",
+                    )
                     
                     # Update statistics with smooth animation
                     frame_count += 1
@@ -882,6 +1082,7 @@ class VideoDisplayGUI:
                     self.display_front_placeholder()
                     self.status_var.set("⚠️ No camera feeds available")
                     self._update_status_highlighting()
+                    self._check_tracking_health(False, "No camera feed is available.")
                     
                 target_fps = 120 if not self.camera_manager.has_active_feeds() else 30
                 sleep_interval = max(1.0 / target_fps, 0.001)
@@ -892,6 +1093,7 @@ class VideoDisplayGUI:
                 self.status_var.set(f"❌ Display error: {str(e)[:50]}")
                 self._flash_error(self.status_label)
                 self._update_status_highlighting()
+                self.show_fallback_window(f"System fault detected: {str(e)[:160]}")
                 time.sleep(0.1)
                 
     def process_frame(self, frame: np.ndarray, reid_tracks: Optional[Dict[int, Dict[str, Any]]] = None) -> np.ndarray:
@@ -934,6 +1136,12 @@ class VideoDisplayGUI:
                 positions = self.fusion.get_person_positions()
                 self.last_fused_positions = positions
                 self.fused_count_var.set(f"Fused: {len(positions)}")
+                if positions and self.automated_tracking_enabled and self.spotlight_controller is not None:
+                    try:
+                        self.spotlight_controller.update_from_targets(positions, time.time())
+                    except (OSError, ValueError, RuntimeError) as exc:
+                        logger.error("Automated lighting command failed: %s", exc)
+                        self.show_fallback_window(f"Lighting system fault: {exc}")
                 # Draw fused targets
                 processed_frame = self.draw_fused_targets(processed_frame, positions)
             except Exception as e:
@@ -1260,6 +1468,7 @@ class VideoDisplayGUI:
 
 Navigation & Control:
   H                    Show this help window
+  F                    Open tracking fallback and manual control
   Q                    Quit application
   Space                Start/Stop video display
   R                    Reset view to defaults
@@ -1298,6 +1507,7 @@ BUTTONS
 Start/Stop:           Toggle video feed on/off
 Save Screenshot:      Capture current frame to file
 Reset View:           Return all settings to defaults
+Tracking fallback:    Choose hold, safe, or manual recovery without restarting
 
 STATISTICS PANEL
 

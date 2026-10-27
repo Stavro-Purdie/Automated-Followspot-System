@@ -96,8 +96,8 @@ class ReIDConfigurator:
         file_menu.add_separator()
         file_menu.add_command(label="Open Launcher", command=self._open_launcher)
         file_menu.add_command(
-            label="Open Camera Configurator",
-            command=lambda: self._launch_tool("camera_config_gui.py", "Camera Configurator"),
+            label="Open Unified Camera Rig Configurator",
+            command=lambda: self._launch_tool("camera_rig_configurator.py", "Camera Rig Configurator"),
         )
         file_menu.add_separator()
         file_menu.add_command(label="Close", command=self.on_closing)

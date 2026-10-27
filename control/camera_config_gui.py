@@ -208,8 +208,8 @@ class CameraConfigGUI:
         tools_menu.add_command(label="Test All Connections", command=self.test_all_connections)
         tools_menu.add_separator()
         tools_menu.add_command(
-            label="Open ReID Configurator",
-            command=lambda: self._launch_tool("reid_configurator.py", "ReID Configurator"),
+            label="Open Unified Camera Rig Configurator",
+            command=lambda: self._launch_tool("camera_rig_configurator.py", "Camera Rig Configurator"),
         )
         tools_menu.add_command(
             label="Open Identity Configurator",

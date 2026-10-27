@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 import urllib.error
@@ -80,6 +81,8 @@ class SpotlightController:
             path = Path(profile_path)
             if not path.is_absolute():
                 path = self.config_path.parent / path
+                if not path.exists():
+                    path = self.config_path.parent.parent / profile_path
             with open(path, "r") as f:
                 profile = json.load(f)
             logger.info("Loaded fixture profile from %s", path)
@@ -133,6 +136,29 @@ class SpotlightController:
 
     def get_last_command(self) -> Optional[Dict]:
         return self.last_command
+
+    def send_manual_command(
+        self,
+        pan_deg: float,
+        tilt_deg: float,
+        brightness_pct: float = 100.0,
+    ) -> Dict:
+        """Send an operator-selected command without requiring a tracking target."""
+        pan = float(np.clip(pan_deg, self.pan_limits[0], self.pan_limits[1]))
+        tilt = float(np.clip(tilt_deg, self.tilt_limits[0], self.tilt_limits[1]))
+        brightness = float(np.clip(brightness_pct, 0.0, 100.0))
+        command = {
+            "pan_deg": pan,
+            "tilt_deg": tilt,
+            "brightness_pct": brightness,
+            "source": "manual_operator",
+            "timestamp": time.time(),
+        }
+        self.last_command = command
+        self.last_pan = pan
+        self.last_tilt = tilt
+        self._send_command(command)
+        return command
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -218,7 +244,9 @@ class SpotlightController:
         lighting_command = {
             "pan_deg": command["pan_deg"],
             "tilt_deg": command["tilt_deg"],
-            "brightness_pct": float(self.dmx_config.get("brightness_pct", 100.0)),
+            "brightness_pct": float(
+                command.get("brightness_pct", self.dmx_config.get("brightness_pct", 100.0))
+            ),
             "source": "spotlight_controller",
             "target_id": command.get("target_id"),
         }

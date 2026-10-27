@@ -32,6 +32,8 @@ class PersonTracker:
         self.max_tracking_distance = self.tracking_config["max_tracking_distance"]
         self.track_memory_frames = self.tracking_config["track_memory_frames"]
         self.new_track_confidence_threshold = self.tracking_config["new_track_confidence_threshold"]
+        self.max_occlusion_frames = int(self.tracking_config.get("max_occlusion_frames", 5))
+        self.prediction_confidence_floor = float(self.tracking_config.get("prediction_confidence_floor", 0.2))
         
         # Active tracks storage
         self.tracks: Dict[int, Dict] = {}
@@ -117,8 +119,15 @@ class PersonTracker:
             ``(matched_pairs, unmatched_detection_indices, unmatched_track_ids)``
             so the caller knows which tracks to update, spawn, or retire.
         """
-        if not detections or len(self.tracks) == 0:
+        if len(self.tracks) == 0:
             return [], list(range(len(detections))), []
+
+        if not detections:
+            active_track_ids = [
+                track_id for track_id, track in self.tracks.items()
+                if track["status"] == "active"
+            ]
+            return [], [], active_track_ids
         
         # Build similarity matrix
         active_track_ids = [tid for tid, track in self.tracks.items() 
@@ -246,6 +255,8 @@ class PersonTracker:
             "last_update": timestamp,
             "age": 1,
             "consecutive_misses": 0,
+            "tracking_state": "measured",
+            "occlusion_started_at": None,
             
             # History storage
             "positions": [position.copy()],
@@ -297,6 +308,8 @@ class PersonTracker:
         track["age"] += 1
         track["consecutive_misses"] = 0
         track["status"] = "active"
+        track["tracking_state"] = "measured"
+        track["occlusion_started_at"] = None
         
         # Update history
         track["positions"].append(position.copy())
@@ -360,11 +373,27 @@ class PersonTracker:
         """Mark track as lost (not matched in current frame)"""
         track = self.tracks[track_id]
         track["consecutive_misses"] += 1
+        if track.get("occlusion_started_at") is None:
+            track["occlusion_started_at"] = track["last_update"]
+
+        if track.get("positions"):
+            dt = max(0.0, timestamp - track["last_update"])
+            predicted_position = track["positions"][-1] + track.get("velocity", np.zeros(3)) * dt
+            track["positions"].append(predicted_position.copy())
+            track["timestamps"].append(timestamp)
+            track["positions"] = track["positions"][-self.track_memory_frames:]
+            track["timestamps"] = track["timestamps"][-self.track_memory_frames:]
         track["last_update"] = timestamp
+        track["tracking_state"] = "predicted"
+        track["confidence"] = max(
+            self.prediction_confidence_floor,
+            track.get("confidence", 0.5) * 0.85,
+        )
         
-        # If too many consecutive misses, mark as lost
-        if track["consecutive_misses"] >= 5:
+        # If too many consecutive misses, mark as lost.
+        if track["consecutive_misses"] > self.max_occlusion_frames:
             track["status"] = "lost"
+            track["tracking_state"] = "lost"
             self.track_stats["total_tracks_lost"] += 1
             logger.debug(f"Track {track_id} marked as lost")
     

@@ -13,6 +13,8 @@ torch>=2.0.0
 torchvision>=0.15.0
 ultralytics>=8.0.0
 torchreid>=0.2.0
+gdown>=5.0.0
+tensorboard>=2.14.0
 scipy>=1.7.0
 
 # Optional dependencies for better performance

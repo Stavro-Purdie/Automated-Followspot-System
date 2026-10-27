@@ -116,12 +116,8 @@ class IdentityConfigurator:
         tools_menu.add_command(label="Refresh List", command=self.refresh_identity_list)
         tools_menu.add_separator()
         tools_menu.add_command(
-            label="Open Camera Configurator",
-            command=lambda: self._launch_tool("camera_config_gui.py", "Camera Configurator"),
-        )
-        tools_menu.add_command(
-            label="Open ReID Configurator",
-            command=lambda: self._launch_tool("reid_configurator.py", "ReID Configurator"),
+            label="Open Camera Rig Configurator",
+            command=lambda: self._launch_tool("camera_rig_configurator.py", "Camera Rig Configurator"),
         )
         menubar.add_cascade(label="Tools", menu=tools_menu)
 

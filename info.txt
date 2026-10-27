@@ -1,0 +1,860 @@
+# Automated Followspot System — Beacon Telemetry, OTA & Live Monitor
+# Comprehensive Technical Reference Document
+# Generated: 2026-07-30
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+1. System Overview
+2. Beacon Firmware (Xiao ESP32-C6) — beacon_wifi.ino
+3. HTTP API Endpoints (Firmware)
+4. Telemetry Data Structures
+5. Python Network Client — beacon_network.py
+6. Beacon Config GUI — beacon_config_gui.py (3 Tabs)
+7. Beacon Live Monitor — beacon_monitor_gui.py (Standalone)
+8. Debug Telemetry Dashboard — debug_telemetry_dashboard.py
+9. Beacon Flash Tool — tools/beacon_flash.py + GUI Wrapper
+10. Project-Level OTA Update Manager — update_manager.py
+11. Launcher Integration — launcher_gui.py
+12. Configuration Files
+13. Data Flow Architecture
+14. Key Code Snippets
+15. File Inventory
+16. Usage Instructions
+17. Future Enhancement Notes
+
+================================================================================
+1. SYSTEM OVERVIEW
+================================================================================
+The Automated Followspot System includes a complete beacon management subsystem
+for Wi-Fi IR beacons built on Xiao ESP32-C6 hardware. The system provides:
+
+- Real-time telemetry monitoring (battery, current, temperature, fan, LED)
+- Remote configuration (brightness, LED enable, fan curves, Wi-Fi, name)
+- OTA firmware updates via HTTP
+- Multiple GUI interfaces: configurator, live monitor (Shure WWB-style), debug dashboard
+- CLI flashing tool with dependency management
+- Project-level GitHub-based OTA for the control software itself
+
+Hardware: Xiao ESP32-C6 + SSD1306 OLED + optional INA219 current sensor + fan tach + IR LED
+
+================================================================================
+2. BEACON FIRMWARE (firmware/beacon_wifi/beacon_wifi.ino)
+================================================================================
+
+--- Pin Assignments (XIAO ESP32-C6) ---
+PIN_IRLED    = 6   // MOSFET gate PWM for IR LED
+PIN_VBAT     = 3   // Analog read (voltage divider, 1:1)
+PIN_BTN      = 0   // Single push-button (menu navigation)
+PIN_SDA      = 4   // I²C SDA
+PIN_SCL      = 5   // I²C SCL
+PIN_FAN_TACH = 7   // Optional fan tachometer input (2 pulses/rev)
+
+--- Constants ---
+BASE_FREQ_HZ   = 30    // Hz for beacon ID 0
+FREQ_STEP_HZ   = 5     // Hz per ID step (ID 0=30Hz, ID 1=35Hz, ... ID 15=105Hz)
+PULSE_WIDTH_MS = 3     // LED ON time in milliseconds
+MAX_ID         = 15    // Maximum beacon ID
+
+--- Battery Calibration ---
+VBAT_MAX = 4.20V  // 100% display
+VBAT_MIN = 3.40V  // 0% display
+VBAT_CUT = 3.35V  // Kill IR LED + warning
+
+--- PWM Brightness Table (0-100% mapped to 6 levels) ---
+lvl[] = {0, 32, 64, 128, 192, 255}
+lvlIdx = 5  // Default: full brightness
+
+--- NVS Storage (Preferences namespace "beacon") ---
+- id     : beaconID (0-15)
+- bri    : lvlIdx (0-5)
+- ssid   : Wi-Fi SSID
+- pass   : Wi-Fi password
+- name   : Display name
+
+--- Sensors ---
+INA219 (optional): I²C 0x40, 0.1Ω shunt, 32V/2A range
+Internal Temp: ESP32-C6 temperatureRead()
+Fan RPM: Pin 7 interrupt, 2 pulses/rev, 1-second window
+
+--- Display (SSD1306 128x64) ---
+Boot screen → Dashboard (battery, ID, freq, Wi-Fi status, IP, sensors)
+Menu screen (hold button 1.5s): Brightness, IR Output, Beacon ID
+Warning screens: Low battery, No Wi-Fi (AP mode)
+
+--- Button Logic ---
+Short tap in menu: cycle value
+Hold 1.5s: enter/exit menu
+Auto-exit menu after 6s inactivity
+
+--- Main Loop Timing ---
+- Server.handleClient() — non-blocking
+- updateSensors() — every loop
+- IR pulse driver — micros()-precision at beacon frequency
+- Battery sample — every 1000ms
+- Display refresh — every 120ms
+
+================================================================================
+3. HTTP API ENDPOINTS (Firmware)
+================================================================================
+
+All endpoints support CORS (Access-Control-Allow-Origin: *)
+
+----------------------------------------
+GET /api/status
+----------------------------------------
+Returns complete beacon status + telemetry as JSON.
+
+Response:
+{
+  "id": 1,
+  "name": "Beacon-1",
+  "brightness_pct": 100,
+  "led_enabled": true,
+  "battery_v": 12.34,
+  "battery_pct": 85,
+  "freq_hz": 35.0,
+  "uptime_s": 3600,
+  "wifi_rssi": -45,
+  "wifi_rssi_dbm": -45.0,
+  "wifi_ssid": "MyNetwork",
+  "current_a": 0.850,
+  "temp_c": 42.50,
+  "fan_rpm": 2400,
+  "last_telemetry": "{}",
+  "telemetry": {
+    "id": 1,
+    "name": "Beacon-1",
+    "battery_v": 12.34,
+    "battery_pct": 85,
+    "current_a": 0.850,
+    "fan_rpm": 2400,
+    "brightness_pct": 100,
+    "temp_c": 42.50,
+    "uptime_s": 3600,
+    "wifi_rssi_dbm": -45.0,
+    "wifi_ssid": "MyNetwork",
+    "led_enabled": true
+  }
+}
+
+----------------------------------------
+GET /api/config
+----------------------------------------
+Returns current configuration (same fields as status).
+
+----------------------------------------
+POST /api/config
+----------------------------------------
+Accepts query-encoded form data:
+- id        : beacon ID (0-15)
+- brightness: 0-100 (maps to lvlIdx 0-5)
+- led       : 1=enable, 0=disable
+- name      : display name (max 24 chars, persisted to NVS)
+
+Returns updated status JSON.
+
+Example: curl -X POST "http://192.168.1.50:5000/api/config" -d "brightness=50&led=1&name=Front+Beacon"
+
+----------------------------------------
+POST /api/wifi
+----------------------------------------
+Accepts form data:
+- ssid : Wi-Fi SSID (required)
+- pass : Wi-Fi password (optional, empty for open)
+
+Stores to NVS, responds {"restart":true}, delays 250ms, ESP.restart().
+
+----------------------------------------
+POST /api/telemetry
+----------------------------------------
+Accepts raw JSON body from control system, stores in lastTelemetryBody.
+Returns: {"ok":true,"stored_bytes":N}
+
+----------------------------------------
+POST /api/ota
+----------------------------------------
+Triggers OTA firmware update.
+
+Accepts JSON: {"url": "http://host/firmware.bin"}
+
+Implementation (two handlers exist, second one used):
+1. Uses ArduinoJson to parse, then ESPhttpUpdate.update(url)
+2. Manual JSON parsing, uses WiFiClient + ESPhttpUpdate.update(client, url)
+
+Response: {"restart":true,"ota_started":true} then async update.
+
+On success: ESP restarts with new firmware.
+On failure: Error logged to Serial.
+
+----------------------------------------
+OPTIONS /api/*
+----------------------------------------
+CORS preflight handling: 204 No Content with Allow headers.
+
+================================================================================
+4. TELEMETRY DATA STRUCTURES
+================================================================================
+
+--- C++ TelemetrySnapshot (firmware) ---
+struct TelemetrySnapshot {
+  float batteryVoltage;      // V
+  int   batteryPercent;      // 0-100
+  float wifiRssiDbm;         // dBm
+  String wifiSsid;           // Connected SSID
+  uint32_t uptimeSeconds;    // Seconds since boot
+  uint8_t ledBrightnessPct;  // 0-100
+  bool   ledEnabled;         // true/false
+  float  currentAmps;        // A (from INA219)
+  float  temperatureC;       // °C (internal)
+  uint32_t fanRpm;           // RPM
+};
+
+--- Python BeaconStatus (beacon_monitor_gui.py, beacon_config_gui.py) ---
+@dataclass
+class BeaconStatus:
+    beacon_id: str
+    ip_address: str = "0.0.0.0"
+    port: int = 5000
+    display_name: Optional[str] = None
+    online: bool = False
+    battery_percent: Optional[float] = None
+    battery_voltage: Optional[float] = None
+    current_amperage: Optional[float] = None
+    fan_speed_rpm: Optional[int] = None
+    led_brightness: Optional[int] = None
+    temperature_c: Optional[float] = None
+    uptime_seconds: Optional[int] = None
+    last_update: Optional[float] = None
+    status_message: str = "Offline"
+
+--- Python BeaconSettings (configuration) ---
+@dataclass
+class BeaconSettings:
+    beacon_id: str
+    ip_address: str
+    port: int = 5000
+    display_name: str = "Beacon"
+    battery_enabled: bool = True
+    battery_low_threshold: float = 20.0
+    fan_enabled: bool = True
+    fan_auto: bool = True
+    fan_speed_pwm: int = 100
+    fan_temp_start: float = 40.0
+    fan_temp_full: float = 55.0
+    fan_min_pwm: int = 80
+    fan_max_pwm: int = 255
+    led_duty_cycle: int = 100
+    voltage_nominal: float = 12.0
+    amperage_limit: float = 5.0
+    poll_interval: float = 1.0
+
+--- Debug Dashboard Simulated Row ---
+{
+  "node_id": "NODE_01",
+  "ip": "192.168.1.112",
+  "mac": "A4:CF:12:8F:44:01",
+  "raw_hex": "0x...",
+  "v_batt": "3.7123V",
+  "i_draw": "462.34mA",
+  "t_core": "45.123°C",
+  "t_amb": "28.456°C",
+  "pwm": "245",
+  "status": "OK"
+}
+
+================================================================================
+5. PYTHON NETWORK CLIENT (control/beacon_network.py)
+================================================================================
+
+Stdlib-only HTTP client (urllib). No external dependencies.
+
+--- Constants ---
+DEFAULT_TIMEOUT = 2.5  # seconds
+
+--- Helper ---
+def build_beacon_url(beacon, path="/api/status") -> str:
+    return f"http://{beacon.ip_address}:{beacon.port}{path}"
+
+--- Core Request ---
+def _request(url, *, data=None, timeout=DEFAULT_TIMEOUT) -> dict:
+    headers = {"Accept": "application/json"}
+    if data:
+        body = urllib.parse.urlencode(data).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    else:
+        req = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        charset = resp.headers.get_content_charset() or "utf-8"
+        return json.loads(resp.read().decode(charset))
+
+--- Public API ---
+
+fetch_status(beacon, *, timeout=2.5) -> dict
+    GET /api/status
+
+push_telemetry(beacon, *, telemetry: dict, timeout=2.5) -> dict
+    POST /api/telemetry with JSON body
+
+push_config(beacon, *, brightness_pct: int, led_on: bool, timeout=2.5) -> dict
+    POST /api/config with form data: brightness (0-100), led (1/0)
+
+push_name(beacon, *, name: str, timeout=2.5) -> dict
+    POST /api/config with form data: name
+
+push_wifi(beacon, *, ssid: str, password: str, timeout=2.5) -> dict
+    POST /api/wifi with form data: ssid, pass
+
+push_ota(beacon, *, firmware_url: str, timeout=30.0) -> dict
+    POST /api/ota with JSON: {"url": firmware_url}
+
+--- Usage Example ---
+from types import SimpleNamespace
+from control.beacon_network import fetch_status, push_config, push_ota
+
+beacon = SimpleNamespace(ip_address="192.168.1.50", port=5000)
+status = fetch_status(beacon)
+push_config(beacon, brightness_pct=75, led_on=True)
+push_ota(beacon, firmware_url="http://myserver/firmware.bin")
+
+================================================================================
+6. BEACON CONFIG GUI (control/beacon_config_gui.py)
+================================================================================
+
+Three-tab interface with live monitoring cards.
+
+--- Tab 1: Live Monitor ---
+- Grid of BeaconCard widgets (max 4 columns, center-out layout)
+- Real-time updates from background monitoring thread
+- Summary stats: Online count, Low Battery count, High Temp count, Total
+- Color-coded metric bars: Battery, Temp, Fan, LED
+- Click card → switches to Configuration tab with beacon selected
+
+--- Tab 2: Configuration ---
+Left: Beacon selector (Listbox)
+Right: Notebook with sub-tabs:
+
+  [Fan Control]
+  - Automatic Fan (temperature-driven) checkbox
+  - Fan Speed PWM (0-255) slider (disabled in auto mode)
+  - Fan Ramp Start Temp (°C) spinbox
+  - Fan Full Speed Temp (°C) spinbox
+  - Fan Min PWM (auto) spinbox
+  - Fan Max PWM (auto) spinbox
+
+  [LED Control]
+  - LED Duty Cycle (0-100%) slider
+  - LED Enabled checkbox
+
+  [Power]
+  - Battery Low Threshold (%) spinbox
+  - Amperage Limit (A) spinbox
+  - Nominal Voltage (V) spinbox
+
+  [Network]
+  - Beacon ID (readonly)
+  - IP Address entry
+  - Port spinbox
+  - Display Name entry
+  - "Update Name on Beacon" button → push_name()
+
+Bottom: "Apply Settings to Beacon" → push_config() + push_name() + save local config
+
+--- Tab 3: Beacon Manager ---
+- Toolbar: Add, Remove, Save Config, Load Config, Test All, Discover
+- Treeview table: ID, Name, IP:Port, Status, Battery, Temp, Fan, LED
+- Context menu (right-click): Edit, Remove, Test Connection, Rename
+- Double-click → Edit in Configuration tab
+
+--- Background Monitoring Thread ---
+def _monitoring_loop():
+    while monitoring_active:
+        if not demo_active:
+            for beacon_id, beacon in beacons.items():
+                payload = fetch_status(beacon, timeout=2.5)
+                _apply_payload(beacon_id, payload)
+                time.sleep(beacon.poll_interval)
+        else:
+            time.sleep(1.0)
+
+_applies payload to BeaconStatus:
+    online=True, last_update=now
+    battery_voltage, battery_percent, current_amperage
+    fan_speed_rpm, led_brightness, temperature_c
+    uptime_seconds, display_name
+
+--- Fan Auto PWM Calculation ---
+def _compute_auto_fan_pwm(beacon, temperature_c):
+    start, full = beacon.fan_temp_start, beacon.fan_temp_full
+    min_pwm, max_pwm = max(0,min(255,beacon.fan_min_pwm)), max(min_pwm,min(255,beacon.fan_max_pwm))
+    if full <= start: return max_pwm
+    if temperature_c <= start: return min_pwm
+    if temperature_c >= full: return max_pwm
+    ratio = (temperature_c - start) / (full - start)
+    return int(round(min_pwm + ratio * (max_pwm - min_pwm)))
+
+--- Demo Mode ---
+Generates realistic simulated telemetry:
+- Battery drains slowly from 85%
+- Voltage = 12V * (batt%/100) + noise
+- Current: 0.5-3.5A random
+- Temp: 35°C + (100-batt%)*0.2 + noise
+- Fan RPM: auto curve * 10 or manual PWM * 10
+- LED brightness = led_duty_cycle
+- Uptime = time since demo start
+
+--- Config Persistence ---
+File: config/beacons_config.json
+Format: {"beacons": {beacon_id: asdict(BeaconSettings)}}
+
+================================================================================
+7. BEACON LIVE MONITOR (control/beacon_monitor_gui.py)
+================================================================================
+
+Standalone Shure WWB-style dashboard. Can run independently.
+
+--- Architecture ---
+BeaconMonitorGUI (tk.Tk)
+├── Header: Title + Summary (Online X/Y) + Link Status
+├── Scrollable Canvas Grid
+│   └── BeaconCard × N (dynamic grid: 1-4 cols, center-out)
+└── Footer: Refresh Now, Connection Status, Export Report, Open Configurator, Close
+
+--- BeaconCard Visual Elements ---
+- Status LED (green/red circle)
+- Beacon ID (large, bold)
+- Display Name (smaller, gray)
+- IP:Port
+- Battery % bar (green>50%, yellow 20-50%, red<20%)
+- Voltage label
+- Current label
+- Temperature bar (green<45°C, yellow 45-55°C, red>55°C)
+- Fan RPM bar (orange)
+- LED Brightness bar (green)
+- Uptime (formatted: 45s, 12m, 3h, 2d)
+- Last update age (e.g., "2.3s ago")
+- Time to Dead countdown (2.5s stale threshold, color-coded)
+
+--- Background Polling ---
+def _monitoring_loop():
+    next_poll_times = {beacon_id: 0.0}
+    while monitoring_active:
+        now = time.time()
+        next_due = now + poll_interval
+        for beacon_id, config in beacons_config.items():
+            interval = config.get("poll_interval", 1.0)
+            due = next_poll_times.get(beacon_id, 0)
+            if now >= due:
+                status = _poll_beacon(beacon_id, config)
+                if status: beacon_status[beacon_id] = status
+                next_poll_times[beacon_id] = now + max(0.2, interval)
+                next_due = min(next_due, next_poll_times[beacon_id])
+        time.sleep(max(0.05, next_due - time.time()))
+
+_poll_beacon() uses fetch_status() with 2.5s timeout, parses telemetry dict.
+
+--- Export Report ---
+JSON to backups/beacon_report_YYYYMMDD_HHMMSS.json
+Contains: timestamp, beacons[] with all metrics.
+
+--- Connection Status Window ---
+Modal dialog showing table with:
+- Beacon ID, IP:Port, Status, Endpoint URL, Last update age
+- Online/Offline counts with percentage
+
+================================================================================
+8. DEBUG TELEMETRY DASHBOARD (control/debug_telemetry_dashboard.py)
+================================================================================
+
+Simulated 5Hz telemetry for development/testing.
+
+--- Simulated Nodes (4) ---
+NODE_01: 192.168.1.112, A4:CF:12:8F:44:01
+NODE_02: 192.168.1.113, A4:CF:12:8F:44:02
+NODE_03: 192.168.1.114, A4:CF:12:8F:44:03
+NODE_04: 192.168.1.115, A4:CF:12:8F:44:04
+
+--- Generated Fields (per tick) ---
+- raw_hex: 32-char random hex
+- v_batt: 3.7000V ± 0.045V
+- i_draw: 450mA ± 80-95mA
+- t_core: 45.20°C ± 1.25°C
+- t_amb: 28.50°C ± 0.50°C
+- pwm: 180-255 random
+- status: "OK"
+
+--- UI ---
+- Left: Treeview table (Node ID, IP, MAC, Raw Hex, V_BATT, I_DRAW, T_CORE, T_AMB, PWM, STATUS)
+- Right: ScrolledText detail panel for selected node
+- Controls: Pause/Resume, Refresh Now, Copy Snapshot, Close
+- Dark theme (#1e1e1e), Consolas font
+
+================================================================================
+9. BEACON FLASH TOOL
+================================================================================
+
+--- CLI: tools/beacon_flash.py ---
+#!/usr/bin/env python3
+Usage:
+  python3 tools/beacon_flash.py --ssid "MyNet" --password "Secret123" \
+      --port /dev/tty.usbmodemXYZ --name "Beacon-1"
+
+Arguments:
+  --ssid      : Wi-Fi SSID (required)
+  --password  : Wi-Fi password (required)
+  --port      : Serial port (required)
+  --name      : Display name (default: "Beacon")
+  --fqbn      : Arduino FQBN override (default: esp32:esp32:XIAO_ESP32C6)
+
+Workflow:
+1. Write wifi_credentials.h to firmware/beacon_wifi/
+   #define WIFI_SSID_DEFAULT "MyNet"
+   #define WIFI_PASS_DEFAULT "Secret123"
+   #define BEACON_NAME_DEFAULT "Beacon-1"
+2. Clear Arduino sketch cache
+3. arduino-cli compile --fqbn <fqbn> firmware/beacon_wifi
+4. arduino-cli upload --fqbn <fqbn> -p <port> firmware/beacon_wifi
+5. Clean up wifi_credentials.h
+
+Prerequisites:
+- arduino-cli on PATH
+- ESP32 core installed (arduino-cli core install esp32:esp32)
+- Libraries: Adafruit GFX, Adafruit SSD1306
+
+--- GUI Wrapper: BeaconFlashWindow (launcher_gui.py lines 1759-2230) ---
+Features:
+- Auto-detect USB ports (tty.usbmodem*, ttyUSB*, ttyACM*, cu.usbmodem*, cu.usbserial*, COM*)
+- Dependency checker (arduino-cli, ESP32 core, Adafruit GFX/SSD1306)
+- One-click Install/Remove flash dependencies
+- Install arduino-cli via Homebrew (macOS) or manual link
+- Live log output with masked password
+- Spinner animation during operations
+- Busy state disables inputs
+
+Dependency Check (_check_deps_async):
+- arduino-cli on PATH
+- Core installed: arduino-cli core list | grep <core_from_fqbn>
+- Libraries: arduino-cli lib list | grep "Adafruit GFX Library" && "Adafruit SSD1306"
+
+Install Dependencies (_install_flash_deps):
+1. arduino-cli core update-index
+2. arduino-cli core install <core>
+3. arduino-cli lib install "Adafruit GFX Library"
+4. arduino-cli lib install "Adafruit SSD1306"
+
+================================================================================
+10. PROJECT-LEVEL OTA UPDATE MANAGER (update_manager.py)
+================================================================================
+
+Manages updates for the control software (not beacon firmware).
+
+--- Class: UpdateManager ---
+__init__(owner, repo, project_root)
+- GitHub API: https://api.github.com/repos/{owner}/{repo}/commits/{ref}
+- Archive: https://github.com/{owner}/{repo}/archive/refs/heads/{ref}.zip
+- Backup dir: project_root/backups/
+- Updates dir: project_root/updates/
+
+--- channel_to_branch(channel) ---
+"stable" → "main", "testing" → "testing"
+
+--- check_for_update(branch, last_known_commit=None) ---
+Returns:
+{
+  "branch": branch,
+  "latest": CommitInfo(branch, sha, timestamp, url),
+  "local_commit": current git SHA,
+  "update_available": bool(latest and local and latest.sha != local)
+}
+
+--- apply_update(branch, components=None, preserve=None) ---
+components: list of top-level paths to install (default: all)
+preserve: set of dirs never overwritten (default: {"config","identity_gallery","logs","updates","backups"})
+
+Process:
+1. Download ZIP to temp dir
+2. Extract
+3. Find archive root (repo-branch/)
+4. Create timestamped backup dir
+5. For each selected path:
+   - Skip if first component in preserve set
+   - Backup existing to backup dir
+   - Copy new files
+6. Return {"backup_path": str, "installed_paths": [...]}
+
+--- SSL Handling ---
+Tries default context, on cert failure falls back to certifi if installed.
+Guides user to install certifi or run "Install Certificates.command" on macOS.
+
+================================================================================
+11. LAUNCHER INTEGRATION (launcher_gui.py)
+================================================================================
+
+--- Tools Menu ---
+- Roof Array Configuration → camera_config_gui.py
+- ReID Configuration → reid_configurator.py
+- Identity Configurator → identity_configurator.py
+- Beacon Configurator → beacon_config_gui.py
+- Beacon Live Monitor → beacon_monitor_gui.py
+- Flash Beacon (Xiao ESP32-C6) → BeaconFlashWindow
+- Connection Status → camera connectivity check
+- Debug Telemetry Dashboard → debug_telemetry_dashboard.py
+- Open Settings → settings dialog
+
+--- Auto-Update Check ---
+- On startup + every 12h (configurable)
+- Checks GitHub for new commits on configured branch (stable/testing)
+- Uses UpdateManager
+
+--- BeaconFlashWindow Integration ---
+launcher_gui.py lines 1173-1175:
+    def launch_beacon_flasher(self):
+        BeaconFlashWindow(self).show()
+
+================================================================================
+12. CONFIGURATION FILES
+================================================================================
+
+--- config/beacons_config.json ---
+{
+  "beacons": {
+    "Beacon-1": {
+      "beacon_id": "Beacon-1",
+      "ip_address": "192.168.1.50",
+      "port": 5000,
+      "display_name": "Beacon",
+      "battery_enabled": true,
+      "battery_low_threshold": 20.0,
+      "fan_enabled": true,
+      "fan_auto": true,
+      "fan_speed_pwm": 100,
+      "fan_temp_start": 40.0,
+      "fan_temp_full": 55.0,
+      "fan_min_pwm": 80,
+      "fan_max_pwm": 255,
+      "led_duty_cycle": 100,
+      "voltage_nominal": 12.0,
+      "amperage_limit": 5.0,
+      "poll_interval": 1.0
+    },
+    "Beacon-2": { ... },
+    "beacon-4": { ... },
+    "2": { ... },
+    "3": { ... }
+  }
+}
+
+--- firmware/beacon_wifi/wifi_credentials.h.example ---
+#pragma once
+#define WIFI_SSID_DEFAULT "YOUR_SSID"
+#define WIFI_PASS_DEFAULT "YOUR_PASSWORD"
+#define BEACON_NAME_DEFAULT "IR Beacon"
+
+--- launcher_config.json ---
+Managed by LauncherGUI, tracks installations, update settings, etc.
+
+================================================================================
+13. DATA FLOW ARCHITECTURE
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        BEACON FIRMWARE (ESP32-C6)                        │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐             │
+│  │ Battery  │   │  INA219  │   │ Internal │   │  Fan     │             │
+│  │ (ADC)    │   │ (Current)│   │  Temp    │   │  Tach    │             │
+│  └────┬─────┘   └────┬─────┘   └────┬─────┘   └────┬─────┘             │
+│       │              │              │              │                    │
+│       ▼              ▼              ▼              ▼                    │
+│  ┌──────────────────────────────────────────────────────────────┐      │
+│  │              TelemetrySnapshot + buildStatusJson()            │      │
+│  └──────────────────────────────────────────────────────────────┘      │
+│                          │                                            │
+│                          ▼                                            │
+│              HTTP Server (WebServer on port 80)                       │
+│              GET  /api/status  → JSON telemetry                       │
+│              POST /api/ota     → ESPhttpUpdate.update(url)            │
+└──────────────────┬────────────────────────────────────────────────────┘
+                   │ HTTP/JSON
+                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    CONTROL SYSTEM (Python)                               │
+│  ┌─────────────────────┐   ┌─────────────────────┐                     │
+│  │ beacon_network.py   │   │ beacon_monitor_gui  │                     │
+│  │ • fetch_status()    │   │ • Background poll   │                     │
+│  │ • push_config()     │   │ • BeaconCard grid   │                     │
+│  │ • push_ota()        │   │ • Export JSON       │                     │
+│  └──────────┬──────────┘   └──────────┬──────────┘                     │
+│             │                         │                                 │
+│             ▼                         ▼                                 │
+│  ┌────────────────────────────────────────────────────────────────┐     │
+│  │              beacon_config_gui.py (3 tabs)                      │     │
+│  │  Live Monitor │ Configuration │ Beacon Manager                  │     │
+│  └────────────────────────────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+14. KEY CODE SNIPPETS
+================================================================================
+
+--- Polling a beacon ---
+from control.beacon_network import fetch_status
+from types import SimpleNamespace
+
+beacon = SimpleNamespace(ip_address="192.168.1.50", port=5000)
+status = fetch_status(beacon, timeout=2.5)
+print(status["telemetry"]["battery_pct"])
+
+--- Pushing config ---
+from control.beacon_network import push_config, push_name
+
+push_config(beacon, brightness_pct=75, led_on=True)
+push_name(beacon, name="Front Beacon")
+
+--- OTA Firmware Update ---
+from control.beacon_network import push_ota
+
+result = push_ota(beacon, firmware_url="http://myserver/firmware.bin", timeout=30)
+# Returns {"restart": true, "ota_started": true} or error
+
+--- Fan Auto PWM Curve ---
+def compute_fan_pwm(beacon, temp_c):
+    start, full = beacon.fan_temp_start, beacon.fan_temp_full
+    min_pwm, max_pwm = beacon.fan_min_pwm, beacon.fan_max_pwm
+    if temp_c <= start: return min_pwm
+    if temp_c >= full: return max_pwm
+    ratio = (temp_c - start) / (full - start)
+    return int(min_pwm + ratio * (max_pwm - min_pwm))
+
+--- Export Report (Live Monitor) ---
+report = {
+    "timestamp": "2026-07-30 14:30:00",
+    "beacons": [
+        {"beacon_id": "Beacon-1", "online": True, "battery_percent": 85, ...}
+    ]
+}
+json.dump(report, open("backups/beacon_report_20260730_143000.json", "w"), indent=2)
+
+--- Flash Beacon CLI ---
+import subprocess
+subprocess.run([
+    "python3", "tools/beacon_flash.py",
+    "--ssid", "MyNet", "--password", "Secret123",
+    "--port", "/dev/tty.usbmodemXYZ", "--name", "Beacon-1"
+])
+
+--- Check Project Updates ---
+from update_manager import UpdateManager
+from pathlib import Path
+
+mgr = UpdateManager("Stavro-Purdie", "Automated-Followspot-System", Path.cwd())
+result = mgr.check_for_update("main")
+if result["update_available"]:
+    mgr.apply_update("main", preserve={"config", "logs"})
+
+================================================================================
+15. FILE INVENTORY
+================================================================================
+
+Beacon Firmware:
+  firmware/beacon_wifi/beacon_wifi.ino          # Main firmware (796 lines)
+  firmware/beacon_wifi/platformio.ini           # PlatformIO config
+  firmware/beacon_wifi/wifi_credentials.h.example  # Template
+
+Python Control:
+  control/beacon_network.py                     # HTTP client (96 lines)
+  control/beacon_monitor_gui.py                 # Live monitor (932 lines)
+  control/beacon_config_gui.py                  # 3-tab configurator (1489 lines)
+  control/debug_telemetry_dashboard.py          # Debug dashboard (312 lines)
+
+Tools:
+  tools/beacon_flash.py                         # CLI flasher (120 lines)
+
+Launcher & OTA:
+  launcher_gui.py                               # Main launcher + BeaconFlashWindow (3000+ lines)
+  update_manager.py                             # GitHub OTA manager (293 lines)
+
+Configuration:
+  config/beacons_config.json                    # Beacon fleet config
+  config/schemas/                               # JSON schemas for other configs
+
+Documentation:
+  docs/beacon_monitor_guide.md                  # Live monitor user guide (192 lines)
+
+================================================================================
+16. USAGE INSTRUCTIONS
+================================================================================
+
+--- Initial Beacon Setup ---
+1. Connect Xiao ESP32-C6 via USB
+2. Run flasher:
+   python3 tools/beacon_flash.py --ssid "YOUR_WIFI" --password "YOUR_PASS" \
+       --port /dev/tty.usbmodemXYZ --name "Beacon-1"
+   Or use Launcher → Tools → Flash Beacon (GUI)
+3. Beacon boots, connects to Wi-Fi, starts HTTP server on port 5000
+4. Note IP address from serial monitor or OLED display
+
+--- Configure Fleet ---
+1. Edit config/beacons_config.json with correct IPs
+2. Or use Beacon Configurator → Beacon Manager → Add Beacon
+3. Set poll_interval per beacon (default 1.0s)
+
+--- Live Monitoring ---
+Option A: python3 control/beacon_monitor_gui.py
+Option B: Launcher → Tools → Beacon Live Monitor
+- View real-time grid of all beacons
+- Click Refresh Now for immediate poll
+- Export Report for JSON snapshot
+- Connection Status for detailed connectivity table
+
+--- Configure Individual Beacon ---
+1. Launcher → Tools → Beacon Configurator
+2. Select beacon in Live Monitor or Configuration tab
+3. Adjust Fan (auto/manual), LED, Power, Network settings
+4. Click "Apply Settings to Beacon" → pushes via HTTP
+
+--- OTA Firmware Update ---
+1. Host new firmware.bin on HTTP server
+2. POST to beacon:
+   curl -X POST "http://192.168.1.50:5000/api/ota" \
+        -H "Content-Type: application/json" \
+        -d '{"url": "http://myserver/firmware.bin"}'
+3. Or use Python:
+   from control.beacon_network import push_ota
+   push_ota(beacon, firmware_url="http://myserver/firmware.bin")
+
+--- Project Software Update ---
+1. Launcher auto-checks on startup (configurable)
+2. Manual: Launcher → File → Check for Updates
+3. Or programmatically:
+   from update_manager import UpdateManager
+   mgr = UpdateManager("Stavro-Purdie", "Automated-Followspot-System", Path.cwd())
+   mgr.check_for_update("main")
+   mgr.apply_update("main")
+
+--- Debug Dashboard ---
+python3 control/debug_telemetry_dashboard.py
+- Simulated 5Hz data for 4 nodes
+- Use for UI development without hardware
+
+================================================================================
+17. FUTURE ENHANCEMENT NOTES (from docs/beacon_monitor_guide.md)
+================================================================================
+
+[ ] Network polling implementation (replace simulation in debug dashboard)
+[ ] Custom polling intervals per beacon
+[ ] Alert thresholds (battery %, temperature, etc.)
+[ ] Beacon control from dashboard (fan speed, LED brightness)
+[ ] Historical data graphing
+[ ] Multi-page beacon groups
+[ ] Dark/light theme toggle
+[ ] CSV export option
+[ ] Real-time alerts/notifications
+[ ] Network discovery (bonjour/mDNS)
+[ ] Beacon firmware version reporting
+[ ] Scheduled OTA rollouts
+[ ] Beacon grouping/zoning for large installations
+[ ] Integration with spotlight tracking (battery warnings → handoff)
+
+================================================================================
+END OF DOCUMENT
+================================================================================

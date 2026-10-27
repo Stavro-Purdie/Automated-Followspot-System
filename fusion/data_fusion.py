@@ -18,6 +18,7 @@ class TrackingSource(Enum):
     IR_BEACON = "ir_beacon"
     REID_CAMERA = "reid_camera"
     FUSED = "fused"
+    PREDICTED = "predicted"
 
 @dataclass
 class Position3D:
@@ -50,6 +51,9 @@ class Person:
     kalman_state: np.ndarray = field(default_factory=lambda: np.zeros(6))
     kalman_covariance: np.ndarray = field(default_factory=lambda: np.eye(6))
     kalman_initialized: bool = False
+    tracking_state: str = "measured"
+    missed_updates: int = 0
+    occlusion_started_at: Optional[float] = None
 
 class DataFusion:
     """Orchestrates the reconciliation between camera tracks and IR beacons."""
@@ -103,6 +107,8 @@ class DataFusion:
         self.reid_weight = self.fusion_config["reid_weight"]
         self.ir_weight = self.fusion_config["ir_weight"]
         self.fusion_memory_time = self.fusion_config["fusion_memory_time"]
+        self.max_occlusion_time = float(self.fusion_config.get("max_occlusion_time", 0.75))
+        self.prediction_confidence_floor = float(self.fusion_config.get("prediction_confidence_floor", 0.2))
         self.process_noise = float(self.fusion_config.get("process_noise", 1.0))
         self.initial_state_variance = float(self.fusion_config.get("initial_state_variance", 1.0))
         self.initial_velocity_variance = float(self.fusion_config.get("initial_velocity_variance", 1.0))
@@ -395,6 +401,7 @@ class DataFusion:
         # Update matched persons (fused data)
         matched_reid_ids = set()
         matched_ir_ids = set()
+        observed_person_ids = set()
         
         for reid_id, ir_id in matches:
             matched_reid_ids.add(reid_id)
@@ -404,6 +411,7 @@ class DataFusion:
             ir_pos = ir_positions[ir_id]
 
             person = self._find_or_create_person(reid_id, ir_id)
+            observed_person_ids.add(person.id)
             measurement, meas_cov, axis_conf, fusion_confidence = self._build_fused_measurement(reid_pos, ir_pos)
             self._apply_kalman_measurement(
                 person=person,
@@ -421,6 +429,7 @@ class DataFusion:
         for reid_id, reid_pos in reid_positions.items():
             if reid_id not in matched_reid_ids:
                 person = self._find_or_create_person(reid_id, None)
+                observed_person_ids.add(person.id)
                 measurement, meas_cov, axis_conf, fusion_confidence = self._build_reid_measurement(reid_pos)
                 self._apply_kalman_measurement(
                     person=person,
@@ -438,6 +447,7 @@ class DataFusion:
         for ir_id, ir_pos in ir_positions.items():
             if ir_id not in matched_ir_ids:
                 person = self._find_or_create_person(None, ir_id)
+                observed_person_ids.add(person.id)
                 measurement, meas_cov, axis_conf, fusion_confidence = self._build_ir_measurement(person, ir_pos)
                 self._apply_kalman_measurement(
                     person=person,
@@ -450,6 +460,10 @@ class DataFusion:
                     reid_conf=None,
                     ir_conf=ir_pos.confidence,
                 )
+
+        for person in self.persons.values():
+            if person.id not in observed_person_ids:
+                self._predict_person(person, timestamp)
     
     def _confidence_to_variance(self, confidence: float, base_variance: float) -> float:
         confidence = float(confidence)
@@ -559,10 +573,10 @@ class DataFusion:
         H = self._measurement_matrix
         S = H @ person.kalman_covariance @ H.T + measurement_cov
         try:
-            K = person.kalman_covariance @ H.T @ np.linalg.inv(S)
+            K = np.linalg.solve(S, (person.kalman_covariance @ H.T).T).T
         except np.linalg.LinAlgError:
             S += np.eye(3) * self.measurement_noise_floor
-            K = person.kalman_covariance @ H.T @ np.linalg.inv(S)
+            K = np.linalg.solve(S, (person.kalman_covariance @ H.T).T).T
 
         innovation = measurement - H @ person.kalman_state
         person.kalman_state = person.kalman_state + K @ innovation
@@ -614,6 +628,39 @@ class DataFusion:
         person.fusion_confidence = float(fusion_confidence)
         person.axis_confidence = clipped_axes
         person.last_updated = timestamp
+        person.tracking_state = "measured"
+        person.missed_updates = 0
+        person.occlusion_started_at = None
+
+    def _predict_person(self, person: Person, timestamp: float) -> None:
+        """Advance a track briefly when both sensors miss it."""
+        if not person.kalman_initialized or person.last_updated <= 0:
+            return
+        outage_duration = timestamp - person.last_updated
+        if outage_duration <= 0:
+            return
+        if person.occlusion_started_at is None:
+            person.occlusion_started_at = person.last_updated
+        person.missed_updates += 1
+        self._kalman_predict(person, timestamp)
+        state = person.kalman_state
+        decay = max(
+            self.prediction_confidence_floor,
+            1.0 - outage_duration / max(self.max_occlusion_time, 0.001),
+        )
+        person.position = Position3D(
+            x=float(state[0]),
+            y=float(state[1]),
+            z=float(state[2]),
+            confidence=float(person.fusion_confidence * decay),
+            timestamp=timestamp,
+            source=TrackingSource.PREDICTED,
+            axis_confidence=tuple(np.clip(person.axis_confidence * decay, 0.0, 1.0).tolist()),
+        )
+        person.velocity = state[3:].copy()
+        person.fusion_confidence = float(max(self.prediction_confidence_floor, person.fusion_confidence * decay))
+        person.tracking_state = "predicted" if outage_duration <= self.max_occlusion_time else "lost"
+        person.last_updated = timestamp
 
     def _find_or_create_person(self, reid_id: Optional[int], ir_id: Optional[int]) -> Person:
         """Reuse an existing :class:`Person` if possible or spin up a fresh one.
@@ -661,7 +708,8 @@ class DataFusion:
         persons_to_remove = []
         
         for person_id, person in self.persons.items():
-            if current_timestamp - person.last_updated > self.fusion_memory_time:
+            age_anchor = person.occlusion_started_at or person.last_updated
+            if current_timestamp - age_anchor > self.fusion_memory_time:
                 persons_to_remove.append(person_id)
         
         for person_id in persons_to_remove:
@@ -709,7 +757,13 @@ class DataFusion:
                 "ir_id": person.ir_beacon_id,
                 "source": person.position.source.value,
                 "timestamp": person.position.timestamp,
-                "updated_at": person.last_updated
+                "updated_at": person.last_updated,
+                "tracking_state": person.tracking_state,
+                "missed_updates": person.missed_updates,
+                "occlusion_duration": (
+                    max(0.0, person.position.timestamp - person.occlusion_started_at)
+                    if person.occlusion_started_at is not None else 0.0
+                )
             })
         
         # Sort by confidence (highest first)

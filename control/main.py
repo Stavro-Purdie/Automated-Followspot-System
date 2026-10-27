@@ -85,7 +85,7 @@ def main():
         # Launch configuration GUI if requested
         if args.configure:
             try:
-                from control.camera_config_gui import main as config_main
+                from control.camera_rig_configurator import main as config_main
                 config_main()
             except ImportError as e:
                 logger.error("Could not import configuration GUI: %s", _sanitize_for_log(e))

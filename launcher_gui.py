@@ -169,9 +169,10 @@ class LauncherGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Automated Followspot System Launcher")
-        self.root.geometry("900x700")
+        self.root.geometry("980x760")
         self.root.resizable(True, True)
-        self.root.configure(bg="SystemButtonFace")
+        self.colors = get_adaptive_colors()
+        self.root.configure(bg=self.colors["bg_primary"])
         
         # Use native OS theme
         style = ttk.Style()
@@ -180,6 +181,7 @@ class LauncherGUI:
         self.project_root = Path(__file__).resolve().parent
         self.update_check_in_progress = False
         self.deps_op_in_progress = False
+        self.background_processes: Dict[str, subprocess.Popen] = {}
         self.update_manager = UpdateManager(
             "Stavro-Purdie", "Automated-Followspot-System", self.project_root
         )
@@ -311,10 +313,12 @@ class LauncherGUI:
         # The theme_use will automatically select the system-appropriate theme
         
         # Configure typography with improved hierarchy (OS-native)
-        self.style.configure('Title.TLabel', font=('System', 16, 'bold'))
-        self.style.configure('Subtitle.TLabel', font=('System', 12, 'bold'))
+        self.style.configure('Title.TLabel', font=('SF Pro Display', 20, 'bold'))
+        self.style.configure('Subtitle.TLabel', font=('SF Pro Text', 11), foreground=self.colors["fg_secondary"])
         self.style.configure('Status.TLabel', font=('System', 10))
-        self.style.configure('Primary.TButton', font=('System', 10, 'bold'), padding=8)
+        self.style.configure('Primary.TButton', font=('SF Pro Text', 11, 'bold'), padding=(14, 8))
+        self.style.configure('Wizard.TButton', font=('SF Pro Text', 12, 'bold'), padding=(18, 10))
+        self.style.configure('Quiet.TButton', font=('SF Pro Text', 10), padding=(10, 6))
         
         # Status indicator colors (subtle, OS-friendly)
         self.style.configure('Success.TLabel', font=('System', 10), foreground='#27ae60')
@@ -331,8 +335,25 @@ class LauncherGUI:
         for col in range(3):
             main_frame.columnconfigure(col, weight=1)
 
-        title_label = ttk.Label(main_frame, text="Automated Followspot System", style='Title.TLabel')
-        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+        title_bar = ttk.Frame(main_frame)
+        title_bar.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 18))
+        title_bar.columnconfigure(0, weight=1)
+
+        title_group = ttk.Frame(title_bar)
+        title_group.grid(row=0, column=0, sticky="w")
+        ttk.Label(title_group, text="Followspot", style='Title.TLabel').pack(anchor="w")
+        ttk.Label(
+            title_group,
+            text="Control room for tracking, beacons, and stage light",
+            style='Subtitle.TLabel',
+        ).pack(anchor="w", pady=(2, 0))
+
+        ttk.Button(
+            title_bar,
+            text="Setup Wizard  ›",
+            command=self.open_setup_wizard,
+            style='Wizard.TButton',
+        ).grid(row=0, column=1, sticky="e")
 
         self.create_status_frame(main_frame)
         self.create_installation_frame(main_frame)
@@ -379,12 +400,12 @@ class LauncherGUI:
 
         tools_menu = tk.Menu(menubar, tearoff=0)
         tools_menu.add_command(
-            label="Roof Array Configuration",
-            command=self.launch_configuration,
+            label="Setup Wizard",
+            command=self.open_setup_wizard,
         )
         tools_menu.add_command(
-            label="ReID Configuration",
-            command=self.launch_reid_configurator,
+            label="Camera Rig Configurator",
+            command=self.launch_camera_rig_configurator,
         )
         tools_menu.add_command(
             label="Identity Configurator",
@@ -392,12 +413,8 @@ class LauncherGUI:
         )
         tools_menu.add_separator()
         tools_menu.add_command(
-            label="Beacon Configuration & Monitor",
+            label="Beacon Configurator & Live Monitor",
             command=self.launch_beacon_config,
-        )
-        tools_menu.add_command(
-            label="Beacon Live Monitor",
-            command=self.launch_beacon_monitor,
         )
         tools_menu.add_command(
             label="Flash Beacon (Xiao ESP32-C6)",
@@ -517,41 +534,43 @@ class LauncherGUI:
 
         ttk.Button(
             self.control_frame,
-            text="Roof Array Configuration (IR Beacon Tracking)",
-            command=self.launch_configuration,
+            text="Camera Rig Configurator (Roof + Front)",
+            command=self.launch_camera_rig_configurator,
         ).grid(row=0, column=0, sticky="ew", pady=(0, 5))
-
-        ttk.Button(
-            self.control_frame,
-            text="Front Array Configuration (ReID Tracking)",
-            command=self.launch_reid_configurator,
-        ).grid(row=1, column=0, sticky="ew", pady=(0, 5))
 
         ttk.Button(
             self.control_frame,
             text="Offline Mode",
             command=self.launch_offline_mode,
-        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 5))
 
         ttk.Button(
             self.control_frame,
             text="Live Mode",
             command=self.launch_live_mode,
-        ).grid(row=3, column=0, sticky="ew", pady=(0, 5))
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 5))
 
-        ttk.Separator(self.control_frame, orient='horizontal').grid(row=4, column=0, sticky="ew", pady=10)
+        ttk.Separator(self.control_frame, orient='horizontal').grid(row=3, column=0, sticky="ew", pady=10)
+
+        ttk.Button(
+            self.control_frame,
+            text="Beacon Configurator & Live Monitor",
+            command=self.launch_beacon_config,
+        ).grid(row=4, column=0, sticky="ew", pady=(0, 5))
+
+        ttk.Separator(self.control_frame, orient='horizontal').grid(row=5, column=0, sticky="ew", pady=10)
 
         ttk.Button(
             self.control_frame,
             text="Repair Installation",
             command=self.repair_control,
-        ).grid(row=5, column=0, sticky="ew", pady=(0, 5))
+        ).grid(row=6, column=0, sticky="ew", pady=(0, 5))
 
         ttk.Button(
             self.control_frame,
             text="Uninstall",
             command=self.uninstall_control,
-        ).grid(row=6, column=0, sticky="ew")
+        ).grid(row=7, column=0, sticky="ew")
 
         self.control_frame.columnconfigure(0, weight=1)
     
@@ -1122,15 +1141,22 @@ class LauncherGUI:
         installer_window.show()
     
     # Control stack methods
+    def open_setup_wizard(self):
+        """Open the guided project configuration flow."""
+        SetupWizard(self).show()
+
     def launch_configuration(self):
-        """Launch camera configuration GUI"""
-        script_path = Path(__file__).parent / "control" / "camera_config_gui.py"
-        self.run_script(script_path, "Camera Configuration")
+        """Backward-compatible alias for the unified camera configurator."""
+        self.launch_camera_rig_configurator()
+
+    def launch_camera_rig_configurator(self):
+        """Launch the unified roof and front camera configurator."""
+        script_path = Path(__file__).parent / "control" / "camera_rig_configurator.py"
+        self.run_script(script_path, "Camera Rig Configurator")
     
     def launch_reid_configurator(self):
-        """Launch ReID camera configurator"""
-        script_path = Path(__file__).parent / "control" / "reid_configurator.py"
-        self.run_script(script_path, "ReID Camera Configurator")
+        """Backward-compatible alias for the unified camera configurator."""
+        self.launch_camera_rig_configurator()
     
     def launch_identity_configurator(self):
         """Launch standalone identity configurator"""
@@ -1146,15 +1172,7 @@ class LauncherGUI:
         if not script_path.exists():
             messagebox.showerror("Error", "Beacon config tool not found")
             return
-        self.run_script(script_path, "Beacon Configuration & Monitor")
-
-    def launch_beacon_monitor(self):
-        """Launch beacon live monitoring dashboard"""
-        script_path = Path(__file__).parent / "control" / "beacon_monitor_gui.py"
-        if not script_path.exists():
-            messagebox.showerror("Error", "Beacon monitor tool not found")
-            return
-        self.run_script(script_path, "Beacon Live Monitor")
+        self.run_script(script_path, "Beacon Configurator & Live Monitor")
 
     def launch_beacon_flasher(self):
         """Open the Xiao ESP32-C6 beacon flasher window."""
@@ -1242,12 +1260,11 @@ class LauncherGUI:
     def start_node_server(self):
         """Start node server"""
         script_path = Path(__file__).parent / "node" / "server.py"
-        self.run_script(script_path, "Node Server", background=True)
+        self.run_script(script_path, "Node Server", background=True, process_key="node")
     
     def stop_node_server(self):
         """Stop node server"""
-        # This would need process management to track and stop the server
-        self.log_to_terminal("Stop node server functionality not yet implemented")
+        self.stop_background_process("node", "Node Server")
     
     def start_front_node_stack(self):
         """Start front (ReID) node server"""
@@ -1287,13 +1304,14 @@ class LauncherGUI:
             "Front Node Server",
             args=["--port", str(port), "--dmx-port", str(dmx_port), "--dmx-baudrate", str(dmx_baudrate)],
             background=True,
+            process_key="front-node",
         )
         self.front_node_status_label.config(text=f"Status: Running on port {port} (RS485 {dmx_port})")
 
     def stop_front_node_stack(self):
         """Stop front node server"""
-        self.log_to_terminal("Stop front node server functionality not yet implemented")
-        self.front_node_status_label.config(text="Status: Stop requested")
+        self.stop_background_process("front-node", "Front Node Server")
+        self.front_node_status_label.config(text="Status: Stopped")
 
     def toggle_cron(self):
         """Toggle cron job for node server"""
@@ -1304,7 +1322,7 @@ class LauncherGUI:
         action = "enabled" if enabled else "disabled"
         self.log_to_terminal(f"Cron job {action} for node server")
         
-        # TODO: Implement actual cron job management
+        self.log_to_terminal("Start-at-boot preference saved; apply it from the node installer on the target system.")
     
     def node_diagnostics(self):
         """Open the connection status window without blocking other tools."""
@@ -1641,7 +1659,7 @@ class LauncherGUI:
         """Show settings dialog"""
         SettingsWindow(self).show()
     
-    def run_script(self, script_path, description, args=None, background=False):
+    def run_script(self, script_path, description, args=None, background=False, process_key=None):
         """Run a Python script"""
         if not script_path.exists():
             messagebox.showerror("Error", f"Script not found: {script_path}")
@@ -1655,7 +1673,9 @@ class LauncherGUI:
         
         try:
             if background:
-                subprocess.Popen(cmd, cwd=self.project_root)
+                process = subprocess.Popen(cmd, cwd=self.project_root)
+                if process_key:
+                    self.background_processes[process_key] = process
                 self.log_to_terminal(f"{description} started in background")
             else:
                 # Run in foreground and capture output
@@ -1685,10 +1705,196 @@ class LauncherGUI:
                 
         except Exception as e:
             self.log_to_terminal(f"Error starting {description}: {e}")
+
+    def stop_background_process(self, process_key: str, description: str) -> None:
+        process = self.background_processes.pop(process_key, None)
+        if process is None or process.poll() is not None:
+            self.log_to_terminal(f"{description} is not running")
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
+        self.log_to_terminal(f"{description} stopped")
     
     def run(self):
         """Start the GUI application"""
         self.root.mainloop()
+
+
+class SetupWizard:
+    """Guided, wrap-around configuration for the whole operator setup."""
+
+    def __init__(self, launcher: LauncherGUI):
+        self.launcher = launcher
+        self.window = tk.Toplevel(launcher.root)
+        self.window.title("Followspot Setup")
+        self.window.resizable(False, False)
+        self.window.transient(launcher.root)
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+
+        project_root = launcher.project_root
+        self.beacons_path = project_root / "config" / "beacons_config.json"
+        self.reid_path = project_root / "config" / "reid_config.json"
+        self.beacons = self._read_json(self.beacons_path, {"beacons": {}})
+        self.reid = self._read_json(self.reid_path, {})
+
+        discovery = self.beacons.get("discovery", {})
+        tracking = self.reid.get("tracking", {})
+        fusion = self.reid.get("data_fusion", {})
+        self.mode = tk.StringVar(value="Demo")
+        self.control_enabled = tk.BooleanVar(value=True)
+        self.node_enabled = tk.BooleanVar(value=False)
+        self.front_enabled = tk.BooleanVar(value=False)
+        self.network = tk.StringVar(value=str(discovery.get("network") or "Automatic local network"))
+        self.udp_port = tk.StringVar(value=str(discovery.get("udp_port", 4210)))
+        self.http_ports = tk.StringVar(value=", ".join(str(p) for p in discovery.get("http_ports", [5000, 80])))
+        self.target_fps = tk.StringVar(value=str(self.reid.get("performance", {}).get("target_fps", 15)))
+        self.occlusion_frames = tk.StringVar(value=str(tracking.get("max_occlusion_frames", 5)))
+        self.occlusion_time = tk.StringVar(value=str(fusion.get("max_occlusion_time", 0.75)))
+        self.confidence_floor = tk.StringVar(value=str(fusion.get("prediction_confidence_floor", 0.2)))
+        self.page_index = 0
+        self.pages = [self._build_mode_page, self._build_network_page, self._build_tracking_page, self._build_review_page]
+        self.page_frame = ttk.Frame(self.window, padding=24)
+        self.page_frame.grid(row=0, column=0, sticky="nsew")
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(0, weight=1)
+        self.progress = ttk.Label(self.page_frame, text="")
+        self.progress.grid(row=0, column=0, sticky="w", pady=(0, 12))
+        self.content = ttk.Frame(self.page_frame, width=560, height=280)
+        self.content.grid(row=1, column=0, sticky="nsew")
+        self.content.grid_propagate(False)
+        self.footer = ttk.Frame(self.page_frame)
+        self.footer.grid(row=2, column=0, sticky="ew", pady=(18, 0))
+        self.footer.columnconfigure(1, weight=1)
+        ttk.Button(self.footer, text="Back", command=self.previous_page, style="Quiet.TButton").grid(row=0, column=0, sticky="w")
+        ttk.Button(self.footer, text="Finish", command=self.finish, style="Primary.TButton").grid(row=0, column=2, sticky="e")
+        ttk.Button(self.footer, text="Next", command=self.next_page, style="Primary.TButton").grid(row=0, column=3, sticky="e", padx=(8, 0))
+        self.show_page()
+
+    @staticmethod
+    def _read_json(path: Path, fallback: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                value = json.load(handle)
+            return value if isinstance(value, dict) else fallback
+        except (OSError, ValueError):
+            return fallback
+
+    def show(self):
+        self.window.update_idletasks()
+        ensure_window_fits_content(self.window, min_width=620, min_height=430, padding=20, center=True)
+        self.window.grab_set()
+        self.window.focus_set()
+
+    def _clear_content(self):
+        for child in self.content.winfo_children():
+            child.destroy()
+
+    def _heading(self, title: str, detail: str):
+        ttk.Label(self.content, text=title, style="Subtitle.TLabel").pack(anchor="w")
+        ttk.Label(self.content, text=detail, wraplength=540, justify="left").pack(anchor="w", pady=(6, 18))
+
+    def _field(self, label: str, variable: tk.StringVar, row: int, parent=None):
+        parent = parent or self.content
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=6)
+        ttk.Entry(parent, textvariable=variable, width=34).grid(row=row, column=1, sticky="e", padx=(20, 0), pady=6)
+
+    def _build_mode_page(self):
+        self._heading("Choose the operating shape", "This first pass sets the defaults for a rehearsal or a live show. You can return here at any time.")
+        ttk.Radiobutton(self.content, text="Demo mode - no hardware required", variable=self.mode, value="Demo").pack(anchor="w", pady=4)
+        ttk.Radiobutton(self.content, text="Live mode - cameras, beacons, and spotlight", variable=self.mode, value="Live").pack(anchor="w", pady=4)
+        ttk.Separator(self.content).pack(fill="x", pady=12)
+        ttk.Checkbutton(self.content, text="Enable control and fusion stack", variable=self.control_enabled).pack(anchor="w", pady=3)
+        ttk.Checkbutton(self.content, text="Enable roof camera node", variable=self.node_enabled).pack(anchor="w", pady=3)
+        ttk.Checkbutton(self.content, text="Enable front ReID node", variable=self.front_enabled).pack(anchor="w", pady=3)
+
+    def _build_network_page(self):
+        self._heading("Make the network discoverable", "Beacons can be found automatically over the local network. Leave the network on automatic unless your venue uses more than one LAN.")
+        grid = ttk.Frame(self.content)
+        grid.pack(fill="x")
+        grid.columnconfigure(1, weight=1)
+        self._field("Discovery network", self.network, 0, grid)
+        self._field("UDP discovery port", self.udp_port, 1, grid)
+        self._field("HTTP ports", self.http_ports, 2, grid)
+
+    def _build_tracking_page(self):
+        self._heading("Tune graceful tracking", "These limits control how long a performer remains usable when a beacon or camera view is briefly blocked.")
+        grid = ttk.Frame(self.content)
+        grid.pack(fill="x")
+        grid.columnconfigure(1, weight=1)
+        self._field("Target frames per second", self.target_fps, 0, grid)
+        self._field("Predicted frames", self.occlusion_frames, 1, grid)
+        self._field("Prediction time (seconds)", self.occlusion_time, 2, grid)
+        self._field("Confidence floor", self.confidence_floor, 3, grid)
+
+    def _build_review_page(self):
+        self._heading("Ready to apply", "Review the essentials, then Finish to write the configuration. Next wraps back to the first page so the wizard can be used as a loop during setup.")
+        summary = (
+            f"Mode: {self.mode.get()}\n"
+            f"Stacks: control={self.control_enabled.get()}, roof={self.node_enabled.get()}, front={self.front_enabled.get()}\n"
+            f"Network: {self.network.get()} on UDP {self.udp_port.get()}\n"
+            f"Tracking: {self.occlusion_frames.get()} frames / {self.occlusion_time.get()} seconds"
+        )
+        ttk.Label(self.content, text=summary, justify="left", font=("SF Pro Text", 11)).pack(anchor="w", pady=8)
+
+    def show_page(self):
+        self._clear_content()
+        self.pages[self.page_index]()
+        self.progress.configure(text=f"Step {self.page_index + 1} of {len(self.pages)}")
+
+    def next_page(self):
+        self.page_index = (self.page_index + 1) % len(self.pages)
+        self.show_page()
+
+    def previous_page(self):
+        self.page_index = (self.page_index - 1) % len(self.pages)
+        self.show_page()
+
+    def _number(self, value: str, cast, minimum):
+        parsed = cast(value)
+        if parsed < minimum:
+            raise ValueError
+        return parsed
+
+    def finish(self):
+        try:
+            udp_port = self._number(self.udp_port.get(), int, 1)
+            target_fps = self._number(self.target_fps.get(), int, 1)
+            occlusion_frames = self._number(self.occlusion_frames.get(), int, 1)
+            occlusion_time = self._number(self.occlusion_time.get(), float, 0.1)
+            confidence_floor = min(1.0, max(0.0, float(self.confidence_floor.get())))
+            http_ports = [self._number(item.strip(), int, 1) for item in self.http_ports.get().split(",") if item.strip()]
+            if not http_ports:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Check the setup values", "Ports, frame counts, and timing values must be valid positive numbers.", parent=self.window)
+            return
+
+        discovery = self.beacons.setdefault("discovery", {})
+        discovery.update({"enabled": True, "network": None if self.network.get() == "Automatic local network" else self.network.get(), "udp_port": udp_port, "http_ports": http_ports})
+        self.reid.setdefault("performance", {})["target_fps"] = target_fps
+        self.reid.setdefault("tracking", {}).update({"max_occlusion_frames": occlusion_frames, "prediction_confidence_floor": confidence_floor})
+        self.reid.setdefault("data_fusion", {}).update({"max_occlusion_time": occlusion_time, "prediction_confidence_floor": confidence_floor})
+        try:
+            with self.beacons_path.open("w", encoding="utf-8") as handle:
+                json.dump(self.beacons, handle, indent=2)
+            with self.reid_path.open("w", encoding="utf-8") as handle:
+                json.dump(self.reid, handle, indent=2)
+            self.launcher.log_to_terminal("Setup wizard applied configuration")
+            messagebox.showinfo("Setup complete", "Configuration saved. The new settings will be used on the next launch.", parent=self.window)
+            self.close()
+        except OSError as exc:
+            messagebox.showerror("Could not save setup", str(exc), parent=self.window)
+
+    def close(self):
+        try:
+            self.window.grab_release()
+        except tk.TclError:
+            pass
+        self.window.destroy()
 
 
 class HoverTooltip:
@@ -3572,7 +3778,7 @@ class DiagnosticsWindow:
             files_to_check = [
                 "control/main.py",
                 "control/camera_aggregator.py",
-                "control/camera_config_gui.py",
+                "control/camera_rig_configurator.py",
                 "control/requirements.txt"
             ]
         else:

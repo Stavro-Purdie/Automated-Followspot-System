@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List
 import sys
+import json
 
 import numpy as np
 
@@ -21,6 +22,7 @@ from control.camera_aggregator import MultiCameraManager
 from control.reid_runner import ReIDRunner
 from fusion.data_fusion import DataFusion
 from control.spotlight_controller import SpotlightController
+from control.beacon_coordinator import BeaconCoordinator
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("fused_main")
@@ -33,6 +35,12 @@ class FusedController:
                  front_config: str = str(Path(__file__).parent.parent / "config" / "front_array_config.json")):
         self.roof_config = roof_config
         self.front_config = front_config
+        beacon_config_path = Path(__file__).parent.parent / "config" / "beacons_config.json"
+        try:
+            with beacon_config_path.open("r", encoding="utf-8") as handle:
+                beacon_config = json.load(handle)
+        except (OSError, ValueError):
+            beacon_config = {}
 
         # Initialize subsystems
         self.roof_manager = MultiCameraManager(self.roof_config, demo_mode=False)
@@ -43,6 +51,7 @@ class FusedController:
 
         # Spotlight controller handles pan/tilt computation
         self.spotlight = SpotlightController()
+        self.beacon_coordinator = BeaconCoordinator(beacon_config)
 
         self.loop_running = False
         self.latest_persons = {}
@@ -65,6 +74,9 @@ class FusedController:
         if not self.reid_runner.start():
             logger.warning("ReID runner did not start; proceeding with IR only")
 
+        discovered = self.beacon_coordinator.discover(force=True)
+        logger.info("Beacon coordination roster: %d node(s), %d online", len(discovered), sum(node.online for node in discovered.values()))
+
         self.loop_running = True
 
     async def _connect_camera(self, cfg):
@@ -77,6 +89,7 @@ class FusedController:
 
     def step(self):
         """One fused step: gather IR beacons from roof composite and ReID tracks, then fuse."""
+        self.beacon_coordinator.discover()
         # Build composite and detect beacons
         composite = self.roof_manager.create_composite_frame()
         ir_beacons = []
@@ -115,7 +128,9 @@ class FusedController:
 
     def get_stats(self):
         """Return fusion statistics"""
-        return self.fusion.get_fusion_stats()
+        stats = self.fusion.get_fusion_stats()
+        stats["beacon_coordination"] = dict(self.beacon_coordinator.stats)
+        return stats
 
 
 async def main():

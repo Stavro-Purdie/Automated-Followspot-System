@@ -1,6 +1,6 @@
 # Automated Followspot System - Completion Plan
 
-**Status**: Core architecture complete. Remaining work: DMX output pipeline, ML model conversion, beacon sensor integration, validation/testing.
+**Status**: Superseded by the 1.0.0 release on 2026-10-21. Software paths, tests, release packaging, beacon coordination, bounded tracking, and DMX transports are implemented. Remaining items below are deployment-time hardware validation or optional platform-specific work.
 
 ---
 
@@ -83,7 +83,7 @@ Replace placeholder telemetry (current=0, temp=0, fan=0) with real sensor readin
 
 ### Current State
 - Firmware (`firmware/beacon_wifi/beacon_wifi.ino`): Fields exist in JSON, hardcoded to 0
-- Monitor GUI (`control/beacon_monitor_gui.py`): Displays N/A gracefully
+- Combined Beacon Configurator & Live Monitor (`control/beacon_config_gui.py`): Displays N/A gracefully
 - README documents wiring for INA219 (current), XIAO internal temp, fan tach
 
 ### Required Work
@@ -95,7 +95,7 @@ Replace placeholder telemetry (current=0, temp=0, fan=0) with real sensor readin
 | **3.3 Fan tachometer** | `firmware/beacon_wifi/beacon_wifi.ino` | Optional: GPIO interrupt counting pulses. `fan_rpm = (pulses * 60) / pulses_per_rev`. Configurable pin. |
 | **3.4 Sensor auto-detection** | `firmware/beacon_wifi/beacon_wifi.ino` | Scan I2C at startup. If INA219 found → enable current. If fan pin configured → enable RPM. |
 | **3.5 Calibration constants** | `firmware/beacon_wifi/beacon_wifi.ino` | Battery divider ratio, INA219 shunt value, fan pulses/rev as `#define` or NVS config. |
-| **3.6 Monitor GUI units** | `control/beacon_monitor_gui.py` | Already handles fields. Verify scaling: mA→A, °C, RPM display correctly. |
+| **3.6 Combined monitor units** | `control/beacon_config_gui.py` | Already handles fields. Verify scaling: mA→A, °C, RPM display correctly. |
 
 ### BOM Additions (Optional)
 | Sensor | Part | Cost | Purpose |

@@ -1,11 +1,25 @@
 {
   "rig": {
-    "fixture_position_m": [0.0, -5.0, 6.5],
-    "stage_origin_m": [0.0, 0.0, 0.0],
+    "fixture_position_m": [
+      0.0,
+      -5.0,
+      6.5
+    ],
+    "stage_origin_m": [
+      0.0,
+      0.0,
+      0.0
+    ],
     "pan_zero_angle_deg": 0.0,
     "tilt_zero_angle_deg": -35.0,
-    "pan_limits_deg": [-120.0, 120.0],
-    "tilt_limits_deg": [-120.0, 10.0],
+    "pan_limits_deg": [
+      -120.0,
+      120.0
+    ],
+    "tilt_limits_deg": [
+      -120.0,
+      10.0
+    ],
     "smoothing": {
       "pan_alpha": 0.2,
       "tilt_alpha": 0.25

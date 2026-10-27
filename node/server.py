@@ -20,7 +20,7 @@ from libcamera import controls, Transform
 from aiortc.mediastreams import MediaStreamError
 
 # Local DMX transport
-from dmx_transport import create_transport, DMXEncoder, DMXFrame
+from dmx_transport import create_transport, DMXEncoder, DMXFrame, RS485Transport
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -77,6 +77,7 @@ PROFILE_CONFIGS: Dict[str, Dict[str, Any]] = {
 
 active_profile_name = DEFAULT_PROFILE
 active_profile_settings: Dict[str, Any] = copy.deepcopy(PROFILE_CONFIGS[DEFAULT_PROFILE])
+_start_time = time.time()
 
 # Global variables
 camera_obj = None

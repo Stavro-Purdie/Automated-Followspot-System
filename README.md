@@ -2,6 +2,8 @@
 
 A comprehensive multi-camera IR beacon tracking system with automated followspot capabilities, designed for live performance applications.
 
+Current release: **1.0.0**. See [CHANGELOG.md](CHANGELOG.md) for the release scope and hardware validation boundary.
+
 ## Features
 
 - **Dual Stack Architecture**: Separate Control and Node stacks for flexible deployment
@@ -15,6 +17,16 @@ A comprehensive multi-camera IR beacon tracking system with automated followspot
 - **Built-in Help System**: Independent help window with keyboard shortcuts and operator guidelines
 
 ## Quick Start
+
+### Release bundle
+
+Build a source bundle and SHA-256 manifest with:
+
+```bash
+.venv/bin/python tools/build_release.py
+```
+
+The output is written to `dist/`. On macOS, use the project `.venv` selected by VS Code. Raspberry Pi node dependencies are installed on the node itself; `picamera2` is intentionally platform-gated.
 
 ### 1. Launch the System (GUI by Default)
 
@@ -144,7 +156,7 @@ Run the front truss node on a Raspberry Pi with the HQ (IMX477) camera and RS485
 python3 node/server.py --profile front_truss --port 8000
 ```
 
-The DMX endpoint (`/dmx`) is wired but returns a placeholder response until RS485 output is ready.
+The DMX endpoint (`/dmx`) encodes pan, tilt, and dimmer commands and supports stub, RS485 serial, Art-Net, and sACN transports. Validate the selected transport and fixture profile on the installed rig before a show.
 
 ## IR Beacon Build Schematic
 

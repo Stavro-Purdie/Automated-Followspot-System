@@ -841,7 +841,7 @@ async def run_multi_camera_client(config_file: str, dry_run: bool = False):
         assert manager is not None
         
         if not manager.cameras:
-            logger.error("No cameras configured. Please run camera_config_gui.py first to configure cameras.")
+            logger.error("No cameras configured. Please run camera_rig_configurator.py first to configure cameras.")
             return
         
         # Start display thread
@@ -1018,7 +1018,7 @@ def main():
     args.config = _sanitize_for_log(args.config)
     python_cmd = sys.executable or "python3"
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_script = os.path.join(script_dir, "camera_config_gui.py")
+    config_script = os.path.join(script_dir, "camera_rig_configurator.py")
     
     # Legacy fallback if new file not present
     if (not os.path.exists(args.config) and "roof_array_config.json" in args.config):

@@ -229,7 +229,7 @@
       "overlap_threshold": 0.1
     },
     {
-      "server_url": "192.",
+      "server_url": "http://192.168.1.100:8080",
       "crop_rect": [
         0,
         0,
